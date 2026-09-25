@@ -25,4 +25,6 @@ jobs:
 
       - name: Skipping notice
         if: env.CLOUDFLARE_API_TOKEN == ''
-        run: echo "CLOUDFLARE_API_TOKEN is not set — skipping deploy. Add it with: gh secret set CLOUDFLARE_API_TOKEN <your-token>"
+        run: |
+          echo "CLOUDFLARE_API_TOKEN is not set - skipping deploy."
+          echo "To enable auto-deploy run: gh secret set CLOUDFLARE_API_TOKEN"
