@@ -1,0 +1,9 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tractorlife",
+  "compatibility_date": "2026-09-25",
+  // Static assets only — the game is plain ES modules, no build step.
+  "assets": {
+    "directory": "./game"
+  }
+}
