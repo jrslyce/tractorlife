@@ -5,6 +5,7 @@ import { Field } from './field.js';
 import { Input } from './input.js';
 import { buildTractor, applyLivery, LIVERY_NAMES } from './tractor.js';
 import { TOOL_ORDER, buildTool } from './equipment.js';
+import { login, rememberedEmail, startAutosave } from './net.js';
 
 const TRACTOR_SCALE = 0.5; // tractor spans 6.5 world units (was 13)
 
@@ -374,6 +375,115 @@ function updateSun() {
   sun.target.position.copy(tractor.position);
   sun.target.updateMatrixWorld();
 }
+
+// ---------------------------------------------------------------- save/restore
+let session = null;
+
+function snapshot() {
+  const fd = [];
+  for (let i = 0; i < fields.length; i++) fd.push(fields[i].serialize());
+  return {
+    v: 1,
+    money: Math.max(0, Math.floor(money)),
+    tool: currentTool,
+    color: currentColor,
+    tx: tractor.position.x,
+    tz: tractor.position.z,
+    theta: theta,
+    fields: fd,
+  };
+}
+
+function applyState(s) {
+  if (!s || typeof s !== 'object') return false;
+
+  if (typeof s.money === 'number' && isFinite(s.money)) {
+    money = Math.max(0, Math.floor(s.money));
+  }
+
+  if (typeof s.tx === 'number' && isFinite(s.tx)) {
+    tractor.position.x = Math.max(-16, Math.min(112, s.tx));
+  }
+  if (typeof s.tz === 'number' && isFinite(s.tz)) {
+    tractor.position.z = Math.max(-60, Math.min(34, s.tz));
+  }
+  if (typeof s.theta === 'number' && isFinite(s.theta)) theta = s.theta;
+  tractor.rotation.y = theta;
+  speed = 0;
+
+  if (typeof s.color === 'string' && LIVERY_NAMES.indexOf(s.color) !== -1) {
+    currentColor = s.color;
+    applyLivery(tractor, currentColor);
+  }
+
+  if (typeof s.tool === 'number' && isFinite(s.tool)) {
+    const t = Math.round(s.tool);
+    if (t >= 0 && t < TOOL_ORDER.length) attachTool(t);
+    else detachTool();
+  } else {
+    detachTool();
+  }
+
+  if (Array.isArray(s.fields)) {
+    for (let i = 0; i < fields.length && i < s.fields.length; i++) {
+      fields[i].restore(s.fields[i]);
+    }
+  }
+
+  // snap the chase cam behind the restored pose (no cross-map swoop)
+  const cs = Math.cos(theta), sn = Math.sin(theta);
+  camPos.set(tractor.position.x - cs * 20, 12, tractor.position.z + sn * 20);
+
+  lastSig = '';
+  updateHUD();
+  return true;
+}
+
+// ---------------------------------------------------------------- login gate
+function setupLogin() {
+  const overlay = document.getElementById('login');
+  const form = document.getElementById('login-form');
+  const emailIn = document.getElementById('login-email');
+  const codeIn = document.getElementById('login-code');
+  const go = document.getElementById('login-go');
+  const msg = document.getElementById('login-msg');
+  if (!overlay || !form || !emailIn || !codeIn || !go || !msg) return;
+
+  const remembered = rememberedEmail();
+  if (remembered) emailIn.value = remembered;
+
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    go.disabled = true;
+    msg.textContent = 'Loading the farm\u2026';
+    login(emailIn.value, codeIn.value)
+      .then(function (res) {
+        session = { mode: res.mode, email: res.email };
+        try {
+          localStorage.setItem('vt-email', res.email);
+        } catch (err) {
+          /* ignore */
+        }
+        applyState(res.state);
+        overlay.style.display = 'none';
+        window.VT_LOCKED = false;
+        lastSig = '';
+        updateHUD();
+      })
+      .catch(function (err) {
+        msg.textContent = err && err.message ? err.message : 'Try again';
+        go.disabled = false;
+      });
+  });
+}
+
+setupLogin();
+startAutosave(
+  function () {
+    return session;
+  },
+  snapshot
+);
 
 // ---------------------------------------------------------------- loop
 let last = performance.now();

@@ -72,6 +72,11 @@ function approach(cur, target, dt) {
   return cur + (diff > 0 ? move : -move);
 }
 
+// login gate: anything other than an explicit false counts as locked (default-deny)
+function locked() {
+  return typeof window === 'undefined' || window.VT_LOCKED !== false;
+}
+
 function isInteractive(el) {
   while (el && el.nodeType === 1) {
     if (el.tagName === 'BUTTON' || el.tagName === 'A' || el.tagName === 'INPUT' ||
@@ -184,6 +189,9 @@ export class Input {
   _installKeys() {
     var self = this;
     this._onKeyDown = function (e) {
+      if (locked()) return;
+      var tgt = e.target;
+      if (tgt && (tgt.tagName === 'INPUT' || tgt.tagName === 'TEXTAREA')) return;
       var code = keyName(e);
       self._held[code] = true;
       self._syncKeyAxes();
@@ -195,6 +203,9 @@ export class Input {
       }
     };
     this._onKeyUp = function (e) {
+      if (locked()) return;
+      var tgt2 = e.target;
+      if (tgt2 && (tgt2.tagName === 'INPUT' || tgt2.tagName === 'TEXTAREA')) return;
       var code = keyName(e);
       delete self._held[code];
       self._syncKeyAxes();
@@ -264,6 +275,7 @@ export class Input {
     document.body.appendChild(this._joy);
 
     this._onJoyStart = function (e) {
+      if (locked()) return;                             // login gate
       if (self._joyId !== null) return;                 // one finger on the stick
       if (isInteractive(e.target)) return;              // buttons manage themselves
       var ct = e.changedTouches ? e.changedTouches[0] : null;
@@ -361,6 +373,7 @@ export class Input {
         b.appendChild(lbl);
 
         var fire = function (e) {
+          if (locked()) return;
           if (e && e.cancelable) e.preventDefault();
           self._pending.push(spec.action);
           b.classList.add('vt-active');

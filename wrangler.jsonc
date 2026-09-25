@@ -1,9 +1,16 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "tractorlife",
+  "main": "./worker.js",
+  "account_id": "4187a4960bcb1a400ff9c7788e5a0ca5",
   "compatibility_date": "2026-09-25",
-  // Static assets only — the game is plain ES modules, no build step.
   "assets": {
-    "directory": "./game"
-  }
+    "directory": "./game",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "SAVES", "class_name": "GameSaves" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["GameSaves"] }]
 }

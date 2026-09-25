@@ -13,11 +13,34 @@
     -webkit-tap-highlight-color: transparent;
     font-family: system-ui, -apple-system, sans-serif; }
   canvas { display: block; touch-action: none; }
+  #login { position: fixed; left: 0; right: 0; top: 0; bottom: 0; z-index: 60;
+    display: -webkit-flex; display: flex; -webkit-flex-direction: column;
+    flex-direction: column; -webkit-align-items: center; align-items: center;
+    -webkit-justify-content: center; justify-content: center;
+    background: rgba(38, 64, 26, .94); color: #fffbe8; padding: 24px;
+    text-align: center; box-sizing: border-box; }
+  #login h1 { font-size: 40px; margin: 0 0 6px; color: #ffe066; letter-spacing: 1px; }
+  #login .sub { font-size: 17px; margin: 0 0 22px; color: #d8e8c8; }
+  #login-form { display: -webkit-flex; display: flex; -webkit-flex-direction: column;
+    flex-direction: column; width: 100%; max-width: 360px; }
+  #login-form input { font-size: 20px; min-height: 56px; padding: 10px 16px;
+    margin-bottom: 14px; border: 3px solid #2f4d1f; border-radius: 14px;
+    background: #fffbe8; color: #233018; -webkit-appearance: none; appearance: none;
+    box-sizing: border-box; width: 100%; text-align: center; }
+  #login-go { min-height: 64px; padding: 0 32px; font-size: 24px; font-weight: 700;
+    border: none; border-radius: 14px; background: #ffe066; color: #2f4d1f;
+    box-shadow: 0 4px 0 #b8901a; cursor: pointer; touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent; }
+  #login-go:active { -webkit-transform: translateY(3px); transform: translateY(3px);
+    box-shadow: 0 1px 0 #b8901a; }
+  #login-go[disabled] { opacity: .6; }
+  #login-msg { min-height: 24px; font-size: 17px; font-weight: 600; margin: 16px 0 0;
+    color: #ffb3a7; }
 </style>
 </head>
 <body>
-<div id="hud"></div>
 <script>
+window.VT_LOCKED = true; // input stays locked until the login gate opens
 // surface runtime errors on-screen (handy on headless tests and kid devices)
 function vtErr(msg) {
   var d = document.createElement('div');
@@ -36,5 +59,18 @@ window.addEventListener('unhandledrejection', function (e) { vtErr('promise: ' +
 } }
 </script>
 <script type="module" src="./js/main.js"></script>
+<div id="login">
+  <h1>🚜 Tractor Farm</h1>
+  <p class="sub">Hop on the tractor!</p>
+  <form id="login-form">
+    <input id="login-email" type="email" inputmode="email" autocapitalize="none"
+      autocorrect="off" spellcheck="false" autocomplete="off"
+      placeholder="farmer@email.com">
+    <input id="login-code" type="text" autocapitalize="none" autocorrect="off"
+      spellcheck="false" autocomplete="off" placeholder="secret code">
+    <button id="login-go" type="submit">LET'S FARM!</button>
+  </form>
+  <p id="login-msg"></p>
+</div>
 </body>
 </html>

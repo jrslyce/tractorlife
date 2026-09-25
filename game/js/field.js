@@ -12,6 +12,14 @@ export const TileState = {
   HARVESTED: 'harvested',
 };
 
+// save format: tile states travel as ints 0..6
+export const STATE_NAMES = [
+  TileState.UNTILLED, TileState.TILLED, TileState.PLANTED,
+  TileState.GROWING, TileState.SPRAYED, TileState.READY, TileState.HARVESTED,
+];
+export const STATE_CODES = {};
+for (let si = 0; si < STATE_NAMES.length; si++) STATE_CODES[STATE_NAMES[si]] = si;
+
 // --- tuning ---
 const GROW_SPROUT_S = 5; // PLANTED -> GROWING
 const RIPEN_S = 6; // SPRAYED -> READY (only reachable after spray)
@@ -231,6 +239,45 @@ export class Field {
       cz: this.originZ + row * this.tile,
       state: this._states[row * this.cols + col],
     };
+  }
+
+  // ---------- persistence ----------
+  serialize() {
+    const states = new Array(this.count);
+    const timers = new Array(this.count);
+    for (let i = 0; i < this.count; i++) {
+      states[i] = STATE_CODES[this._states[i]] || 0;
+      timers[i] = Math.round(this._timers[i] * 100) / 100;
+    }
+    return {
+      states: states,
+      timers: timers,
+      tilled: this._tally.tilled,
+      planted: this._tally.planted,
+      sprayed: this._tally.sprayed,
+      harvested: this._tally.harvested,
+    };
+  }
+
+  restore(d) {
+    if (!d || !d.states || d.states.length !== this.count) return false;
+    for (let i = 0; i < this.count; i++) {
+      const code = d.states[i];
+      this._states[i] =
+        typeof code === 'number' && code >= 0 && code <= 6
+          ? STATE_NAMES[code]
+          : TileState.UNTILLED;
+      const t = d.timers ? d.timers[i] : 0;
+      this._timers[i] = typeof t === 'number' && isFinite(t) && t > 0 ? t : 0;
+    }
+    const keys = ['tilled', 'planted', 'sprayed', 'harvested'];
+    for (let k = 0; k < keys.length; k++) {
+      const v = d[keys[k]];
+      this._tally[keys[k]] =
+        typeof v === 'number' && isFinite(v) && v >= 0 ? Math.floor(v) : 0;
+    }
+    for (let i = 0; i < this.count; i++) this._refresh(i);
+    return true;
   }
 
   // ---------- internals ----------
