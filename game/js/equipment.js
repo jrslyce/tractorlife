@@ -58,47 +58,49 @@ class Builder {
 function buildPlow() {
   const b = new Builder();
   b.box(-3, -1, 0, 0, 0, 0, COL.metal);          // drawbar back from mount
-  b.box(-4, -4, 0, 0, -2, 2, COL.metal);         // crossbar
-  [-2, 0, 2].forEach(function (z) {
+  b.box(-4, -4, 0, 0, -6, 6, COL.metal);         // crossbar (6 rows)
+  [-5, -3, -1, 1, 3, 5].forEach(function (z) {
     b.set(-4, -1, z, COL.metal);                 // shank down to ground
     b.set(-5, -1, z, COL.rust);                  // share point (cuts soil)
     b.set(-5, 0, z, COL.rust);                   // moldboard
   });
   const g = b.build();
-  g.userData = { type: 'plow', effect: 'till', width: 4, mount: 'rear' };
+  g.userData = { type: 'plow', effect: 'till', width: 12, mount: 'rear' };
   return g;
 }
 
 function buildPlanter() {
   const b = new Builder();
   b.box(-3, -1, 0, 0, 0, 0, COL.metal);          // drawbar
-  b.box(-4, -4, -1, 0, -2, 2, COL.metal);        // frame
-  b.box(-5, -3, 1, 2, -1, 1, COL.yellow);        // seed hopper
-  b.box(-5, -3, 2, 2, 0, 0, COL.dark);           // lid stripe (overwrites top)
-  [-1, 0, 1].forEach(function (z) {
+  b.box(-4, -4, -1, 0, -6, 6, COL.metal);        // frame (6 rows)
+  b.box(-5, -3, 1, 2, -3, 3, COL.yellow);        // seed hopper
+  b.box(-5, -3, 2, 2, -1, 1, COL.dark);          // lid stripe (overwrites top)
+  [-5, -3, -1, 1, 3, 5].forEach(function (z) {
     b.set(-5, 0, z, COL.metal);                  // seed tubes
     b.set(-5, -1, z, COL.metal);                 // shoes at ground
   });
-  b.box(-4, -4, 0, 0, -3, -3, COL.metal);        // marker arms
-  b.box(-4, -4, 0, 0, 3, 3, COL.metal);
-  b.set(-4, -1, -3, COL.dark);
-  b.set(-4, -1, 3, COL.dark);
+  b.set(-4, 0, -7, COL.metal);                   // marker arms
+  b.set(-4, 0, 7, COL.metal);
+  b.set(-4, -1, -7, COL.dark);
+  b.set(-4, -1, 7, COL.dark);
   const g = b.build();
-  g.userData = { type: 'planter', effect: 'plant', width: 4, mount: 'rear' };
+  g.userData = { type: 'planter', effect: 'plant', width: 12, mount: 'rear' };
   return g;
 }
 
 function buildSprayer() {
   const b = new Builder();
   b.box(-3, -1, 0, 0, 0, 0, COL.metal);          // drawbar
-  for (let z = -4; z <= 4; z++) b.set(-6, 0, z, COL.metal);   // booms FIRST
-  for (let z = -4; z <= 4; z += 2) b.set(-6, -1, z, COL.dark); // nozzles
-  b.set(-5, -1, -3, COL.metal);                  // boom braces
-  b.set(-5, -1, 3, COL.metal);
-  b.box(-6, -3, 1, 3, -1, 1, COL.white);         // tank (sits on boom row)
+  for (let z = -6; z <= 6; z++) b.set(-6, 0, z, COL.metal);   // booms FIRST
+  [-5, -3, -1, 1, 3, 5].forEach(function (z) {
+    b.set(-6, -1, z, COL.dark);                  // nozzles (one per row)
+  });
+  b.set(-5, -1, -4, COL.metal);                  // boom braces
+  b.set(-5, -1, 4, COL.metal);
+  b.box(-6, -3, 1, 3, -2, 2, COL.white);         // tank (sits on boom row)
   b.box(-6, -3, 2, 2, 0, 0, COL.blue);           // stripe
   const g = b.build();
-  g.userData = { type: 'sprayer', effect: 'spray', width: 8, mount: 'rear' };
+  g.userData = { type: 'sprayer', effect: 'spray', width: 12, mount: 'rear' };
   return g;
 }
 
@@ -107,15 +109,15 @@ function buildHarvester() {
   b.box(0, 3, -1, 1, -1, 1, COL.red);            // feeder housing
   b.box(1, 3, 2, 2, -1, 1, COL.red);             // thresher top
   b.box(4, 4, 0, 0, -1, 1, COL.red);             // bridge to header
-  b.box(5, 5, -1, 1, -2, 2, COL.yellow);         // header crossbar
-  for (let z = -2; z <= 2; z++) b.set(6, -1, z, COL.silver);   // cutting teeth
-  b.box(5, 6, -1, -1, -3, -3, COL.yellow);       // side dividers
-  b.box(5, 6, -1, -1, 3, 3, COL.yellow);
-  b.box(5, 5, 1, 1, -2, 2, COL.red);             // intake reel (overwrites top)
-  b.set(5, 1, -3, COL.dark);
-  b.set(5, 1, 3, COL.dark);
+  b.box(5, 5, -1, 1, -6, 6, COL.yellow);         // header crossbar (6 rows)
+  for (let z = -6; z <= 6; z++) b.set(6, -1, z, COL.silver);   // cutting teeth
+  b.box(5, 6, -1, -1, -7, -7, COL.yellow);       // side dividers
+  b.box(5, 6, -1, -1, 7, 7, COL.yellow);
+  b.box(5, 5, 1, 1, -6, 6, COL.red);             // intake reel (overwrites top)
+  b.set(5, 1, -7, COL.dark);
+  b.set(5, 1, 7, COL.dark);
   const g = b.build();
-  g.userData = { type: 'harvester', effect: 'harvest', width: 5, mount: 'front' };
+  g.userData = { type: 'harvester', effect: 'harvest', width: 12, mount: 'front' };
   return g;
 }
 
