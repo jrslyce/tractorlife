@@ -18,5 +18,13 @@
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["GameSaves"] },
     { "tag": "v2", "new_sqlite_classes": ["FarmerList"] }
-  ]
+  ],
+  "previews": {
+    "durable_objects": {
+      "bindings": [
+        { "name": "SAVES", "class_name": "GameSaves" },
+        { "name": "FARMERS", "class_name": "FarmerList" }
+      ]
+    }
+  }
 }
