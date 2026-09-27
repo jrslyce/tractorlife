@@ -3,7 +3,7 @@
 // (character.js) and three vehicles (tractor.js, combine.js, vehicle.js) with
 // a walking/driving mode state machine.
 // Imports: three (importmap 0.160.0), ./input.js, ./world.js, ./character.js,
-// ./vehicle.js, ./tractor.js, ./combine.js, ./equipment.js, ./net.js
+// ./vehicle.js, ./tractor.js, ./combine.js, ./equipment.js, ./shop.js, ./net.js
 import * as THREE from 'three';
 import { Input } from './input.js';
 import { buildTractor, applyLivery, LIVERY_NAMES } from './tractor.js';
@@ -11,6 +11,7 @@ import { buildCombine } from './combine.js';
 import { buildTruck } from './vehicle.js';
 import { Character } from './character.js';
 import { World } from './world.js';
+import { Shop } from './shop.js';
 import { TOOL_ORDER, COMBINE_HEAD_ORDER, buildTool, buildCombineHead } from './equipment.js';
 import { login, restoreRememberedSession, rememberedEmail, hasRememberedEmail, forgetRememberedCredentials, startAutosave, fetchFarmers, fetchFarmState } from './net.js';
 
@@ -20,10 +21,11 @@ const VEHICLE_SCALES = { tractor: 0.5, combine: 0.5, truck: 0.5 };
 const MACHINES = ['tractor', 'combine', 'truck'];
 
 // world bounds (farms span roughly x -10..1385, z -78..38)
+// M1: expanded southward to include the shop area (z up to ~80)
 const WORLD_MIN_X = -10;
 const WORLD_MAX_X = 1385;
 const WORLD_MIN_Z = -78;
-const WORLD_MAX_Z = 38;
+const WORLD_MAX_Z = 80;
 
 function clampX(x) { return x < WORLD_MIN_X ? WORLD_MIN_X : (x > WORLD_MAX_X ? WORLD_MAX_X : x); }
 function clampZ(z) { return z < WORLD_MIN_Z ? WORLD_MIN_Z : (z > WORLD_MAX_Z ? WORLD_MAX_Z : z); }
@@ -32,7 +34,8 @@ function clampZ(z) { return z < WORLD_MIN_Z ? WORLD_MIN_Z : (z > WORLD_MAX_Z ? W
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87ceeb);
 // far distance reaches the next farms (140 units apart) so neighbours show
-scene.fog = new THREE.Fog(0x87ceeb, 130, 430);
+// M1: extended to cover the shop area (z up to ~80)
+scene.fog = new THREE.Fog(0x87ceeb, 130, 480);
 
 const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 700);
 
@@ -62,7 +65,7 @@ scene.add(sun);
 scene.add(sun.target);
 
 // ---------------------------------------------------------------- ground
-// covers every farm: x -90..1410, z -220..180
+// covers every farm + shop area: x -90..1410, z -220..180 (expanded southward for M1)
 const ground = new THREE.Mesh(
   new THREE.PlaneGeometry(1500, 400),
   new THREE.MeshStandardMaterial({ color: '#5aa02c', roughness: 1 })
@@ -71,6 +74,23 @@ ground.rotation.x = -Math.PI / 2;
 ground.position.set(660, 0, -20);
 ground.receiveShadow = true;
 scene.add(ground);
+
+// --- M1: E-W road strip along farms' south edge ---
+// Road runs from x ≈ -10 to x ≈ 1390, at z ≈ 30-40 (south of spawn points at z ≈ -12)
+var roadMat = new THREE.MeshStandardMaterial({ color: '#4a4a4a', roughness: 0.95 });
+var roadGeo = new THREE.BoxGeometry(1400, 0.05, 12);
+var road = new THREE.Mesh(roadGeo, roadMat);
+road.position.set(690, 0.025, 35);
+road.receiveShadow = true;
+scene.add(road);
+
+// Road center line dashes
+var dashMat = new THREE.MeshStandardMaterial({ color: '#e6c34a', roughness: 0.9 });
+for (var di = 0; di < 140; di++) {
+  var dash = new THREE.Mesh(new THREE.BoxGeometry(2, 0.06, 0.3), dashMat);
+  dash.position.set(-10 + di * 10, 0.03, 35);
+  scene.add(dash);
+}
 
 // decorative crop rows (south of farm 0, cheap boxes)
 const rowMat = new THREE.MeshStandardMaterial({ color: '#3f7d1f', roughness: 1 });
@@ -106,6 +126,11 @@ hayBale(57, 0.8, -13, 0.7);
 // All field work / stats / serialize / restore go through world.getFarms().
 const world = new World(scene, '');
 
+// ---------------------------------------------------------------- M1: Shop
+// Placed south of the road, between farms 5 and 6 (slot 4 and 5).
+// Uses constants from world.js (SHOP_CENTER_X, SHOP_CENTER_Z).
+var shop = new Shop(scene, 680, 55);
+
 // ---------------------------------------------------------------- vehicles
 const tractor = buildTractor('red');
 const combine = buildCombine('green');
@@ -132,6 +157,9 @@ let vehicleType = 'tractor'; // the active (last driven) machine
 let vehicle = tractor;
 const vehicleColors = { tractor: 'red', combine: 'green', truck: 'gray' };
 const toolSelections = { tractor: -1, combine: 0, truck: -1 };
+
+// M1: shop proximity flag
+let shopNearShown = false;
 
 let theta = 0; // vehicle rotation.y; forward = (cos θ, 0, −sin θ)
 let speed = 0;
@@ -690,6 +718,9 @@ function drainActions() {
       cycleColor();
     } else if (a === 'cycleMachine') {
       if (mode === 'driving') switchMachine();
+    } else if (a === 'talkShop') {
+      // M1: placeholder — shop UI will be wired in M2
+      console.log('Shop dialog triggered (M1 placeholder)');
     }
   }
   updateHUD();
@@ -1236,6 +1267,16 @@ renderer.setAnimationLoop(function () {
   if (wantEnter !== enterVisible) {
     enterVisible = wantEnter;
     input.setEnterVisible(wantEnter);
+  }
+
+  // M1: shop proximity check — show "Talk to shopkeeper" when near
+  const shopNear = shop.isNear(character.group.position.x, character.group.position.z);
+  if (mode === 'walking' && shopNear && !shopNearShown) {
+    input.setShopNear(true);
+    shopNearShown = true;
+  } else if (!shopNear && shopNearShown) {
+    input.setShopNear(false);
+    shopNearShown = false;
   }
 
   updateCamera(dt);

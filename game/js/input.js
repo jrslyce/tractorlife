@@ -24,7 +24,8 @@ var ACTIONS = {
   KeyF: 'cycleTool',
   KeyM: 'cycleMachine',
   KeyC: 'cycleColor',
-  KeyQ: 'detach'
+  KeyQ: 'detach',
+  KeyT: 'talkShop' // M1: talk to shopkeeper
 };
 
 var BUTTONS = [
@@ -33,7 +34,8 @@ var BUTTONS = [
   { action: 'cycleColor', emoji: '\u{1F3A8}', label: 'Color' },  // palette
   { action: 'detach',     emoji: '\u{1F50C}', label: 'Detach' }, // plug
   { action: 'jump',       emoji: '\u{1F9BF}', label: 'Jump' },   // person jumping
-  { action: 'enterVehicle', emoji: '\u{1F697}', label: 'Enter' }  // hop in/out
+  { action: 'enterVehicle', emoji: '\u{1F697}', label: 'Enter' }, // hop in/out
+  { action: 'talkShop',   emoji: '\u{1F3EA}', label: 'Shop' }    // M1: talk to shopkeeper
 ];
 
 var CSS = [
@@ -187,6 +189,13 @@ export class Input {
   // show/hide the enter/exit vehicle button (mobile entry prompt)
   setEnterVisible(visible) {
     var b = this._btnByAction ? this._btnByAction['enterVehicle'] : null;
+    if (!b) return;
+    b.style.display = visible ? 'block' : 'none';
+  }
+
+  // M1: show/hide the shop talk prompt (mobile Enter button repurposed)
+  setShopNear(visible) {
+    var b = this._btnByAction ? this._btnByAction['talkShop'] : null;
     if (!b) return;
     b.style.display = visible ? 'block' : 'none';
   }
