@@ -1,20 +1,22 @@
 // game/js/net.js — login gate + autosave for Tractor Farm.
-// Shared-secret auth (email + code) with an offline localStorage fallback.
+// Cookie-backed auth (email + code) with an offline localStorage fallback.
 // Written conservatively (no optional chaining) for older iPad Safari.
 
-const AUTH_CODE = 'jadon';
 const EMAIL_KEY = 'vt-email';
+const LEGACY_CODE_KEY = 'vt-code';
 const OFFLINE_PREFIX = 'vt-offline:';
 const SAVE_MS = 15000;
 const LOGIN_TIMEOUT_MS = 6000;
 const SAVE_TIMEOUT_MS = 8000;
+const FARMERS_TIMEOUT_MS = 5000;
+const FARM_STATE_TIMEOUT_MS = 5000;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// credentials of the last successful login (used for /api/save bodies)
+// email of the active session (used for /api/save bodies)
 let sessionEmail = '';
-let sessionCode = '';
 let lastSent = '';
 let autosaveStarted = false;
+let pendingLogout = Promise.resolve();
 
 function normEmail(v) {
   const e = String(v == null ? '' : v).trim().toLowerCase();
@@ -24,15 +26,36 @@ function normEmail(v) {
 }
 
 export function codeOK(v) {
-  return String(v == null ? '' : v).trim().toLowerCase() === AUTH_CODE;
+  return String(v == null ? '' : v).trim().length > 0;
 }
 
 export function rememberedEmail() {
   try {
+    // Remove the passcode saved by older builds; it must never be retained client-side.
+    localStorage.removeItem(LEGACY_CODE_KEY);
     return localStorage.getItem(EMAIL_KEY) || '';
   } catch (err) {
     return '';
   }
+}
+
+export function hasRememberedEmail() {
+  return rememberedEmail() !== '';
+}
+
+export function forgetRememberedCredentials() {
+  try {
+    localStorage.removeItem(EMAIL_KEY);
+    localStorage.removeItem(LEGACY_CODE_KEY);
+  } catch (err) {
+    /* storage may be blocked */
+  }
+  try {
+    pendingLogout = post('/api/logout', {}, LOGIN_TIMEOUT_MS).then(function () {}, function () {});
+  } catch (err) {
+    /* offline or fetch unavailable */
+  }
+  return pendingLogout;
 }
 
 function loadOffline(email) {
@@ -82,23 +105,30 @@ function post(path, body, timeoutMs) {
 
 // Resolves {mode:'online'|'offline', email, state}; rejects with a
 // kid-readable Error message only when the code/email is definitively bad.
-export function login(email, code) {
+// The Worker keeps the session in an HttpOnly cookie. Only the email is stored
+// locally so a remembered session can be restored without saving the passcode.
+export function login(email, code, remember) {
+  const clearSession = remember ? pendingLogout : forgetRememberedCredentials();
   const em = normEmail(email);
   if (!em) return Promise.reject(new Error('Enter your email like farmer@mail.com'));
   if (!codeOK(code)) return Promise.reject(new Error('Wrong secret code'));
-  const body = { email: em, code: String(code) };
+  const body = { email: em, code: String(code).trim(), remember: remember === true };
 
-  return post('/api/login', body, LOGIN_TIMEOUT_MS)
+  return clearSession.catch(function () { return null; })
+    .then(function () { return post('/api/login', body, LOGIN_TIMEOUT_MS); })
     .then(function (res) {
       if (res.status === 401) throw new Error('wrong-code');
       if (!res.ok) throw new Error('server');
       return res.json().then(function (data) {
         sessionEmail = em;
-        sessionCode = String(code).trim();
         lastSent = '';
+        if (remember) {
+          try { localStorage.setItem(EMAIL_KEY, em); } catch (err) { /* ignore */ }
+        }
         return {
           mode: 'online',
           email: (data && data.email) || em,
+          farmSlot: (data && typeof data.farmSlot === 'number') ? data.farmSlot : -1,
           state: (data && data.state) || null,
         };
       });
@@ -107,9 +137,102 @@ export function login(email, code) {
       // a definitive 401 blocks entry; anything else falls back to offline play
       if (err && err.message === 'wrong-code') throw new Error('Wrong secret code');
       sessionEmail = em;
-      sessionCode = String(code).trim();
-      return { mode: 'offline', email: em, state: loadOffline(em) };
+      if (remember) {
+        try { localStorage.setItem(EMAIL_KEY, em); } catch (storageErr) { /* ignore */ }
+      }
+      return { mode: 'offline', email: em, farmSlot: -1, state: loadOffline(em) };
     });
+}
+
+// Resume a remembered server session; this deliberately has no offline fallback.
+export function restoreRememberedSession(email) {
+  const em = normEmail(email);
+  if (!em) return Promise.reject(new Error('Enter your email like farmer@mail.com'));
+  return post('/api/login', { email: em, remember: true }, LOGIN_TIMEOUT_MS).then(function (res) {
+    if (res.status === 401) throw new Error('session-expired');
+    if (!res.ok) throw new Error('server');
+    return res.json().then(function (data) {
+      sessionEmail = em;
+      lastSent = '';
+      return {
+        mode: 'online',
+        email: (data && data.email) || em,
+        farmSlot: (data && typeof data.farmSlot === 'number') ? data.farmSlot : -1,
+        state: (data && data.state) || null,
+      };
+    });
+  });
+}
+
+// Fetch the list of active farmers.
+// worker.js only allows GET /api/farmers (POST is answered with 405), so this
+// must be a plain GET with an abort timeout, same [] fallback as before.
+export function fetchFarmers() {
+  const payload = { method: 'GET' };
+  let timer = null;
+  if (typeof AbortController !== 'undefined') {
+    const ctrl = new AbortController();
+    payload.signal = ctrl.signal;
+    timer = setTimeout(function () {
+      ctrl.abort();
+    }, FARMERS_TIMEOUT_MS);
+  }
+  const clear = function () {
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+  };
+  return fetch('/api/farmers', payload).then(
+    function (res) {
+      clear();
+      if (!res.ok) return [];
+      return res.json().then(
+        function (data) {
+          return (data && Array.isArray(data.farmers)) ? data.farmers : [];
+        },
+        function () {
+          return [];
+        }
+      );
+    },
+    function () {
+      clear();
+      return [];
+    }
+  ).catch(function () {
+    clear();
+    return [];
+  });
+}
+
+// Fetch one foreign farm's authoritative state: {ok, email, farm:{farmSlot,
+// fields}} or {ok, email, farm:null} when nobody occupies the slot. Resolves
+// null on ANY failure (offline, 401, timeout, malformed body) so callers can
+// stay silent and keep ticking the local fields.
+export function fetchFarmState(slot) {
+  return post('/api/farm-state', { slot: slot }, FARM_STATE_TIMEOUT_MS).then(
+    function (res) {
+      if (!res.ok) return null;
+      return res.json().then(
+        function (data) {
+          if (!data || data.ok !== true || !data.farm || typeof data.farm !== 'object') {
+            return null;
+          }
+          if (!Array.isArray(data.farm.fields)) return null;
+          return data;
+        },
+        function () {
+          return null;
+        }
+      );
+    },
+    function () {
+      return null;
+    }
+  ).catch(function () {
+    return null;
+  });
 }
 
 function tickSave(getSession, getState) {
@@ -135,7 +258,7 @@ function tickSave(getSession, getState) {
   mirrorOffline(session.email, raw);
   if (session.mode !== 'online') return;
   if (raw === lastSent) return;
-  post('/api/save', { email: sessionEmail, code: sessionCode, state: state }, SAVE_TIMEOUT_MS)
+  post('/api/save', { email: sessionEmail, state: state }, SAVE_TIMEOUT_MS)
     .then(function (res) {
       if (res.ok) lastSent = raw;
     })
@@ -177,7 +300,7 @@ export function startAutosave(getSession, getState) {
     if (session.mode !== 'online' || raw === lastSent) return;
     if (typeof navigator.sendBeacon !== 'function') return;
     try {
-      const body = JSON.stringify({ email: sessionEmail, code: sessionCode, state: state });
+      const body = JSON.stringify({ email: sessionEmail, state: state });
       navigator.sendBeacon('/api/save', new Blob([body], { type: 'application/json' }));
     } catch (err) {
       /* ignore */

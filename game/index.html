@@ -36,6 +36,26 @@
   #login-go[disabled] { opacity: .6; }
   #login-msg { min-height: 24px; font-size: 17px; font-weight: 600; margin: 16px 0 0;
     color: #ffb3a7; }
+  #login-remember { display: -webkit-flex; display: flex; -webkit-align-items: center;
+    align-items: center; gap: 8px; margin: 10px 0 0; font-size: 15px; color: #d8e8c8;
+    -webkit-user-select: none; user-select: none; }
+  #login-remember input { -webkit-appearance: none; appearance: none; width: 20px;
+    height: 20px; border: 3px solid #2f4d1f; border-radius: 5px; background: #fffbe8;
+    cursor: pointer; position: relative; flex-shrink: 0; }
+  #login-remember input:checked { background: #ffe066; }
+  #login-remember input:checked::after { content: '\2713'; position: absolute;
+    left: 4px; top: -1px; font-size: 15px; font-weight: 700; color: #2f4d1f; }
+  /* in-world farm labels (one per farm, projected from a world anchor) */
+  #farm-labels { position: fixed; left: 0; top: 0; right: 0; bottom: 0;
+    pointer-events: none; z-index: 20; overflow: hidden; }
+  .farm-label { position: absolute; left: 0; top: 0; display: none;
+    background: rgba(255, 251, 232, .92); border: 2px solid #2f4d1f;
+    border-radius: 10px; padding: 3px 8px; color: #233018;
+    font-family: system-ui, -apple-system, sans-serif; font-size: 13px;
+    font-weight: 600; line-height: 1.3; white-space: nowrap;
+    max-width: 240px; overflow: hidden; text-overflow: ellipsis;
+    box-shadow: 0 2px 0 rgba(0,0,0,.2); -webkit-user-select: none;
+    user-select: none; will-change: transform; }
 </style>
 </head>
 <body>
@@ -66,9 +86,13 @@ window.addEventListener('unhandledrejection', function (e) { vtErr('promise: ' +
     <input id="login-email" type="email" inputmode="email" autocapitalize="none"
       autocorrect="off" spellcheck="false" autocomplete="off"
       placeholder="farmer@email.com">
-    <input id="login-code" type="text" autocapitalize="none" autocorrect="off"
-      spellcheck="false" autocomplete="off" placeholder="secret code">
+    <input id="login-code" type="password" autocapitalize="none" autocorrect="off"
+      spellcheck="false" autocomplete="current-password" placeholder="secret code">
     <button id="login-go" type="submit">LET'S FARM!</button>
+    <label id="login-remember">
+      <input id="login-remember-check" type="checkbox" checked>
+      Stay logged in
+    </label>
   </form>
   <p id="login-msg"></p>
 </div>

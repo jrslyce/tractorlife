@@ -20,15 +20,20 @@ var BTN_GUARD = 700; // ignore mouse click shortly after touchend on a button
 
 // one-shot key actions
 var ACTIONS = {
-  KeyE: 'cycleTool',
+  KeyE: 'enterVehicle',
+  KeyF: 'cycleTool',
+  KeyM: 'cycleMachine',
   KeyC: 'cycleColor',
   KeyQ: 'detach'
 };
 
 var BUTTONS = [
+  { action: 'cycleMachine', emoji: '\u{1F69C}', label: 'Machine' }, // tractor / combine
   { action: 'cycleTool',  emoji: '\u{1F69C}', label: 'Tool' },   // tractor
   { action: 'cycleColor', emoji: '\u{1F3A8}', label: 'Color' },  // palette
-  { action: 'detach',     emoji: '\u{1F50C}', label: 'Detach' }  // plug
+  { action: 'detach',     emoji: '\u{1F50C}', label: 'Detach' }, // plug
+  { action: 'jump',       emoji: '\u{1F9BF}', label: 'Jump' },   // person jumping
+  { action: 'enterVehicle', emoji: '\u{1F697}', label: 'Enter' }  // hop in/out
 ];
 
 var CSS = [
@@ -54,7 +59,29 @@ var CSS = [
   '#vt-buttons button.vt-active { background: #ffe066; transform: translateY(2px);',
   '  box-shadow: 0 1px 0 rgba(0,0,0,.25); }',
   '#vt-buttons .vt-ico { display: block; font-size: 30px; line-height: 1.1; }',
-  '#vt-buttons .vt-lbl { display: block; font-size: 14px; margin-top: 2px; }'
+  '#vt-buttons .vt-lbl { display: block; font-size: 14px; margin-top: 2px; }',
+
+  // --- short viewports ---------------------------------------------------
+  // Below 780px tall the 6-button column (6 x 76 + 5 x 12 + 18 = 516px) would
+  // reach up into the stats card, so the buttons shrink to 64px targets.
+  '@media (max-height: 780px) {',
+  '  #vt-buttons button { min-width: 64px; min-height: 64px; padding: 6px 8px;',
+  '    margin-top: 8px; border-radius: 14px; font-size: 13px; }',
+  '  #vt-buttons .vt-ico { font-size: 25px; }',
+  '  #vt-buttons .vt-lbl { font-size: 12px; margin-top: 1px; }',
+  '}',
+  // Very short (landscape phone): one row docked to the bottom-right, so the
+  // whole pad stays on screen and clear of the stats card and the hint card.
+  '@media (max-height: 700px) {',
+  '  #vt-buttons { right: 12px;',
+  '    bottom: 10px; bottom: calc(10px + env(safe-area-inset-bottom));',
+  '    -webkit-flex-direction: row; flex-direction: row;',
+  '    -webkit-flex-wrap: wrap; flex-wrap: wrap;',
+  '    -webkit-justify-content: flex-end; justify-content: flex-end;',
+  '    -webkit-align-items: flex-end; align-items: flex-end; }',
+  '  #vt-buttons button { margin-top: 0; margin-left: 8px; }',
+  '  #vt-buttons button:first-child { margin-left: 0; }',
+  '}'
 ].join('\n');
 
 function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
@@ -112,6 +139,10 @@ export class Input {
     this._drive = 0;
     this._turn = 0;
     this._brake = false;
+    this._charDrive = 0;
+    this._charTurn = 0;
+    this._charJump = false;
+    this._walkingMode = true;
     this._joyId = null;      // active joystick touch identifier
     this._joyX = 0;          // origin of joystick in client px
     this._joyY = 0;
@@ -135,19 +166,48 @@ export class Input {
   get brake() { return this._brake; }
   get keyActions() { return this._pending.slice(); }
 
-  // pop the oldest queued one-shot action ('cycleTool'|'cycleColor'|'detach') or null
+  // character movement getters
+  get charDrive() { return this._charDrive; }
+  get charTurn() { return this._charTurn; }
+  get charJump() { return this._charJump; }
+
+  // pop the oldest queued one-shot action ('cycleTool'|'cycleColor'|'detach'|'jump'|'enterVehicle') or null
   takeAction() {
     if (this._pending.length === 0) return null;
     return this._pending.shift();
   }
 
+  // walking/driving mode
+  setWalkingMode(walking) { this._walkingMode = walking; }
+  isWalkingMode() { return this._walkingMode; }
+
+  // caller consumes the one-shot jump flag, then clears it
+  clearJump() { this._charJump = false; }
+
+  // show/hide the enter/exit vehicle button (mobile entry prompt)
+  setEnterVisible(visible) {
+    var b = this._btnByAction ? this._btnByAction['enterVehicle'] : null;
+    if (!b) return;
+    b.style.display = visible ? 'block' : 'none';
+  }
+
   update(dt) {
     if (typeof dt !== 'number' || !(dt > 0)) dt = 0;
     if (dt > MAX_DT) dt = MAX_DT;
-    var td = clamp(this._keyDrive + this._joyDrive, -1, 1);
-    var tt = clamp(this._keyTurn + this._joyTurn, -1, 1);
-    this._drive = approach(this._drive, td, dt);
-    this._turn = approach(this._turn, tt, dt);
+
+    if (this._walkingMode) {
+      // character movement mode
+      var td = clamp(this._keyDrive + this._joyDrive, -1, 1);
+      var tt = clamp(this._keyTurn + this._joyTurn, -1, 1);
+      this._charDrive = approach(this._charDrive, td, dt);
+      this._charTurn = approach(this._charTurn, tt, dt);
+    } else {
+      // vehicle driving mode
+      var vtd = clamp(this._keyDrive + this._joyDrive, -1, 1);
+      var vtt = clamp(this._keyTurn + this._joyTurn, -1, 1);
+      this._drive = approach(this._drive, vtd, dt);
+      this._turn = approach(this._turn, vtt, dt);
+    }
   }
 
   dispose() {
@@ -167,6 +227,9 @@ export class Input {
     this._keyDrive = this._keyTurn = this._joyDrive = this._joyTurn = 0;
     this._drive = this._turn = 0;
     this._brake = false;
+    this._charDrive = this._charTurn = 0;
+    this._charJump = false;
+    this._walkingMode = true;
     this._joyId = null;
   }
 
@@ -195,7 +258,15 @@ export class Input {
       var code = keyName(e);
       self._held[code] = true;
       self._syncKeyAxes();
-      if (code === 'Space') self._brake = true;
+      if (code === 'Space') {
+        if (self._walkingMode) {
+          // jump trigger in walking mode (one-shot)
+          if (!e.repeat) self._charJump = true;
+        } else {
+          // brake in driving mode
+          self._brake = true;
+        }
+      }
       var action = ACTIONS[code];
       if (action && !e.repeat) self._pending.push(action);
       if (action || code === 'Space' || code.indexOf('Arrow') === 0) {
@@ -209,12 +280,19 @@ export class Input {
       var code = keyName(e);
       delete self._held[code];
       self._syncKeyAxes();
-      if (code === 'Space') self._brake = false;
+      if (code === 'Space') {
+        if (self._walkingMode) {
+        // jump flag is one-shot; the game consumes it and calls clearJump()
+        } else {
+          self._brake = false;
+        }
+      }
     };
     this._onBlur = function () {
       self._held = {};
       self._syncKeyAxes();
       self._brake = false;
+      self._charJump = false;
     };
     this._listen(this._target, 'keydown', this._onKeyDown, false);
     this._listen(this._target, 'keyup', this._onKeyUp, false);
@@ -322,6 +400,8 @@ export class Input {
       var trn = dx / JOY_R;
       if (Math.abs(drv) < DEAD) drv = 0;
       if (Math.abs(trn) < DEAD) trn = 0;
+      // update() routes these into charDrive/charTurn while walking
+      // and into drive/turn while driving.
       self._joyDrive = drv;
       self._joyTurn = trn;
       if (e.cancelable) e.preventDefault();
@@ -359,6 +439,7 @@ export class Input {
     this._btnWrap = document.createElement('div');
     this._btnWrap.id = 'vt-buttons';
     this._btns = [];
+    this._btnByAction = {};
     for (var i = 0; i < BUTTONS.length; i++) {
       (function (spec) {
         var b = document.createElement('button');
@@ -396,6 +477,7 @@ export class Input {
 
         self._btnWrap.appendChild(b);
         self._btns.push(b);
+        self._btnByAction[spec.action] = b;
       })(BUTTONS[i]);
     }
     document.body.appendChild(this._btnWrap);

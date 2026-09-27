@@ -65,6 +65,10 @@ const CROP_BLOCKS = {
   ],
 };
 
+// soil under the tile grid (gap colour): darker than every TILE_COLORS entry
+// so the 0.06 grid gaps read as shadowed soil, never as grass.
+const SOIL_UNDER = '#4a3a26';
+
 const colorCache = new Map();
 function col(hex) {
   let c = colorCache.get(hex);
@@ -123,6 +127,25 @@ export class Field {
     tiles.frustumCulled = false;
     scene.add(tiles);
     this._tileMesh = tiles;
+
+    // --- soil underlay: one flat slab under the whole tile grid ---
+    // The tiles are scaled to 0.94 so the grid has gaps; without this slab the
+    // bright green ground plane shows through as stray green lines. Sits at
+    // y = 0.005, well below the 0.16-tall tile slabs, so the gaps read as dark
+    // soil instead — the grid itself looks unchanged.
+    const under = new THREE.Mesh(
+      new THREE.BoxGeometry(cols * tile, 0.01, rows * tile),
+      new THREE.MeshStandardMaterial({ color: SOIL_UNDER, roughness: 1, metalness: 0 })
+    );
+    under.position.set(
+      originX + (cols - 1) * tile / 2,
+      0.005,
+      originZ + (rows - 1) * tile / 2
+    );
+    under.castShadow = false;
+    under.receiveShadow = true;
+    scene.add(under);
+    this._underMesh = under;
 
     // --- crop overlays: one InstancedMesh, BLOCKS slots per tile (1 draw call) ---
     const cropGeo = new THREE.BoxGeometry(1, 1, 1);
