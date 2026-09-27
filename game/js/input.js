@@ -21,11 +21,13 @@ var BTN_GUARD = 700; // ignore mouse click shortly after touchend on a button
 // one-shot key actions
 var ACTIONS = {
   KeyE: 'cycleTool',
+  KeyM: 'cycleMachine',
   KeyC: 'cycleColor',
   KeyQ: 'detach'
 };
 
 var BUTTONS = [
+  { action: 'cycleMachine', emoji: '\u{1F69C}', label: 'Machine' }, // tractor / combine
   { action: 'cycleTool',  emoji: '\u{1F69C}', label: 'Tool' },   // tractor
   { action: 'cycleColor', emoji: '\u{1F3A8}', label: 'Color' },  // palette
   { action: 'detach',     emoji: '\u{1F50C}', label: 'Detach' }  // plug

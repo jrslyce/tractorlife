@@ -15,6 +15,17 @@ const COL = {
   blue: '#3f7dbc'
 };
 
+const HEAD = {
+  green: '#386a2b',
+  greenLight: '#6e982d',
+  yellow: '#e8c34a',
+  yellowLight: '#f2d45b',
+  reel: '#9b302b',
+  black: '#252629',
+  silver: '#c9ccd2',
+  steel: '#7b8289'
+};
+
 export const TOOL_ORDER = ['plow', 'planter', 'sprayer', 'harvester'];
 
 const BOX = new THREE.BoxGeometry(1, 1, 1);
@@ -119,6 +130,59 @@ function buildHarvester() {
   const g = b.build();
   g.userData = { type: 'harvester', effect: 'harvest', width: 12, mount: 'front' };
   return g;
+}
+
+function buildCornHead() {
+  const b = new Builder();
+  b.box(-3, -1, -1, 0, -13, 13, HEAD.steel);
+  b.box(0, 2, -1, 0, -12, 12, HEAD.yellow);
+  b.box(2, 3, -1, -1, -13, 13, HEAD.black);
+  b.box(0, 2, 1, 1, -12, 12, HEAD.yellowLight);
+  for (let z = -12; z <= 12; z += 3) {
+    b.box(2, 3, -1, -1, z - 1, z + 1, HEAD.yellow);
+    b.box(3, 5, -1, -1, z, z, HEAD.yellowLight);
+    b.box(1, 2, 0, 0, z, z, HEAD.green);
+    b.set(0, 0, z - 1, HEAD.black);
+    b.set(0, 0, z + 1, HEAD.black);
+  }
+  b.box(-1, 0, 0, 0, -13, -13, HEAD.yellow);
+  b.box(-1, 0, 0, 0, 13, 13, HEAD.yellow);
+  const g = b.build();
+  g.userData = {
+    type: 'cornHead', name: 'Corn Head', effect: 'harvest',
+    width: 26, workOffset: 3, mount: 'front'
+  };
+  return g;
+}
+
+function buildSoybeanHead() {
+  const b = new Builder();
+  b.box(-3, -1, -1, 0, -14, 14, HEAD.steel);
+  b.box(0, 2, -1, 0, -14, 14, HEAD.yellow);
+  b.box(2, 3, -1, -1, -14, 14, HEAD.black);
+  b.box(0, 2, 1, 1, -14, 14, HEAD.yellowLight);
+  b.box(4, 4, 2, 2, -13, 13, HEAD.steel);
+  for (let z = -12; z <= 12; z += 4) {
+    b.box(3, 5, 2, 2, z, z, HEAD.reel);
+    b.box(4, 4, 0, 3, z, z, HEAD.reel);
+  }
+  for (let z = -13; z <= 13; z++) b.set(3, -1, z, HEAD.silver);
+  b.box(-1, 0, 0, 0, -14, -14, HEAD.yellow);
+  b.box(-1, 0, 0, 0, 14, 14, HEAD.yellow);
+  const g = b.build();
+  g.userData = {
+    type: 'soybeanHead', name: 'Soybean Head', effect: 'harvest',
+    width: 28, workOffset: 3, mount: 'front'
+  };
+  return g;
+}
+
+export const COMBINE_HEAD_ORDER = ['corn', 'soybean'];
+
+export function buildCombineHead(type) {
+  if (type === 'corn') return buildCornHead();
+  if (type === 'soybean') return buildSoybeanHead();
+  return null;
 }
 
 export function buildTool(type) {
