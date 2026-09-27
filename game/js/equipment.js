@@ -134,14 +134,14 @@ function buildHarvester() {
 
 function buildCornHead() {
   const b = new Builder();
-  b.box(-3, -1, -1, 0, -13, 13, HEAD.steel);
-  b.box(0, 2, -1, 0, -12, 12, HEAD.yellow);
-  b.box(2, 3, -1, -1, -13, 13, HEAD.black);
-  b.box(0, 2, 1, 1, -12, 12, HEAD.yellowLight);
+  b.box(-3, -1, -1, 0, -13, 13, HEAD.steel);       // feeder and full-width frame
+  b.box(0, 2, -1, 0, -12, 12, HEAD.yellow);        // gathering deck
+  b.box(2, 3, -1, -1, -13, 13, HEAD.black);        // cutter bar
+  b.box(0, 2, 1, 1, -12, 12, HEAD.yellowLight);    // top rail
   for (let z = -12; z <= 12; z += 3) {
-    b.box(2, 3, -1, -1, z - 1, z + 1, HEAD.yellow);
-    b.box(3, 5, -1, -1, z, z, HEAD.yellowLight);
-    b.box(1, 2, 0, 0, z, z, HEAD.green);
+    b.box(2, 3, -1, -1, z - 1, z + 1, HEAD.yellow); // pointed row divider
+    b.box(3, 5, -1, -1, z, z, HEAD.yellowLight);   // tapered snout
+    b.box(1, 2, 0, 0, z, z, HEAD.green);            // gathering chain
     b.set(0, 0, z - 1, HEAD.black);
     b.set(0, 0, z + 1, HEAD.black);
   }
@@ -157,16 +157,16 @@ function buildCornHead() {
 
 function buildSoybeanHead() {
   const b = new Builder();
-  b.box(-3, -1, -1, 0, -14, 14, HEAD.steel);
-  b.box(0, 2, -1, 0, -14, 14, HEAD.yellow);
-  b.box(2, 3, -1, -1, -14, 14, HEAD.black);
-  b.box(0, 2, 1, 1, -14, 14, HEAD.yellowLight);
-  b.box(4, 4, 2, 2, -13, 13, HEAD.steel);
+  b.box(-3, -1, -1, 0, -14, 14, HEAD.steel);        // feeder and header frame
+  b.box(0, 2, -1, 0, -14, 14, HEAD.yellow);         // draper platform
+  b.box(2, 3, -1, -1, -14, 14, HEAD.black);        // full-width knife
+  b.box(0, 2, 1, 1, -14, 14, HEAD.yellowLight);    // reel support
+  b.box(4, 4, 2, 2, -13, 13, HEAD.steel);          // reel axle
   for (let z = -12; z <= 12; z += 4) {
-    b.box(3, 5, 2, 2, z, z, HEAD.reel);
-    b.box(4, 4, 0, 3, z, z, HEAD.reel);
+    b.box(3, 5, 2, 2, z, z, HEAD.reel);            // reel battens across the width
+    b.box(4, 4, 0, 3, z, z, HEAD.reel);            // radial reel arms
   }
-  for (let z = -13; z <= 13; z++) b.set(3, -1, z, HEAD.silver);
+  for (let z = -13; z <= 13; z++) b.set(3, -1, z, HEAD.silver); // sickle sections
   b.box(-1, 0, 0, 0, -14, -14, HEAD.yellow);
   b.box(-1, 0, 0, 0, 14, 14, HEAD.yellow);
   const g = b.build();
