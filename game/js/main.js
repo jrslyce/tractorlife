@@ -4,10 +4,11 @@ import * as THREE from 'three';
 import { Field } from './field.js';
 import { Input } from './input.js';
 import { buildTractor, applyLivery, LIVERY_NAMES } from './tractor.js';
-import { TOOL_ORDER, buildTool } from './equipment.js';
+import { buildCombine } from './combine.js';
+import { TOOL_ORDER, COMBINE_HEAD_ORDER, buildTool, buildCombineHead } from './equipment.js';
 import { login, rememberedEmail, startAutosave } from './net.js';
 
-const TRACTOR_SCALE = 0.5; // tractor spans 6.5 world units (was 13)
+const VEHICLE_SCALE = 0.5;
 
 // ---------------------------------------------------------------- scene
 const scene = new THREE.Scene();
@@ -105,16 +106,28 @@ function aggregateStats() {
 
 // ---------------------------------------------------------------- tractor
 const tractor = buildTractor('red');
-tractor.scale.set(TRACTOR_SCALE, TRACTOR_SCALE, TRACTOR_SCALE);
+tractor.scale.set(VEHICLE_SCALE, VEHICLE_SCALE, VEHICLE_SCALE);
 tractor.position.set(-6, 0, -13); // west end of the middle lane, facing the farm
 tractor.rotation.y = 0; // facing +X
 scene.add(tractor);
+
+const combine = buildCombine('green');
+combine.scale.set(VEHICLE_SCALE, VEHICLE_SCALE, VEHICLE_SCALE);
+combine.position.copy(tractor.position);
+combine.rotation.y = 0;
+combine.visible = false;
+scene.add(combine);
+
+let vehicleType = 'tractor';
+let vehicle = tractor;
+const vehicleColors = { tractor: 'red', combine: 'green' };
+const toolSelections = { tractor: -1, combine: 0 };
 
 // ---------------------------------------------------------------- input
 const input = new Input();
 
 // ---------------------------------------------------------------- tools
-let currentTool = -1; // index into TOOL_ORDER; -1 = detached
+let currentTool = -1; // index into the active vehicle's attachment list; -1 = detached
 let toolGroup = null;
 
 const TOOL_INFO = {
@@ -122,7 +135,13 @@ const TOOL_INFO = {
   planter: { emoji: '🌱', name: 'Planter' },
   sprayer: { emoji: '🫧', name: 'Sprayer' },
   harvester: { emoji: '🌾', name: 'Harvester' },
+  corn: { emoji: '🌽', name: 'Corn Head' },
+  soybean: { emoji: '🌱', name: 'Soybean Head' },
 };
+
+function attachmentTypes() {
+  return vehicleType === 'combine' ? COMBINE_HEAD_ORDER : TOOL_ORDER;
+}
 
 // dispose materials only — geometry (BOX) is shared between tool builds
 function disposeGroup(obj) {
@@ -136,32 +155,68 @@ function disposeGroup(obj) {
 
 function detachTool() {
   if (toolGroup) {
-    tractor.remove(toolGroup);
+    vehicle.remove(toolGroup);
     disposeGroup(toolGroup);
     toolGroup = null;
   }
   currentTool = -1;
+  toolSelections[vehicleType] = -1;
 }
 
 function attachTool(idx) {
   detachTool();
-  const type = TOOL_ORDER[idx];
-  toolGroup = buildTool(type);
+  const types = attachmentTypes();
+  const type = types[idx];
+  toolGroup = vehicleType === 'combine' ? buildCombineHead(type) : buildTool(type);
   if (!toolGroup) return;
-  tractor.add(toolGroup);
+  vehicle.add(toolGroup);
   const mountKey = toolGroup.userData.mount === 'front' ? 'front' : 'rear';
-  toolGroup.position.copy(tractor.userData.mounts[mountKey]);
+  toolGroup.position.copy(vehicle.userData.mounts[mountKey]);
   toolGroup.rotation.set(0, 0, 0);
   currentTool = idx;
+  toolSelections[vehicleType] = idx;
 }
 
 // ---------------------------------------------------------------- livery
-let currentColor = LIVERY_NAMES[0] || 'red';
+let currentColor = vehicleColors[vehicleType] || LIVERY_NAMES[0] || 'red';
 
 function cycleColor() {
   const i = LIVERY_NAMES.indexOf(currentColor);
   currentColor = LIVERY_NAMES[(i + 1) % LIVERY_NAMES.length] || LIVERY_NAMES[0];
-  applyLivery(tractor, currentColor);
+  vehicleColors[vehicleType] = currentColor;
+  applyLivery(vehicle, currentColor);
+}
+
+function selectMachine(type) {
+  if (type !== 'tractor' && type !== 'combine') return;
+  if (type === vehicleType) return;
+  const previous = vehicle;
+  detachTool();
+  vehicleType = type;
+  vehicle = type === 'combine' ? combine : tractor;
+  vehicle.position.copy(previous.position);
+  vehicle.rotation.y = theta;
+  vehicle.visible = true;
+  previous.visible = false;
+  currentColor = vehicleColors[vehicleType];
+  applyLivery(vehicle, currentColor);
+  speed = 0;
+  lastSig = '';
+  const chase = vehicleType === 'combine' ? 24 : 20;
+  const height = vehicleType === 'combine' ? 15 : 12;
+  camPos.set(vehicle.position.x - Math.cos(theta) * chase, height,
+    vehicle.position.z + Math.sin(theta) * chase);
+}
+
+function switchMachine() {
+  const previousType = vehicleType;
+  const previousTool = currentTool;
+  const nextType = vehicleType === 'tractor' ? 'combine' : 'tractor';
+  selectMachine(nextType);
+  toolSelections[previousType] = previousTool;
+  let selected = toolSelections[nextType];
+  if (nextType === 'combine' && selected < 0) selected = 0;
+  if (selected >= 0) attachTool(selected);
 }
 
 // ---------------------------------------------------------------- HUD
@@ -221,17 +276,19 @@ let lastSig = '';
 
 function updateHUD() {
   const s = aggregateStats();
-  const type = currentTool >= 0 ? TOOL_ORDER[currentTool] : null;
+  const types = attachmentTypes();
+  const type = currentTool >= 0 ? types[currentTool] : null;
   const info = type ? TOOL_INFO[type] : null;
   // rebuild only when something actually changed
-  const sig = money + '|' + currentTool + '|' + currentColor + '|' +
+  const sig = vehicleType + '|' + money + '|' + currentTool + '|' + currentColor + '|' +
     s.tilled + '|' + s.planted + '|' + s.sprayed + '|' + s.harvested;
   if (sig === lastSig) return;
   lastSig = sig;
 
   hudLeft.innerHTML =
     '<div>💰 <b>$' + money + '</b></div>' +
-    '<div>🚜 ' + (info ? info.emoji + ' ' + info.name : 'None') + '</div>' +
+    '<div>' + (vehicleType === 'combine' ? '🌾 Combine' : '🚜 Tractor') + '</div>' +
+    '<div>' + (info ? info.emoji + ' ' + info.name : 'No attachment') + '</div>' +
     '<div>🎨 ' + (COLOR_NAMES[currentColor] || currentColor) + '</div>';
 
   hudRight.innerHTML =
@@ -242,7 +299,12 @@ function updateHUD() {
     '<div style="margin-top:4px">' + legendHTML + '</div>';
 
   let hint;
-  if (s.tilled === 0) {
+  if (vehicleType === 'combine') {
+    if (currentTool < 0) hint = 'Press E or Tool to fit a corn or soybean head';
+    else if (s.harvested === 0) hint = 'Drive the ' + info.name + ' across golden, ready crops to harvest';
+    else hint = 'Harvest ready crops with the ' + info.name + ' — press E to switch heads';
+    hint += ' · M or Machine switches vehicles';
+  } else if (s.tilled === 0) {
     hint = 'Tap 🚜 (or press E) to attach the PLOW — drive into any field';
   } else if (s.planted === 0) {
     hint = 'Now the PLANTER — drive over tilled soil';
@@ -253,6 +315,7 @@ function updateHUD() {
   } else {
     hint = 'Great farming! Keep going 💰';
   }
+  if (vehicleType === 'tractor') hint += ' · M or Machine switches vehicles';
   hudHint.textContent = hint;
 }
 updateHUD();
@@ -274,7 +337,9 @@ const lookAt = new THREE.Vector3();
 
 function stepPhysics(dt) {
   const drive = input.drive;
-  const target = drive > 0 ? drive * MAX_FWD : drive * MAX_REV;
+  const maxForward = vehicleType === 'combine' ? 5.5 : MAX_FWD;
+  const maxReverse = vehicleType === 'combine' ? 2.5 : MAX_REV;
+  const target = drive > 0 ? drive * maxForward : drive * maxReverse;
   const stopping = input.brake || drive === 0;
   const rate = stopping ? BRAKE_RATE : ACCEL_RATE;
   const diff = target - speed;
@@ -282,21 +347,27 @@ function stepPhysics(dt) {
   speed = Math.abs(diff) <= step ? target : speed + (diff > 0 ? step : -step);
 
   // steering only bites while rolling; reversing flips the turn direction
-  const steer = input.turn * STEER_RATE * Math.min(1, Math.abs(speed) / 2) * (speed < 0 ? -1 : 1);
+  const steeringRate = vehicleType === 'combine' ? 0.95 : STEER_RATE;
+  const steer = input.turn * steeringRate * Math.min(1, Math.abs(speed) / 2) * (speed < 0 ? -1 : 1);
   theta -= steer * dt;
-  tractor.rotation.y = theta;
+  vehicle.rotation.y = theta;
+
+  const steeringPivots = vehicle.userData.steeringPivots || [];
+  for (let i = 0; i < steeringPivots.length; i++) {
+    steeringPivots[i].rotation.y = input.turn * 0.42 * (speed < 0 ? -1 : 1);
+  }
 
   const cs = Math.cos(theta), sn = Math.sin(theta);
-  tractor.position.x += cs * speed * dt;
-  tractor.position.z += -sn * speed * dt;
-  tractor.position.x = Math.max(-16, Math.min(112, tractor.position.x));
-  tractor.position.z = Math.max(-60, Math.min(34, tractor.position.z));
+  vehicle.position.x += cs * speed * dt;
+  vehicle.position.z += -sn * speed * dt;
+  vehicle.position.x = Math.max(-16, Math.min(112, vehicle.position.x));
+  vehicle.position.z = Math.max(-60, Math.min(34, vehicle.position.z));
 
-  // wheels — pivot radius is in tractor-local units, so scale by TRACTOR_SCALE
-  const wheels = tractor.userData.wheels || [];
+  // Wheel radii are in model units and scaled with the active machine.
+  const wheels = vehicle.userData.wheels || [];
   for (let i = 0; i < wheels.length; i++) {
     const w = wheels[i];
-    const r = (w.radius || 1) * TRACTOR_SCALE;
+    const r = (w.radius || 1) * VEHICLE_SCALE;
     w.pivot.rotation.z -= (speed / r) * dt;
   }
 }
@@ -304,18 +375,19 @@ function stepPhysics(dt) {
 // ---------------------------------------------------------------- field work
 // field.applyEffect heading: along = dx·cos(h)+dz·sin(h) with dx = tile.x − x,
 // so forward in (x,z) = (cos h, sin h). Tractor forward = (cos θ, −sin θ),
-// therefore h = −θ. Width is world units; tools are scaled with the tractor.
+// therefore h = −θ. Width is world units; implements share the machine scale.
 function stepFieldWork(dt) {
   if (toolGroup && Math.abs(speed) > 0.4) {
     const mountKey = toolGroup.userData.mount === 'front' ? 'front' : 'rear';
-    const mount = tractor.userData.mounts[mountKey];
-    // sit the working band under the tool body: rear tools trail −X, harvester leads +X
-    const offset = toolGroup.userData.mount === 'front' ? 2 : -2;
+    const mount = vehicle.userData.mounts[mountKey];
+    const offset = typeof toolGroup.userData.workOffset === 'number'
+      ? toolGroup.userData.workOffset
+      : (toolGroup.userData.mount === 'front' ? 2 : -2);
     tmpLocal.copy(mount);
     tmpLocal.x += offset;
-    tractor.updateMatrixWorld();
-    tractor.localToWorld(tmpLocal);
-    const width = toolGroup.userData.width * TRACTOR_SCALE;
+    vehicle.updateMatrixWorld();
+    vehicle.localToWorld(tmpLocal);
+    const width = toolGroup.userData.width * VEHICLE_SCALE;
     for (let i = 0; i < fields.length; i++) {
       if (fields[i].isInside(tmpLocal.x, tmpLocal.z)) {
         const res = fields[i].applyEffect(
@@ -334,12 +406,15 @@ function drainActions() {
   let a;
   while ((a = input.takeAction()) !== null) {
     if (a === 'cycleTool') {
-      const next = currentTool + 1 >= TOOL_ORDER.length ? 0 : currentTool + 1;
+      const types = attachmentTypes();
+      const next = currentTool + 1 >= types.length ? 0 : currentTool + 1;
       attachTool(next);
     } else if (a === 'detach') {
       detachTool();
     } else if (a === 'cycleColor') {
       cycleColor();
+    } else if (a === 'cycleMachine') {
+      switchMachine();
     }
   }
   updateHUD();
@@ -349,30 +424,32 @@ function drainActions() {
 function updateCamera(dt) {
   const cs = Math.cos(theta), sn = Math.sin(theta);
   fwd.set(cs, 0, -sn);
-  // high chase cam: desired = pos − forward*20 + up*12
-  const dx = tractor.position.x - fwd.x * 20;
-  const dy = 12;
-  const dz = tractor.position.z - fwd.z * 20;
+  const chase = vehicleType === 'combine' ? 24 : 20;
+  const height = vehicleType === 'combine' ? 15 : 12;
+  const lookAhead = vehicleType === 'combine' ? 17 : 8;
+  const dx = vehicle.position.x - fwd.x * chase;
+  const dy = height;
+  const dz = vehicle.position.z - fwd.z * chase;
   const t = 1 - Math.exp(-4 * dt);
   camPos.x += (dx - camPos.x) * t;
   camPos.y += (dy - camPos.y) * t;
   camPos.z += (dz - camPos.z) * t;
   camera.position.copy(camPos);
   lookAt.set(
-    tractor.position.x + fwd.x * 8,
-    1.5,
-    tractor.position.z + fwd.z * 8
+    vehicle.position.x + fwd.x * lookAhead,
+    vehicleType === 'combine' ? 2.5 : 1.5,
+    vehicle.position.z + fwd.z * lookAhead
   );
   camera.lookAt(lookAt);
 }
 
 function updateSun() {
   sun.position.set(
-    tractor.position.x + SUN_OFFSET.x,
+    vehicle.position.x + SUN_OFFSET.x,
     SUN_OFFSET.y,
-    tractor.position.z + SUN_OFFSET.z
+    vehicle.position.z + SUN_OFFSET.z
   );
-  sun.target.position.copy(tractor.position);
+  sun.target.position.copy(vehicle.position);
   sun.target.updateMatrixWorld();
 }
 
@@ -384,11 +461,12 @@ function snapshot() {
   for (let i = 0; i < fields.length; i++) fd.push(fields[i].serialize());
   return {
     v: 1,
+    machine: vehicleType,
     money: Math.max(0, Math.floor(money)),
     tool: currentTool,
     color: currentColor,
-    tx: tractor.position.x,
-    tz: tractor.position.z,
+    tx: vehicle.position.x,
+    tz: vehicle.position.z,
     theta: theta,
     fields: fd,
   };
@@ -397,28 +475,33 @@ function snapshot() {
 function applyState(s) {
   if (!s || typeof s !== 'object') return false;
 
+  const savedMachine = s.machine === 'combine' ? 'combine' : 'tractor';
+  if (savedMachine !== vehicleType) selectMachine(savedMachine);
+  else detachTool();
+
   if (typeof s.money === 'number' && isFinite(s.money)) {
     money = Math.max(0, Math.floor(s.money));
   }
 
   if (typeof s.tx === 'number' && isFinite(s.tx)) {
-    tractor.position.x = Math.max(-16, Math.min(112, s.tx));
+    vehicle.position.x = Math.max(-16, Math.min(112, s.tx));
   }
   if (typeof s.tz === 'number' && isFinite(s.tz)) {
-    tractor.position.z = Math.max(-60, Math.min(34, s.tz));
+    vehicle.position.z = Math.max(-60, Math.min(34, s.tz));
   }
   if (typeof s.theta === 'number' && isFinite(s.theta)) theta = s.theta;
-  tractor.rotation.y = theta;
+  vehicle.rotation.y = theta;
   speed = 0;
 
   if (typeof s.color === 'string' && LIVERY_NAMES.indexOf(s.color) !== -1) {
     currentColor = s.color;
-    applyLivery(tractor, currentColor);
+    vehicleColors[vehicleType] = currentColor;
+    applyLivery(vehicle, currentColor);
   }
 
   if (typeof s.tool === 'number' && isFinite(s.tool)) {
     const t = Math.round(s.tool);
-    if (t >= 0 && t < TOOL_ORDER.length) attachTool(t);
+    if (t >= 0 && t < attachmentTypes().length) attachTool(t);
     else detachTool();
   } else {
     detachTool();
@@ -432,7 +515,9 @@ function applyState(s) {
 
   // snap the chase cam behind the restored pose (no cross-map swoop)
   const cs = Math.cos(theta), sn = Math.sin(theta);
-  camPos.set(tractor.position.x - cs * 20, 12, tractor.position.z + sn * 20);
+  const chase = vehicleType === 'combine' ? 24 : 20;
+  const height = vehicleType === 'combine' ? 15 : 12;
+  camPos.set(vehicle.position.x - cs * chase, height, vehicle.position.z + sn * chase);
 
   lastSig = '';
   updateHUD();
