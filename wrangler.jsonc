@@ -12,5 +12,10 @@
   "durable_objects": {
     "bindings": [{ "name": "SAVES", "class_name": "GameSaves" }]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["GameSaves"] }]
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["GameSaves"] }],
+  "previews": {
+    "durable_objects": {
+      "bindings": [{ "name": "SAVES", "class_name": "GameSaves" }]
+    }
+  }
 }

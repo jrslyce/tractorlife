@@ -62,12 +62,11 @@ export function buildCombine(liveryName) {
         const inner = Math.max(1, (radius - 1) * (radius - 1));
         for (let side = -1; side <= 1; side += 2) {
           for (let layer = -1; layer <= 1; layer++) {
-          const x = cx + dx;
-          const y = cy + dy;
-          const z = side * wheelOffset + layer;
-          claimed.add(key(x, y, z));
-          cells.push([dx, dy, layer, distance <= inner ? 'hub' : 'tire']);
+            claimed.add(key(cx + dx, cy + dy, side * wheelOffset + layer));
           }
+        }
+        for (let layer = -1; layer <= 1; layer++) {
+          cells.push([dx, dy, layer, distance <= inner ? 'hub' : 'tire']);
         }
       }
     }
