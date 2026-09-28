@@ -8,6 +8,7 @@ import * as THREE from 'three';
 import { ITEM_BY_ID } from './items.js';
 
 export const WAGON_SLOTS = 12;
+export const TRUCK_BED_SLOTS = 6;
 const SCALE = 0.5;
 const TONGUE_TIP_X = 8;     // model units ahead of the wagon centre (hitch ring)
 const HITCH_RANGE = 4;      // world units: truck hitch must be this close to hitch up
@@ -83,12 +84,67 @@ function buildWagonModel() {
   return root;
 }
 
-export class Wagon {
+// A bed of item stacks (the wagon's, or the truck's).
+export class CargoHold {
+  constructor(slots, name, emoji) {
+    this.slots = slots;
+    this.name = name;
+    this.emoji = emoji;
+    this.cargo = new Array(slots).fill(null);
+  }
+
+  // Add `qty` units of an item, merging into an existing stack first.
+  add(itemId, qty) {
+    qty = Math.floor(Number(qty));
+    if (!ITEM_BY_ID[itemId] || !(qty > 0)) return { ok: false, error: 'invalid item' };
+    for (let i = 0; i < this.cargo.length; i++) {
+      if (this.cargo[i] && this.cargo[i].itemId === itemId) {
+        this.cargo[i].qty += qty;
+        return { ok: true };
+      }
+    }
+    for (let i = 0; i < this.cargo.length; i++) {
+      if (!this.cargo[i]) {
+        this.cargo[i] = { itemId: itemId, qty: qty };
+        return { ok: true };
+      }
+    }
+    return { ok: false, error: 'The ' + this.name.toLowerCase() + ' is full.' };
+  }
+
+  take(idx) {
+    const s = this.cargo[idx];
+    if (!s) return null;
+    this.cargo[idx] = null;
+    return s;
+  }
+
+  hasAny(test) {
+    for (let i = 0; i < this.cargo.length; i++) if (this.cargo[i] && test(this.cargo[i].itemId)) return true;
+    return false;
+  }
+
+  serializeCargo() {
+    return this.cargo.map(function (s) { return s ? { itemId: s.itemId, qty: s.qty } : null; });
+  }
+
+  restoreCargo(list) {
+    this.cargo = new Array(this.slots).fill(null);
+    if (!Array.isArray(list)) return;
+    for (let i = 0; i < list.length && i < this.slots; i++) {
+      const s = list[i];
+      const qty = s ? Math.floor(Number(s.qty)) : 0;
+      if (s && ITEM_BY_ID[s.itemId] && qty > 0) this.cargo[i] = { itemId: s.itemId, qty: qty };
+    }
+  }
+}
+
+export class Wagon extends CargoHold {
   constructor(scene) {
+    super(WAGON_SLOTS, 'Farm Wagon', '🛒');
     this.group = buildWagonModel();
     scene.add(this.group);
     this.hitched = false;
-    this.cargo = new Array(WAGON_SLOTS).fill(null);
     this._tongue = new THREE.Vector3();
   }
 
@@ -151,39 +207,13 @@ export class Wagon {
 
   isNear(x, z) { return this.distanceTo(x, z) <= REACH; }
 
-  // Add `qty` units of an item, merging into an existing stack first.
-  add(itemId, qty) {
-    qty = Math.floor(Number(qty));
-    if (!ITEM_BY_ID[itemId] || !(qty > 0)) return { ok: false, error: 'invalid item' };
-    for (let i = 0; i < this.cargo.length; i++) {
-      if (this.cargo[i] && this.cargo[i].itemId === itemId) {
-        this.cargo[i].qty += qty;
-        return { ok: true };
-      }
-    }
-    for (let i = 0; i < this.cargo.length; i++) {
-      if (!this.cargo[i]) {
-        this.cargo[i] = { itemId: itemId, qty: qty };
-        return { ok: true };
-      }
-    }
-    return { ok: false, error: 'The wagon is full.' };
-  }
-
-  take(idx) {
-    const s = this.cargo[idx];
-    if (!s) return null;
-    this.cargo[idx] = null;
-    return s;
-  }
-
   serialize() {
     return {
       x: Math.round(this.group.position.x * 100) / 100,
       z: Math.round(this.group.position.z * 100) / 100,
       h: Math.round(this.group.rotation.y * 1000) / 1000,
       hitched: this.hitched,
-      cargo: this.cargo.map(function (s) { return s ? { itemId: s.itemId, qty: s.qty } : null; })
+      cargo: this.serializeCargo()
     };
   }
 
@@ -193,14 +223,7 @@ export class Wagon {
       this.place(d.x, d.z, Number.isFinite(d.h) ? d.h : 0);
     }
     this.hitched = !!d.hitched;
-    this.cargo = new Array(WAGON_SLOTS).fill(null);
-    if (Array.isArray(d.cargo)) {
-      for (let i = 0; i < d.cargo.length && i < WAGON_SLOTS; i++) {
-        const s = d.cargo[i];
-        const qty = s ? Math.floor(Number(s.qty)) : 0;
-        if (s && ITEM_BY_ID[s.itemId] && qty > 0) this.cargo[i] = { itemId: s.itemId, qty: qty };
-      }
-    }
+    this.restoreCargo(d.cargo);
     return true;
   }
 }
@@ -232,7 +255,7 @@ const PANEL_CSS = [
 
 export class WagonPanel {
   constructor(wagon, inventory, onChange) {
-    this._wagon = wagon;
+    this._wagon = wagon; // the hold currently shown (set again by open())
     this._inventory = inventory;
     this._onChange = onChange || function () {};
     this._open = false;
@@ -244,11 +267,11 @@ export class WagonPanel {
     const root = document.createElement('div');
     root.id = 'wagon-panel';
     root.innerHTML =
-      '<div class="wp-card" role="dialog" aria-label="Wagon">' +
-      '<h2>🛒 Farm Wagon</h2>' +
-      '<p>Tap something in your hotbar to load it. Tap something on the wagon to take it.</p>' +
+      '<div class="wp-card" role="dialog" aria-label="Cargo">' +
+      '<h2 class="wp-title"></h2>' +
+      '<p class="wp-help"></p>' +
       '<h3>🎒 Your hotbar</h3><div class="wp-grid" data-row="hotbar"></div>' +
-      '<h3>🛒 On the wagon</h3><div class="wp-grid" data-row="wagon"></div>' +
+      '<h3 class="wp-hold"></h3><div class="wp-grid" data-row="wagon"></div>' +
       '<div class="wp-msg"></div>' +
       '<button type="button" class="wp-close">Done</button>' +
       '</div>';
@@ -257,6 +280,9 @@ export class WagonPanel {
     this._hotbarRow = root.querySelector('[data-row="hotbar"]');
     this._wagonRow = root.querySelector('[data-row="wagon"]');
     this._msg = root.querySelector('.wp-msg');
+    this._title = root.querySelector('.wp-title');
+    this._help = root.querySelector('.wp-help');
+    this._holdLabel = root.querySelector('.wp-hold');
 
     const self = this;
     root.querySelector('.wp-close').addEventListener('click', function () { self.close(); });
@@ -273,7 +299,13 @@ export class WagonPanel {
 
   isOpen() { return this._open; }
 
-  open() {
+  // Show `hold` (the wagon or the truck bed; defaults to the last one shown).
+  open(hold) {
+    if (hold) this._wagon = hold;
+    const noun = this._wagon.name.toLowerCase().replace('farm ', '');
+    this._title.textContent = this._wagon.emoji + ' ' + this._wagon.name;
+    this._help.textContent = 'Tap something in your hotbar to load it. Tap something in the ' + noun + ' to take it.';
+    this._holdLabel.textContent = this._wagon.emoji + ' In the ' + noun;
     this._open = true;
     this._msg.textContent = '';
     this._render();
@@ -335,7 +367,7 @@ export class WagonPanel {
     const stack = this._wagon.cargo[wagonIdx];
     if (!stack) return;
     const res = this._inventory.buy(stack.itemId, stack.qty);
-    if (!res || !res.ok) { this._msg.textContent = 'Your hotbar is full — load something onto the wagon first.'; return; }
+    if (!res || !res.ok) { this._msg.textContent = 'Your hotbar is full — load something into the ' + this._wagon.name.toLowerCase().replace('farm ', '') + ' first.'; return; }
     this._wagon.take(wagonIdx);
     this._msg.textContent = '';
     this._render();

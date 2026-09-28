@@ -18,7 +18,7 @@ import { Builder } from './build.js';
 import { RealtimeClient } from './realtime.js';
 import { ITEM_BY_ID, packSize } from './items.js';
 import { Inventory } from './inventory.js';
-import { Wagon, WagonPanel } from './wagon.js';
+import { Wagon, WagonPanel, CargoHold, TRUCK_BED_SLOTS } from './wagon.js';
 import { TOOL_ORDER, COMBINE_HEAD_ORDER, buildTool, buildCombineHead } from './equipment.js';
 import { login, restoreRememberedSession, rememberedEmail, hasRememberedEmail, forgetRememberedCredentials, startAutosave, fetchFarmers, fetchFarmState, fetchSharedWorld, placeSharedRoad, sendGift } from './net.js';
 
@@ -195,7 +195,10 @@ const TRUCK_HITCH = new THREE.Vector3(-11, 0, 0); // truck model space
 const hitchWorld = new THREE.Vector3();
 const shopDoor = new THREE.Vector3(SHOP_X + 6, 0, SHOP_Z - 2);
 const WAGON_SHOP_RANGE = 30; // park the wagon this close to the shop door to load purchases
+const truckBed = new CargoHold(TRUCK_BED_SLOTS, 'Truck Bed', '🚚');
 const wagonPanel = new WagonPanel(wagon, inventory, function () { lastSig = ''; });
+const TRUCK_SHOP_RANGE = 30;
+const TAP_REACH = 10; // world units: how close you must be to use a tapped wagon/truck bed
 
 function truckHitchPoint() {
   truck.updateMatrixWorld();
@@ -205,6 +208,68 @@ function truckHitchPoint() {
 function wagonAtShop() {
   return wagon.distanceTo(shopDoor.x, shopDoor.z) <= WAGON_SHOP_RANGE;
 }
+
+function truckAtShop() {
+  return Math.hypot(truck.position.x - shopDoor.x, truck.position.z - shopDoor.z) <= TRUCK_SHOP_RANGE;
+}
+
+// The cargo hold the walking player can reach right now (wagon first).
+function reachableHold() {
+  if (mode !== 'walking') return null;
+  const x = character.group.position.x, z = character.group.position.z;
+  if (wagon.isNear(x, z)) return wagon;
+  if (distanceToVehicle(truck, x, z) <= ENTER_DIST + 1.5) return truckBed;
+  return null;
+}
+
+// Tap / click the wagon or the truck to open its bed. Runs in the capture
+// phase on the canvas so a tap on a vehicle never also places a block.
+const tapRay = new THREE.Raycaster();
+const tapPointer = new THREE.Vector2();
+let tapTarget = null;
+let tapStart = null;
+
+function holdUnderPointer(e) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  if (!rect.width || !rect.height) return null;
+  tapPointer.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+  tapRay.setFromCamera(tapPointer, camera);
+  const hits = tapRay.intersectObjects([wagon.group, truck], true);
+  if (!hits.length) return null;
+  let o = hits[0].object;
+  while (o) {
+    if (o === wagon.group) return wagon;
+    if (o === truck) return truckBed;
+    o = o.parent;
+  }
+  return null;
+}
+
+renderer.domElement.addEventListener('pointerdown', function (e) {
+  tapTarget = null;
+  if (window.VT_LOCKED !== false || mode !== 'walking' || (e.button !== undefined && e.button !== 0)) return;
+  const hold = holdUnderPointer(e);
+  if (!hold) return;
+  tapTarget = hold;
+  tapStart = { x: e.clientX, y: e.clientY, t: performance.now() };
+  e.stopImmediatePropagation(); // don't let the builder place an item on the vehicle
+}, true);
+
+addEventListener('pointerup', function (e) {
+  const hold = tapTarget;
+  tapTarget = null;
+  if (!hold || !tapStart) return;
+  const moved = Math.hypot(e.clientX - tapStart.x, e.clientY - tapStart.y);
+  if (moved > 20 || performance.now() - tapStart.t > 800) return; // a drag, not a tap
+  if (window.VT_LOCKED !== false || mode !== 'walking') return;
+  const x = character.group.position.x, z = character.group.position.z;
+  const dist = hold === wagon ? wagon.distanceTo(x, z) : distanceToVehicle(truck, x, z);
+  if (dist > TAP_REACH) {
+    showToast('Walk up to the ' + (hold === wagon ? 'wagon' : 'truck') + ' to open its bed');
+    return;
+  }
+  wagonPanel.open(hold);
+});
 
 function toggleHitch() {
   if (wagon.hitched) {
@@ -480,6 +545,13 @@ window.vtPurchaseItem = function (item, qty, balance) {
       return loaded;
     }
   }
+  if (truckAtShop()) {
+    const loaded = truckBed.add(item.id, units);
+    if (loaded.ok) {
+      showToast('🚚 ' + item.name + ' loaded into your truck bed');
+      return loaded;
+    }
+  }
   return inventory.buy(item.id, units);
 };
 
@@ -550,7 +622,7 @@ function updateHUD() {
   const sig = vehicleType + '|' + money + '|' + currentTool + '|' + currentColor + '|' +
     s.tilled + '|' + s.planted + '|' + s.sprayed + '|' + s.harvested + '|' +
     mode + '|' + farmSlot + '|' + label + '|' + nearName + '|' + outOfSupply + '|' +
-    wagon.hitched + '|' + wagonNearShown + '|' + (shopNearShown && wagonAtShop());
+    wagon.hitched + '|' + wagonNearShown + '|' + (shopNearShown && (wagonAtShop() || truckAtShop()));
   if (sig === lastSig) return;
   lastSig = sig;
 
@@ -603,12 +675,15 @@ function updateHUD() {
   } else if (outOfSupply === 'spray') {
     hint = 'The sprayer is empty — buy Crop Spray at the 🏪 Shop (follow the arrow at the top)';
   }
-  if (mode === 'walking' && wagon.isNear(character.group.position.x, character.group.position.z)) {
-    hint = 'Press L or tap Wagon to load or unload supplies';
+  if (wagonNearShown) {
+    const hold = reachableHold();
+    hint = hold === wagon
+      ? 'Tap the wagon (or press L) to load or unload supplies'
+      : 'Tap the truck bed (or press L) to load or unload supplies · E hops in';
   }
   if (mode === 'walking' && shop.isNear(character.group.position.x, character.group.position.z)) {
-    hint = wagonAtShop()
-      ? 'Press E or tap Shop — purchases load onto your wagon'
+    hint = wagonAtShop() || truckAtShop()
+      ? 'Press E or tap Shop — purchases load onto your ' + (wagonAtShop() ? 'wagon' : 'truck')
       : 'Press E or tap Shop — talk to the shopkeeper';
   }
   hudHint.textContent = hint;
@@ -975,9 +1050,8 @@ function drainActions() {
     } else if (a === 'detach' && mode === 'driving' && vehicleType === 'truck') {
       if (wagon.hitched) toggleHitch();
     } else if (a === 'openWagon') {
-      if (mode === 'walking' && wagon.isNear(character.group.position.x, character.group.position.z)) {
-        wagonPanel.open();
-      }
+      const hold = reachableHold();
+      if (hold) wagonPanel.open(hold);
     } else if (a === 'cycleTool') {
       const types = attachmentTypes();
       if (types.length > 0) {
@@ -1150,6 +1224,7 @@ function snapshot() {
     structures: builder ? builder.serializeLocal() : [],
     inventory: inventory.serialize(),
     wagon: wagon.serialize(),
+    truckBed: truckBed.serializeCargo(),
     appliedGiftIds: appliedGiftIds.slice(-100),
   };
 }
@@ -1274,6 +1349,7 @@ function applyState(s) {
 
   // --- wagon (hitched wagons re-seat behind wherever the truck is) ---
   if (!oldLayout && s.wagon) wagon.restore(s.wagon);
+  truckBed.restoreCargo(s.truckBed);
   if (wagon.hitched) {
     const hp = truckHitchPoint();
     wagon.snapBehind(hp.x, hp.z, truck.rotation.y);
@@ -1294,7 +1370,7 @@ function rescueStuckFarm() {
   if (money >= RESCUE) return;
   const isSupply = function (id) { return /_seeds$/.test(id) || id === 'crop_spray'; };
   if (inventory.findSlot(isSupply) >= 0) return;
-  for (let i = 0; i < wagon.cargo.length; i++) if (wagon.cargo[i] && isSupply(wagon.cargo[i].itemId)) return;
+  if (wagon.hasAny(isSupply) || truckBed.hasAny(isSupply)) return;
   const farms = world.getFarms();
   const own = farms[world.getAssignedSlot()];
   if (own && own.getFields().some(function (f) { return f.hasHarvestComing(); })) return;
@@ -1637,6 +1713,8 @@ function setupLogin() {
 
     resetToSpawn();
     money = 0;
+    wagon.restoreCargo([]); // a fresh login never inherits the last player's cargo
+    truckBed.restoreCargo([]);
     applyState(res.state);
     world.setAssignedSlot(slot); // resolved slot stays authoritative
     if (!res.state) {
@@ -1762,7 +1840,7 @@ renderer.setAnimationLoop(function () {
   }
   if (shopNear) shop.facePlayer(character.group.position.x, character.group.position.z);
 
-  const wagonNear = mode === 'walking' && wagon.isNear(character.group.position.x, character.group.position.z);
+  const wagonNear = reachableHold() !== null;
   if (wagonNear !== wagonNearShown) {
     wagonNearShown = wagonNear;
     input.setWagonNear(wagonNear);
