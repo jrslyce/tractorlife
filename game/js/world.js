@@ -8,6 +8,11 @@ var NUM_FARMS = 10;
 var FARM_SPACING = 140; // X distance between farm centers
 var CULL_DISTANCE = 440; // past fog far (430) so culled farms are fogged out
 
+// Shop area: south of the farms, across the E-W road
+var SHOP_CENTER_X = 680; // between farms 5 and 6 (slot 4 and 5)
+var SHOP_CENTER_Z = 55;  // south of the road strip (z ~40)
+var SHOP_TRIGGER_RADIUS = 4;
+
 // ---------------------------------------------------------------- World class
 export class World {
   constructor(scene, playerEmail) {
