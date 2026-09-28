@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { deviceProfile, PerformanceBudget } from '../js/performance.js';
+import { steeringYawDelta } from '../js/vehicle-physics.js';
 
 test('low-memory, low-core and data-saver devices get constrained settings', function () {
   const lowMemory = deviceProfile({ deviceMemory: 2, hardwareConcurrency: 8 }, 1200);
@@ -47,4 +48,11 @@ test('labels, HUD and lighting cadence are independently throttled', function ()
   assert.equal(budget.shouldUpdateHud(150), false);
   assert.equal(budget.shouldUpdateLabels(101), true);
   assert.equal(budget.shouldUpdateSun(67), true);
+});
+
+test('positive steering input turns right in forward travel and reverses while backing up', function () {
+  assert.ok(steeringYawDelta(1, 1.6, 2, 0.1) < 0, 'right should decrease yaw from +X toward +Z');
+  assert.ok(steeringYawDelta(-1, 1.6, 2, 0.1) > 0, 'left should increase yaw from +X toward -Z');
+  assert.ok(steeringYawDelta(1, 1.6, -2, 0.1) > 0, 'reverse steering should invert yaw');
+  assert.equal(steeringYawDelta(1, 1.6, 0, 0.1), 0, 'stationary steering should have no yaw');
 });
