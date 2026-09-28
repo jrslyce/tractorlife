@@ -488,13 +488,17 @@ export class RealtimeRoom {
     if (msg.type === "build") {
       const entry = msg.entry;
       const roads = ["asphalt", "gravel", "brick"];
-      if (!isPlainObject(entry) || !["asphalt", "gravel", "brick", "wood", "roof_shingles", "fence_kit", "window_glass", "door", "lamp_light", "hay_bale", "scarecrow", "pumpkin_pile", "corn_shocks", "string_lights", "mailbox"].includes(entry.id) ||
+      if (!isPlainObject(entry) || !["asphalt", "gravel", "brick", "wood", "roof_shingles", "fence_kit", "window_glass", "door", "lamp_light", "hay_bale", "scarecrow", "pumpkin_pile", "corn_shocks", "string_lights", "mailbox", "harvest_pumpkin"].includes(entry.id) ||
           !Number.isSafeInteger(entry.x) || !Number.isSafeInteger(entry.z) ||
+          (entry.y !== undefined && (!Number.isSafeInteger(entry.y) || entry.y < 0 || entry.y > 64)) ||
           entry.x < WORLD_MIN_X || entry.x > WORLD_MAX_X || entry.z < -78 || entry.z > 80) return;
       // Roads go on public land; everything else only on the sender's farm.
       const slot = farmSlotAt(entry.x, entry.z);
       if (roads.includes(entry.id) ? slot >= 0 : slot !== assignFarmSlot(attachment.email)) return;
-      this._broadcast({ type: "build", email: attachment.email, entry: { id: entry.id, x: entry.x, z: entry.z } }, socket);
+       this._broadcast({ type: "build", email: attachment.email, entry: {
+         id: entry.id, x: entry.x, y: entry.y || 0, z: entry.z,
+         color: typeof entry.color === "string" && /^#[0-9a-fA-F]{6}$/.test(entry.color) ? entry.color : undefined
+       } }, socket);
     }
   }
 

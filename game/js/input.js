@@ -27,7 +27,8 @@ var ACTIONS = {
   KeyQ: 'detach',
   KeyT: 'talkShop', // M1: talk to shopkeeper
   KeyL: 'openWagon', // load / unload the wagon or truck bed
-  KeyU: 'unloadCombine'
+  KeyU: 'unloadCombine',
+  KeyB: 'toggleBuildMode'
 };
 
 var BUTTONS = [
@@ -39,7 +40,8 @@ var BUTTONS = [
   { action: 'enterVehicle', emoji: '\u{1F697}', label: 'Enter' }, // hop in/out
   { action: 'talkShop',   emoji: '\u{1F3EA}', label: 'Shop' },   // M1: talk to shopkeeper
   { action: 'openWagon',  emoji: '\u{1F6D2}', label: 'Cargo' },
-  { action: 'unloadCombine', emoji: '🌾', label: 'Unload' }
+  { action: 'unloadCombine', emoji: '🌾', label: 'Unload' },
+  { action: 'toggleBuildMode', emoji: '🧱', label: 'Build' }
 ];
 
 var CSS = [
@@ -168,6 +170,7 @@ export class Input {
     this._pedalBrake = false;
     this._wheelTurn = 0;
     this._drivingMode = false;
+    this._buildMode = false;
     this._enterNear = false;
     this._shopNear = false;
     this._wagonNear = false;
@@ -236,6 +239,11 @@ export class Input {
   }
 
   setEnterVisible(visible) { this._enterNear = !!visible; this._updateContextButtons(); }
+  setBuildMode(active) {
+    this._buildMode = !!active;
+    this._setButtonLabel('toggleBuildMode', '🧱', this._buildMode ? 'Exit Build' : 'Build');
+    this._setButtonVisible('toggleBuildMode', !this._drivingMode);
+  }
   setToolControl(available, attached) {
     this._toolAvailable = !!available;
     this._toolAttached = !!attached;
@@ -265,6 +273,7 @@ export class Input {
     this._setButtonVisible('cycleColor', !this._drivingMode);
     this._setButtonVisible('detach', false);
     this._setButtonVisible('jump', !this._drivingMode);
+    this._setButtonVisible('toggleBuildMode', !this._drivingMode);
   }
 
   // caller consumes the one-shot jump flag, then clears it

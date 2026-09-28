@@ -52,6 +52,8 @@ export class Inventory {
     this._character = null;
     this._heldMesh = null;
     this._visible = null;
+    this._firstPersonArm = null;
+    this._firstPerson = false;
   }
 
   // ---- public API ----
@@ -90,6 +92,18 @@ export class Inventory {
     return false;
   }
 
+  getCount(itemId) {
+    for (var i = 0; i < this._slots.length; i++) {
+      if (this._slots[i] && this._slots[i].itemId === itemId) return this._slots[i].qty;
+    }
+    return 0;
+  }
+
+  consumeItem(itemId, amount) {
+    var idx = this.findSlot(function (id) { return id === itemId; });
+    return idx < 0 ? 0 : this.useFromSlot(idx, amount);
+  }
+
   // Select a slot by index (0-based). Returns the item or null.
   selectSlot(idx) {
     if (idx < 0 || idx >= HOTBAR_SLOTS) return null;
@@ -103,10 +117,20 @@ export class Inventory {
     this._updateHeldItem();
   }
 
+  setFirstPersonArm(arm) {
+    this._firstPersonArm = arm || null;
+    this._updateHeldItem();
+  }
+
+  setFirstPerson(active) {
+    this._firstPerson = !!active;
+    this._updateHeldItem();
+  }
+
   _updateHeldItem() {
-    var arm = this._character && this._character._rightArm;
-    if (this._heldMesh && arm) {
-      arm.remove(this._heldMesh);
+    var arm = this._firstPerson ? this._firstPersonArm : (this._character && this._character._rightArm);
+    if (this._heldMesh) {
+      if (this._heldMesh.parent) this._heldMesh.parent.remove(this._heldMesh);
       this._heldMesh.geometry.dispose();
       this._heldMesh.material.dispose();
       this._heldMesh = null;
