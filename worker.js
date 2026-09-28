@@ -235,6 +235,64 @@ export class FarmerList {
   }
 }
 
+// Farm footprints, matching game/js/farm.js: each farm spans x
+// slot*140 + (-6 .. 105.5) and z -54.5 .. 27.5. Returns -1 on public land.
+const FARM_MIN_X = -6;
+const FARM_MAX_X = 105.5;
+const FARM_MIN_Z = -54.5;
+const FARM_MAX_Z = 27.5;
+function farmSlotAt(x, z) {
+  if (z < FARM_MIN_Z || z > FARM_MAX_Z) return -1;
+  for (let slot = 0; slot < 10; slot++) {
+    if (x >= slot * 140 + FARM_MIN_X && x <= slot * 140 + FARM_MAX_X) return slot;
+  }
+  return -1;
+}
+
+// Shared public road tiles. A single named Durable Object serializes writes,
+// making placement idempotent without replacing the entire shared snapshot.
+export class SharedWorld {
+  constructor(ctx, env) {
+    this.ctx = ctx;
+    this.env = env;
+  }
+
+  async fetch(request) {
+    const url = new URL(request.url);
+    if (request.method === "GET" && url.pathname === "/read") {
+      const roads = await this.ctx.storage.get("roads") || {};
+      const entries = Object.keys(roads).map((key) => roads[key]);
+      return json({ ok: true, roads: entries, stamp: await this.ctx.storage.get("stamp") || 0 });
+    }
+    if (request.method === "POST" && url.pathname === "/place") {
+      let body;
+      try {
+        if (Number(request.headers.get("content-length") || 0) > 2048) return json({ ok: false, error: "too large" }, 413);
+        body = await request.json();
+      } catch (err) {
+        return json({ ok: false, error: "bad request" }, 400);
+      }
+      if (!isPlainObject(body) || !["asphalt", "gravel", "brick"].includes(body.id) ||
+          !Number.isSafeInteger(body.x) || !Number.isSafeInteger(body.z) ||
+          body.x < -10 || body.x > 1385 || body.z < -78 || body.z > 80) {
+        return json({ ok: false, error: "invalid tile" }, 400);
+      }
+      // Reject tiles inside any farm bounds; only public land can be shared road.
+      if (farmSlotAt(body.x, body.z) >= 0) {
+        return json({ ok: false, error: "roads may only be placed on public land" }, 403);
+      }
+      const key = body.x + "," + body.z;
+      const roads = await this.ctx.storage.get("roads") || {};
+      if (!roads[key] && Object.keys(roads).length >= 5000) return json({ ok: false, error: "shared road limit reached" }, 429);
+      roads[key] = { id: body.id, x: body.x, z: body.z };
+      const stamp = (await this.ctx.storage.get("stamp") || 0) + 1;
+      await this.ctx.storage.put({ roads: roads, stamp: stamp });
+      return json({ ok: true, tile: roads[key], stamp: stamp });
+    }
+    return json({ ok: false, error: "not found" }, 404);
+  }
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -407,6 +465,20 @@ export default {
         farm = null;
       }
       return json({ ok: true, email: email, farm: farm });
+    }
+
+    if (url.pathname === "/api/world" || url.pathname === "/api/world/place") {
+      const session = await readSession(request, env);
+      if (!session) return json({ ok: false, error: "unauthorized" }, 401);
+      if (url.pathname === "/api/world" && request.method !== "GET") {
+        return json({ ok: false, error: "method not allowed" }, 405);
+      }
+      if (url.pathname === "/api/world/place" && request.method !== "POST") {
+        return json({ ok: false, error: "method not allowed" }, 405);
+      }
+      const world = env.SHARED_WORLD.get(env.SHARED_WORLD.idFromName("shared-world"));
+      const target = "https://shared-world/" + (request.method === "GET" ? "read" : "place");
+      return world.fetch(new Request(target, request));
     }
 
     if (url.pathname.startsWith("/api/")) {

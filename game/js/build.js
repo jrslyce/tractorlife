@@ -204,6 +204,12 @@ export class Builder {
 
   serialize() { return this._placed.slice(); }
 
+  serializeLocal() {
+    return this._placed.filter(function (entry) {
+      return !ROAD_IDS[entry.id];
+    });
+  }
+
   restore(entries) {
     if (!Array.isArray(entries)) return false;
     for (var i = 0; i < entries.length; i++) {

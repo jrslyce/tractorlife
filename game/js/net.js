@@ -5,11 +5,13 @@
 const EMAIL_KEY = 'vt-email';
 const LEGACY_CODE_KEY = 'vt-code';
 const OFFLINE_PREFIX = 'vt-offline:';
+const WORLD_QUEUE_KEY = 'vt-shared-road-queue';
 const SAVE_MS = 15000;
 const LOGIN_TIMEOUT_MS = 6000;
 const SAVE_TIMEOUT_MS = 8000;
 const FARMERS_TIMEOUT_MS = 5000;
 const FARM_STATE_TIMEOUT_MS = 5000;
+const WORLD_TIMEOUT_MS = 5000;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // email of the active session (used for /api/save bodies)
@@ -233,6 +235,90 @@ export function fetchFarmState(slot) {
   ).catch(function () {
     return null;
   });
+}
+
+export function fetchSharedWorld() {
+  const payload = { method: 'GET' };
+  let timer = null;
+  if (typeof AbortController !== 'undefined') {
+    const ctrl = new AbortController();
+    payload.signal = ctrl.signal;
+    timer = setTimeout(function () { ctrl.abort(); }, WORLD_TIMEOUT_MS);
+  }
+  return fetch('/api/world', payload).then(function (res) {
+    if (timer) clearTimeout(timer);
+    if (!res.ok) return null;
+    return res.json().then(function (data) {
+      if (!data || data.ok !== true || !Array.isArray(data.roads)) return null;
+      return flushSharedRoadQueue().then(function () {
+        var queued = readRoadQueue();
+        for (var i = 0; i < queued.length; i++) data.roads.push(queued[i]);
+        return data;
+      });
+    }, function () { return null; });
+  }, function () {
+    if (timer) clearTimeout(timer);
+    return null;
+  }).catch(function () {
+    if (timer) clearTimeout(timer);
+    return null;
+  });
+}
+
+export function placeSharedRoad(tile) {
+  if (!tile || typeof tile.id !== 'string' || !Number.isInteger(tile.x) || !Number.isInteger(tile.z)) {
+    return Promise.resolve(null);
+  }
+  var cleanTile = { id: tile.id, x: tile.x, z: tile.z };
+  return post('/api/world/place', cleanTile, WORLD_TIMEOUT_MS).then(function (res) {
+    if (!res.ok) { if (isRetryableStatus(res.status)) queueSharedRoad(cleanTile); return null; }
+    return res.json().then(function (data) {
+      if (!data || !data.ok) queueSharedRoad(cleanTile);
+      return data && data.ok ? data : null;
+    }, function () { queueSharedRoad(cleanTile); return null; });
+  }, function () { queueSharedRoad(cleanTile); return null; }).catch(function () {
+    queueSharedRoad(cleanTile);
+    return null;
+  });
+}
+
+// Only transient failures are worth retrying. A 4xx such as "not public
+// land" (403) or "invalid tile" (400) will never succeed, so re-queuing it
+// would retry it on every sync forever.
+function isRetryableStatus(status) {
+  return status === 401 || status === 408 || status === 429 || status >= 500;
+}
+
+function readRoadQueue() {
+  try {
+    var data = JSON.parse(localStorage.getItem(WORLD_QUEUE_KEY) || '[]');
+    return Array.isArray(data) ? data : [];
+  } catch (err) { return []; }
+}
+
+function saveRoadQueue(queue) {
+  try { localStorage.setItem(WORLD_QUEUE_KEY, JSON.stringify(queue)); } catch (err) { /* storage may be unavailable */ }
+}
+
+function queueSharedRoad(tile) {
+  var queue = readRoadQueue();
+  for (var i = 0; i < queue.length; i++) if (queue[i].x === tile.x && queue[i].z === tile.z) return;
+  if (queue.length < 5000) { queue.push(tile); saveRoadQueue(queue); }
+}
+
+function flushSharedRoadQueue() {
+  var queue = readRoadQueue();
+  if (!queue.length) return Promise.resolve();
+  var remaining = [];
+  var chain = Promise.resolve();
+  queue.forEach(function (tile) {
+    chain = chain.then(function () {
+      return post('/api/world/place', tile, WORLD_TIMEOUT_MS).then(function (res) {
+        if (!res.ok && isRetryableStatus(res.status)) remaining.push(tile);
+      }, function () { remaining.push(tile); });
+    });
+  });
+  return chain.then(function () { saveRoadQueue(remaining); });
 }
 
 function tickSave(getSession, getState) {
