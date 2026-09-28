@@ -763,13 +763,30 @@ function stepFieldWork(dt) {
     if (slot >= 0 && slot === world.getAssignedSlot()) {
       const width = toolGroup.userData.width * VEHICLE_SCALES[vehicleType];
       const farmFields = world.getFarms()[slot].getFields();
-      for (let i = 0; i < farmFields.length; i++) {
-        if (farmFields[i].isInside(tmpLocal.x, tmpLocal.z)) {
-          const res = farmFields[i].applyEffect(
-            tmpLocal.x, tmpLocal.z, width, toolGroup.userData.effect, -theta
-          );
-          if (res.money) money += res.money;
-          break;
+      const effect = toolGroup.userData.effect;
+      let cropType = 'generic';
+      let plantLimit = 0;
+      let canApply = true;
+      if (effect === 'plant') {
+        const selected = inventory.getSelectedItem();
+        if (!selected || !/_seeds$/.test(selected.itemId) || selected.qty < 1) {
+          canApply = false;
+        } else {
+          cropType = selected.itemId.slice(0, -6);
+          if (cropType === 'pea') cropType = 'peas';
+          plantLimit = selected.qty;
+        }
+      }
+      if (canApply) {
+        for (let i = 0; i < farmFields.length; i++) {
+          if (farmFields[i].isInside(tmpLocal.x, tmpLocal.z)) {
+            const res = farmFields[i].applyEffect(
+              tmpLocal.x, tmpLocal.z, width, effect, -theta, cropType, plantLimit
+            );
+            if (res.money) money += res.money;
+            if (effect === 'plant' && res.affected > 0) inventory.useMany(res.affected);
+            break;
+          }
         }
       }
     }

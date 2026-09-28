@@ -259,7 +259,7 @@ export class Field {
   // ---------- implement pass ----------
   // Working bar of `width` centered at (worldX, worldZ), perpendicular to heading
   // (0 = facing +X), one tile deep along the heading. Illegal tiles are skipped.
-  applyEffect(worldX, worldZ, width, effect, headingRad, cropType) {
+  applyEffect(worldX, worldZ, width, effect, headingRad, cropType, maxAffected) {
     const key = String(effect == null ? '' : effect).toLowerCase();
     const legal = EFFECTS[key];
     const out = { affected: 0, money: 0 };
@@ -273,6 +273,7 @@ export class Field {
     const { PLANTED, TILLED, GROWING, SPRAYED, READY } = TileState;
 
     for (let i = 0; i < this.count; i++) {
+      if (maxAffected > 0 && out.affected >= maxAffected) break;
       const dx = this._tx[i] - worldX;
       const dz = this._tz[i] - worldZ;
       const along = dx * cos + dz * sin; // heading axis (bar depth)

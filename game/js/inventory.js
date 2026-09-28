@@ -120,14 +120,20 @@ export class Inventory {
 
   // Use/consume one of the selected item (for building/placement).
   useOne() {
-    if (this._selectedSlot < 0) return false;
+    return this.useMany(1);
+  }
+
+  useMany(amount) {
+    amount = Math.floor(Number(amount));
+    if (this._selectedSlot < 0 || !isFinite(amount) || amount <= 0) return false;
     var s = this._slots[this._selectedSlot];
-    if (!s || s.qty <= 0) return false;
-    s.qty--;
+    if (!s || s.qty < amount) return false;
+    s.qty -= amount;
     if (s.qty <= 0) {
       this._slots[this._selectedSlot] = null;
     }
     this._updateHeldItem();
+    this.updateDOM();
     return true;
   }
 
