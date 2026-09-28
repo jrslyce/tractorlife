@@ -1,11 +1,12 @@
 {
   "name": "tractorlife",
   "private": true,
-  "version": "1.11.0",
+  "version": "1.12.0",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "deploy:pages": "wrangler pages deploy ./game"
+    "deploy:pages": "wrangler pages deploy ./game",
+    "test:perf": "node --test game/test/performance.test.js"
   },
   "devDependencies": {
     "wrangler": "4.140.0"

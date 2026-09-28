@@ -19,6 +19,7 @@ import { RealtimeClient } from './realtime.js';
 import { ITEM_BY_ID, packSize } from './items.js';
 import { Inventory } from './inventory.js';
 import { Wagon, WagonPanel, CargoHold, TRUCK_BED_SLOTS } from './wagon.js';
+import { PerformanceBudget } from './performance.js';
 import { TOOL_ORDER, COMBINE_HEAD_ORDER, buildTool, buildCombineHead } from './equipment.js';
 import { login, restoreRememberedSession, rememberedEmail, hasRememberedEmail, forgetRememberedCredentials, startAutosave, fetchFarmers, fetchFarmState, fetchSharedWorld, placeSharedRoad, sendGift } from './net.js';
 
@@ -35,23 +36,43 @@ const WORLD_MAX_Z = 80;
 function clampX(x) { return x < WORLD_MIN_X ? WORLD_MIN_X : (x > WORLD_MAX_X ? WORLD_MAX_X : x); }
 function clampZ(z) { return z < WORLD_MIN_Z ? WORLD_MIN_Z : (z > WORLD_MAX_Z ? WORLD_MAX_Z : z); }
 
+const perfNavigator = {
+  saveData: navigator.connection && navigator.connection.saveData,
+  deviceMemory: navigator.deviceMemory,
+  hardwareConcurrency: navigator.hardwareConcurrency,
+  userAgent: navigator.userAgent,
+  reducedMotion: window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+};
+const performanceBudget = new PerformanceBudget(perfNavigator, innerWidth, innerHeight);
+const perfProfile = performanceBudget.profile;
+
 // ---------------------------------------------------------------- scene
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87ceeb);
 // far distance reaches the next farms (180 units apart) so neighbours show.
 // Keep it under world.js CULL_DISTANCE (440) so farms are fogged out before
 // they are culled; the shop (~70 units south of spawn) is well inside it.
-scene.fog = new THREE.Fog(0x87ceeb, 130, 430);
+scene.fog = new THREE.Fog(0x87ceeb, perfProfile.constrained ? 115 : 130, perfProfile.fogFar);
 
 // far plane reaches across the whole map so the shop beacon is always visible
-const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 1000);
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, perfProfile.maxView);
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+const renderer = new THREE.WebGLRenderer({
+  antialias: !perfProfile.constrained,
+  powerPreference: 'low-power',
+  precision: perfProfile.constrained ? 'mediump' : 'highp',
+  alpha: false,
+  stencil: false
+});
 renderer.setSize(innerWidth, innerHeight);
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.setPixelRatio(performanceBudget.pixelRatio);
+renderer.shadowMap.enabled = perfProfile.shadows;
+renderer.shadowMap.type = THREE.PCFShadowMap;
 document.body.appendChild(renderer.domElement);
+function applyPixelRatio(ratio) {
+  renderer.setPixelRatio(ratio);
+  renderer.setSize(innerWidth, innerHeight, false);
+}
 
 // ---------------------------------------------------------------- lights
 scene.add(new THREE.HemisphereLight(0xffffff, 0x668855, 0.9));
@@ -59,8 +80,8 @@ scene.add(new THREE.HemisphereLight(0xffffff, 0x668855, 0.9));
 const SUN_OFFSET = new THREE.Vector3(14, 26, 10); // follows whatever is driven
 const sun = new THREE.DirectionalLight(0xfff3d6, 1.4);
 sun.position.copy(SUN_OFFSET);
-sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
+sun.castShadow = perfProfile.shadows;
+if (perfProfile.shadows) sun.shadow.mapSize.set(perfProfile.shadowMapSize, perfProfile.shadowMapSize);
 sun.shadow.camera.left = -25;
 sun.shadow.camera.right = 25;
 sun.shadow.camera.top = 25;
@@ -134,6 +155,8 @@ hayBale(57, 0.8, -13, 0.7);
 // ---------------------------------------------------------------- world (10 farms)
 // All field work / stats / serialize / restore go through world.getFarms().
 const world = new World(scene, '');
+const farms = world.getFarms();
+const farmFields = farms.map(function (farm) { return farm.getFields(); });
 const inventory = new Inventory();
 inventory.install(document.body);
 window.vtInventory = inventory;
@@ -1032,6 +1055,7 @@ function hasSupplyFor(effect) {
   return true;
 }
 
+let cropTickElapsed = 0;
 function stepFieldWork(dt) {
   const toolEffect = mode === 'driving' && toolGroup ? toolGroup.userData.effect : '';
   outOfSupply = hasSupplyFor(toolEffect) ? '' : toolEffect;
@@ -1090,11 +1114,15 @@ function stepFieldWork(dt) {
       }
     }
   }
-  // every farm's crops keep growing, even ones far away (plan 4.2)
-  const farms = world.getFarms();
-  for (let i = 0; i < farms.length; i++) {
-    const flds = farms[i].getFields();
-    for (let j = 0; j < flds.length; j++) flds[j].update(dt);
+  // Crop stages are visually coarse. Accumulate time and tick the cached field
+  // list at 4 Hz instead of scanning every tile in all farms every render.
+  cropTickElapsed += dt;
+  if (cropTickElapsed >= 0.25) {
+    const cropDt = Math.min(cropTickElapsed, 1);
+    cropTickElapsed = 0;
+    for (let i = 0; i < farmFields.length; i++) {
+      for (let j = 0; j < farmFields[i].length; j++) farmFields[i][j].update(cropDt);
+    }
   }
 }
 
@@ -1847,7 +1875,7 @@ function setupLogin() {
         }
         return { x: character.group.position.x, z: character.group.position.z,
           theta: character.group.rotation.y, mode: 'walking', machine: null, color: '' };
-      }, acceptRealtimeMessage);
+      }, acceptRealtimeMessage, perfProfile.poseInterval);
       realtime.connect();
     }
     if (sharedWorldTimer !== null) {
@@ -1912,6 +1940,12 @@ let last = performance.now();
 let enterVisible = false;
 renderer.setAnimationLoop(function () {
   const now = performance.now();
+  if (document.hidden) {
+    last = now;
+    return;
+  }
+  if (!performanceBudget.shouldRender(now)) return;
+  const frameStart = performance.now();
   updateFps(now);
   let dt = (now - last) / 1000;
   last = now;
@@ -1954,17 +1988,22 @@ renderer.setAnimationLoop(function () {
   updateCamera(dt);
   world.updateCulling(camera.position.x, camera.position.z);
   updateFarmerCharacters(dt);
-  updateSun();
-  updateHUD();
-  updateFarmLabels();
+  if (performanceBudget.shouldUpdateSun(now)) updateSun();
+  if (performanceBudget.shouldUpdateHud(now)) updateHUD();
+  if (performanceBudget.shouldUpdateLabels(now)) updateFarmLabels();
   // the hotbar stays up while driving too, so you can see seeds/spray running low
   inventory.setVisible(window.VT_LOCKED === false && !wagonPanel.isOpen());
   renderer.render(scene, camera);
+  performanceBudget.observeFrame(performance.now() - frameStart, now, applyPixelRatio);
 });
 
 addEventListener('resize', function () {
   camera.aspect = innerWidth / innerHeight;
+  camera.far = perfProfile.maxView;
   camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth, innerHeight);
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  performanceBudget.setSize(renderer, innerWidth, innerHeight);
+});
+
+document.addEventListener('visibilitychange', function () {
+  last = performance.now();
 });

@@ -51,6 +51,7 @@ export class Inventory {
     this._group = null; // DOM hotbar element
     this._character = null;
     this._heldMesh = null;
+    this._visible = null;
   }
 
   // ---- public API ----
@@ -277,7 +278,11 @@ export class Inventory {
   }
 
   setVisible(visible) {
-    if (this._group) this._group.style.display = visible ? 'flex' : 'none';
+    visible = !!visible;
+    if (this._group && this._visible !== visible) {
+      this._visible = visible;
+      this._group.style.display = visible ? 'flex' : 'none';
+    }
   }
 
   dispose() {

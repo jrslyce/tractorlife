@@ -145,6 +145,7 @@ export class Field {
     this._cropTypes = new Array(count).fill('generic');
     this._fertilized = new Uint8Array(count);
     this._timers = new Float32Array(count); // seconds in current timed state
+    this._timedCount = 0;
     this._jitter = new Float32Array(count); // untilled "clump" shade variation
     this._tx = new Float32Array(count); // tile world centers
     this._tz = new Float32Array(count);
@@ -223,7 +224,7 @@ export class Field {
   // PLANTED --(5s)--> GROWING --(spray applied)--> SPRAYED --(6s)--> READY
   // Unsrayed GROWING tiles never become READY: the kid must drive back and spray.
   update(dt) {
-    if (!(dt > 0)) return;
+    if (!(dt > 0) || this._timedCount === 0) return;
     const { PLANTED, GROWING, SPRAYED } = TileState;
     const states = this._states;
     const timers = this._timers;
@@ -237,6 +238,7 @@ export class Field {
         if (timers[i] >= growTime) {
           states[i] = GROWING;
           timers[i] = 0;
+          this._timedCount--;
           this._refresh(i);
         }
       } else if (s === SPRAYED) {
@@ -246,6 +248,7 @@ export class Field {
         if (timers[i] >= ripenTime) {
           states[i] = TileState.READY;
           timers[i] = 0;
+          this._timedCount--;
           this._refresh(i);
         }
       } else if (s === GROWING) {
@@ -282,6 +285,10 @@ export class Field {
       if (key === 'harvest' && (this._cropTypes[i] === 'pumpkin' || this._cropTypes[i] === 'peas')) continue;
       const next = legal(st);
       if (next === null) continue; // illegal on this tile → skipped
+
+      const wasTimed = st === TileState.PLANTED || st === TileState.SPRAYED;
+      const becomesTimed = next === TileState.PLANTED || next === TileState.SPRAYED;
+      this._timedCount += Number(becomesTimed) - Number(wasTimed);
 
       this._states[i] = next;
       if (key === 'plant') {
@@ -369,6 +376,7 @@ export class Field {
     this._cropTypes[index] = CROP_CODES[cropType] !== undefined ? cropType : 'generic';
     this._states[index] = TileState.PLANTED;
     this._timers[index] = 0;
+    this._timedCount++;
     this._tally.planted++;
     this._refresh(index);
     return true;
@@ -427,6 +435,10 @@ export class Field {
       this._fertilized[i] = typeof d.fertilized === 'string'
         ? (d.fertilized.charAt(i) === '1' ? 1 : 0)
         : (d.fertilized && d.fertilized[i] ? 1 : 0);
+    }
+    this._timedCount = 0;
+    for (let i = 0; i < this.count; i++) {
+      if (this._states[i] === TileState.PLANTED || this._states[i] === TileState.SPRAYED) this._timedCount++;
     }
     const keys = ['tilled', 'planted', 'sprayed', 'harvested'];
     for (let k = 0; k < keys.length; k++) {
