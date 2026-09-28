@@ -226,6 +226,8 @@ function reachableHold() {
 // phase on the canvas so a tap on a vehicle never also places a block.
 const tapRay = new THREE.Raycaster();
 const tapPointer = new THREE.Vector2();
+const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+const groundHit = new THREE.Vector3();
 let tapTarget = null;
 let tapStart = null;
 
@@ -249,7 +251,44 @@ renderer.domElement.addEventListener('pointerdown', function (e) {
   tapTarget = null;
   if (window.VT_LOCKED !== false || mode !== 'walking' || (e.button !== undefined && e.button !== 0)) return;
   const hold = holdUnderPointer(e);
-  if (!hold) return;
+  if (!hold) {
+    // Pumpkins and peas are hand-harvested: tap a ready tile while standing
+    // nearby. Other crops remain combine-only.
+    const rect = renderer.domElement.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    tapPointer.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+    tapRay.setFromCamera(tapPointer, camera);
+    if (!tapRay.ray.intersectPlane(groundPlane, groundHit)) return;
+    const px = character.group.position.x, pz = character.group.position.z;
+    if (Math.hypot(px - groundHit.x, pz - groundHit.z) > 5) return;
+    const slot = world.getFarmAtPosition(groundHit.x, groundHit.z);
+    if (slot < 0 || slot !== world.getAssignedSlot()) return;
+    const fields = world.getFarms()[slot].getFields();
+    for (let i = 0; i < fields.length; i++) {
+      if (!fields[i].isInside(groundHit.x, groundHit.z)) continue;
+      const tile = fields[i].worldToTile(groundHit.x, groundHit.z);
+      if (tile && inventory.canAdd('harvest_' + (tile.cropType === 'peas' ? 'peas' : tile.cropType))) {
+        // continue into the harvest transaction below
+      } else if (tile && (tile.cropType === 'pumpkin' || tile.cropType === 'peas') && tile.state === 'ready') {
+        showToast('Your inventory is full — make room before picking.');
+        return;
+      }
+      const crop = fields[i].harvestAt(groundHit.x, groundHit.z);
+      if (!crop) return;
+      const added = inventory.buy(crop.itemId, 1);
+      if (!added.ok) {
+        showToast('Your inventory is full — make room before picking.');
+        return;
+      }
+      money += crop.value;
+      lastSig = '';
+      showToast(crop.itemId === 'harvest_pumpkin' ? '🎃 Pumpkin picked and added to your inventory!' : '🟢 Peas picked and added to your inventory!');
+      e.stopImmediatePropagation();
+      updateHUD();
+      return;
+    }
+    return;
+  }
   tapTarget = hold;
   tapStart = { x: e.clientX, y: e.clientY, t: performance.now() };
   e.stopImmediatePropagation(); // don't let the builder place an item on the vehicle
@@ -644,11 +683,15 @@ function updateHUD() {
     '<div>🌱 Planted: <b>' + s.planted + '</b></div>' +
     '<div>🫧 Sprayed: <b>' + s.sprayed + '</b></div>' +
     '<div>🌾 Harvested: <b>' + s.harvested + '</b></div>' +
+    (mode === 'driving' && vehicleType === 'combine' ?
+      '<div>🛢️ Combine bin: <b>' + combineBinCount() + '/' + COMBINE_BIN_CAPACITY + '</b>' +
+      '<div style="height:10px;margin:3px 0 6px;background:rgba(0,0,0,.28);border:1px solid rgba(255,255,255,.55);border-radius:5px;overflow:hidden">' +
+      '<div style="height:100%;width:' + Math.min(100, combineBinCount() * 100 / COMBINE_BIN_CAPACITY) + '%;background:#e5b83e"></div></div></div>' : '') +
     '<div style="margin-top:4px">' + legendHTML + '</div>';
 
   let hint;
   if (mode === 'walking') {
-    hint = 'Walk up to a vehicle and press E to hop in (mobile: Enter)';
+    hint = 'Walk up to a vehicle and press E (mobile: Enter). Tap ready pumpkins or peas nearby to pick them by hand.';
   } else if (vehicleType === 'truck') {
     hint = wagon.hitched
       ? '🛒 Wagon hitched — park it by the shop and anything you buy loads onto it · F unhitches'
@@ -657,7 +700,8 @@ function updateHUD() {
     if (currentTool < 0) hint = 'Press F or Tool to fit a corn or soybean head';
     else if (s.harvested === 0) hint = 'Drive the ' + info.name + ' across golden, ready crops to harvest';
     else hint = 'Harvest ready crops with the ' + info.name + ' — press F to switch heads';
-    hint += ' · M or Machine switches vehicles';
+    hint += ' · U / Unload beside wagon · M or Machine switches vehicles';
+    if (combineBinCount() >= COMBINE_BIN_CAPACITY) hint = 'Combine bin full — park beside the wagon and press U / Unload at the side auger.';
   } else if (s.tilled === 0) {
     hint = 'Use Tool or press F to attach the PLOW — drive into any field';
   } else if (s.planted === 0) {
@@ -737,7 +781,12 @@ function updateFps(now) {
 // ---------------------------------------------------------------- physics
 const MAX_FWD = 9;
 const MAX_REV = 4;
-const TRUCK_MAX_FWD = 18;
+const TRUCK_MAX_FWD = 23.4;
+const COMBINE_BIN_CAPACITY = 200;
+let combineBin = {};
+function combineBinCount() {
+  return Object.keys(combineBin).reduce(function (total, id) { return total + combineBin[id]; }, 0);
+}
 const ACCEL_RATE = 6;
 const BRAKE_RATE = 10;
 const STEER_RATE = 1.6;
@@ -769,7 +818,9 @@ function stepPhysics(dt) {
   // steering only bites while rolling; reversing flips the turn direction
   const steeringRate = vehicleType === 'combine' ? 0.95 : STEER_RATE;
   const steer = input.turn * steeringRate * Math.min(1, Math.abs(speed) / 2) * (speed < 0 ? -1 : 1);
-  theta -= steer * dt;
+  // Truck's front axle uses the opposite yaw sign convention to the other
+  // vehicle models; align chassis yaw with its visible wheel direction.
+  theta += (vehicleType === 'truck' ? 1 : -1) * steer * dt;
   vehicle.rotation.y = theta;
 
   const steeringPivots = vehicle.userData.steeringPivots || [];
@@ -1015,7 +1066,9 @@ function stepFieldWork(dt) {
       }
       const needsSupply = effect === 'plant' || effect === 'spray';
       if (needsSupply && supplySlot >= 0) supplyLimit = inventory.getSlot(supplySlot).qty;
+      if (effect === 'harvest') supplyLimit = Math.max(0, COMBINE_BIN_CAPACITY - combineBinCount());
       if (!needsSupply || supplySlot >= 0) {
+        if (effect !== 'harvest' || supplyLimit > 0) {
         for (let i = 0; i < farmFields.length; i++) {
           if (farmFields[i].isInside(tmpLocal.x, tmpLocal.z)) {
             const res = farmFields[i].applyEffect(
@@ -1023,8 +1076,14 @@ function stepFieldWork(dt) {
             );
             if (res.money) money += res.money;
             if (needsSupply && res.affected > 0) inventory.useFromSlot(supplySlot, res.affected);
+            if (res.produce) {
+              Object.keys(res.produce).forEach(function (id) {
+                combineBin[id] = (combineBin[id] || 0) + res.produce[id];
+              });
+            }
             break;
           }
+        }
         }
       }
     }
@@ -1035,6 +1094,33 @@ function stepFieldWork(dt) {
     const flds = farms[i].getFields();
     for (let j = 0; j < flds.length; j++) flds[j].update(dt);
   }
+}
+
+function unloadCombineIntoWagon() {
+  if (mode !== 'driving' || vehicleType !== 'combine') return;
+  const auger = vehicle.localToWorld(new THREE.Vector3(-1.5, 0, 3.5));
+  if (wagon.distanceTo(auger.x, auger.z) > 5) {
+    showToast('Move the wagon beside the combine’s side auger to unload.');
+    return;
+  }
+  const total = combineBinCount();
+  if (!total) { showToast('The combine bin is empty.'); return; }
+  const missingSlots = Object.keys(combineBin).filter(function (id) {
+    return !wagon.cargo.some(function (stack) { return stack && stack.itemId === id; });
+  }).length;
+  const freeSlots = wagon.cargo.filter(function (stack) { return !stack; }).length;
+  if (missingSlots > freeSlots) { showToast('The wagon has no room for this harvest.'); return; }
+  for (const id of Object.keys(combineBin)) {
+    const result = wagon.add(id, combineBin[id]);
+    if (!result.ok) {
+      showToast(result.error || 'The wagon is full.');
+      return;
+    }
+  }
+  combineBin = {};
+  showToast('🌾 Unloaded ' + total + ' units from the side auger into the wagon.');
+  lastSig = '';
+  updateHUD();
 }
 
 // ---------------------------------------------------------------- actions
@@ -1052,6 +1138,8 @@ function drainActions() {
     } else if (a === 'openWagon') {
       const hold = reachableHold();
       if (hold) wagonPanel.open(hold);
+    } else if (a === 'unloadCombine') {
+      unloadCombineIntoWagon();
     } else if (a === 'cycleTool') {
       const types = attachmentTypes();
       if (types.length > 0) {
@@ -1224,6 +1312,7 @@ function snapshot() {
     structures: builder ? builder.serializeLocal() : [],
     inventory: inventory.serialize(),
     wagon: wagon.serialize(),
+    combineBin: combineBin,
     truckBed: truckBed.serializeCargo(),
     appliedGiftIds: appliedGiftIds.slice(-100),
   };
@@ -1234,6 +1323,19 @@ function snapshot() {
 function applyState(s) {
   if (!s || typeof s !== 'object') return false;
   if (s.inventory && typeof s.inventory === 'object') inventory.restore(s.inventory);
+  combineBin = {};
+  if (s.combineBin && typeof s.combineBin === 'object') {
+    Object.keys(s.combineBin).forEach(function (id) {
+      if (/^harvest_(corn|wheat|sunflower)$/.test(id) && Number.isFinite(s.combineBin[id])) {
+        combineBin[id] = Math.max(0, Math.min(COMBINE_BIN_CAPACITY, Math.floor(s.combineBin[id])));
+      }
+    });
+    while (combineBinCount() > COMBINE_BIN_CAPACITY) {
+      const id = Object.keys(combineBin).pop();
+      combineBin[id] -= combineBinCount() - COMBINE_BIN_CAPACITY;
+      if (combineBin[id] <= 0) delete combineBin[id];
+    }
+  }
   if (Array.isArray(s.giftInbox)) {
     var seenGifts = [];
     try {

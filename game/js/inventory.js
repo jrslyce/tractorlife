@@ -17,7 +17,8 @@ var ITEM_EMOJI = {
   wheat_seeds: '🌾', pumpkin_seeds: '🎃', sunflower_seeds: '🌻', pea_seeds: '🟢',
   fertilizer: '🪴', crop_spray: '🧴', paint: '🎨', lamp_light: '💡', hay_bale: '🟨', scarecrow: '🧑‍🌾',
   pumpkin_pile: '🎃', corn_shocks: '🌽', string_lights: '✨', mailbox: '📮',
-  roof_shingles: '🏠', fence_kit: '🪵', window_glass: '🪟', door: '🚪'
+  roof_shingles: '🏠', fence_kit: '🪵', window_glass: '🪟', door: '🚪',
+  harvest_corn: '🌽', harvest_wheat: '🌾', harvest_sunflower: '🌻', harvest_pumpkin: '🎃', harvest_peas: '🟢'
 };
 var ITEM_COLORS = {
   gravel: '#85827a', asphalt: '#333536', brick: '#9a4f3f', wood: '#81552f',
@@ -26,7 +27,8 @@ var ITEM_COLORS = {
   paint: '#d84d58', lamp_light: '#f5d86b', hay_bale: '#d8b84d',
   scarecrow: '#86593b', pumpkin_pile: '#e87925', corn_shocks: '#c69f32',
   string_lights: '#f2cc58', mailbox: '#b94738', roof_shingles: '#8c4638',
-  fence_kit: '#9a8058', window_glass: '#8bd2e8', door: '#754a2b'
+  fence_kit: '#9a8058', window_glass: '#8bd2e8', door: '#754a2b',
+  harvest_corn: '#d6b33d', harvest_wheat: '#c6a544', harvest_sunflower: '#e4bd32', harvest_pumpkin: '#e87925', harvest_peas: '#6f9a43'
 };
 
 // ---------------------------------------------------------------- Item class
@@ -78,6 +80,13 @@ export class Inventory {
       }
     }
     return { ok: false, error: 'inventory full' };
+  }
+
+  canAdd(itemId) {
+    for (var i = 0; i < this._slots.length; i++) {
+      if (!this._slots[i] || this._slots[i].itemId === itemId) return true;
+    }
+    return false;
   }
 
   // Select a slot by index (0-based). Returns the item or null.

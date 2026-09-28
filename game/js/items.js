@@ -14,18 +14,23 @@ export var ITEMS = [
   { id: 'lamp_light', name: 'Lamp Light', emoji: '💡', price: 55, category: 'Lighting', description: 'A warm farmyard lamp.' },
   { id: 'string_lights', name: 'String Lights', emoji: '✨', price: 95, category: 'Lighting', description: 'Little lights for autumn evenings.' },
   { id: 'fertilizer', name: 'Fertilizer', emoji: '🪴', price: 25, pack: 10, category: 'Farm supplies', description: 'Sack of 10 — tap a growing tile to speed it up.' },
-  { id: 'crop_spray', name: 'Crop Spray', emoji: '🧴', price: 20, pack: 50, category: 'Farm supplies', description: 'Jug for 50 tiles — the sprayer needs it to ripen crops.' },
-  { id: 'corn_seeds', name: 'Corn Seeds', emoji: '🌽', price: 15, pack: 50, category: 'Farm supplies', description: 'Bag of 50 — load the planter to grow golden corn.' },
-  { id: 'wheat_seeds', name: 'Wheat Seeds', emoji: '🌾', price: 10, pack: 50, category: 'Farm supplies', description: 'Bag of 50 — load the planter to grow dependable wheat.' },
-  { id: 'pumpkin_seeds', name: 'Pumpkin Seeds', emoji: '🎃', price: 25, pack: 50, category: 'Farm supplies', description: 'Bag of 50 — load the planter to grow cheerful pumpkins.' },
-  { id: 'sunflower_seeds', name: 'Sunflower Seeds', emoji: '🌻', price: 18, pack: 50, category: 'Farm supplies', description: 'Bag of 50 — load the planter to grow tall sunflowers.' },
-  { id: 'pea_seeds', name: 'Pea Seeds', emoji: '🟢', price: 8, pack: 50, category: 'Farm supplies', description: 'Bag of 50 — load the planter to grow sweet peas.' },
+  { id: 'crop_spray', name: 'Crop Spray', emoji: '🧴', price: 20, pack: 200, category: 'Farm supplies', description: 'Jug for 200 tiles — the sprayer needs it to ripen crops.' },
+  { id: 'corn_seeds', name: 'Corn Seeds', emoji: '🌽', price: 15, pack: 100, category: 'Farm supplies', description: 'Bag of 100 — load the planter to grow golden corn.' },
+  { id: 'wheat_seeds', name: 'Wheat Seeds', emoji: '🌾', price: 10, pack: 100, category: 'Farm supplies', description: 'Bag of 100 — load the planter to grow dependable wheat.' },
+  { id: 'pumpkin_seeds', name: 'Pumpkin Seeds', emoji: '🎃', price: 25, pack: 100, category: 'Farm supplies', description: 'Bag of 100 — load the planter to grow cheerful pumpkins.' },
+  { id: 'sunflower_seeds', name: 'Sunflower Seeds', emoji: '🌻', price: 18, pack: 100, category: 'Farm supplies', description: 'Bag of 100 — load the planter to grow tall sunflowers.' },
+  { id: 'pea_seeds', name: 'Pea Seeds', emoji: '🟢', price: 8, pack: 100, category: 'Farm supplies', description: 'Bag of 100 — load the planter to grow sweet peas.' },
   { id: 'paint', name: 'Paint', emoji: '🎨', price: 30, category: 'Decorating', description: 'Give placed blocks a fresh color.' },
   { id: 'hay_bale', name: 'Hay Bale', emoji: '🟨', price: 28, category: 'Autumn decor', description: 'A cozy little bale for your yard.' },
   { id: 'scarecrow', name: 'Scarecrow', emoji: '🧑‍🌾', price: 60, category: 'Autumn decor', description: 'A friendly guardian for your fields.' },
   { id: 'pumpkin_pile', name: 'Pumpkin Pile', emoji: '🎃', price: 75, category: 'Autumn decor', description: 'A stack of bright fall pumpkins.' },
   { id: 'corn_shocks', name: 'Corn Shocks', emoji: '🌽', price: 48, category: 'Autumn decor', description: 'Golden bundles of dried corn.' },
-  { id: 'mailbox', name: 'Mailbox', emoji: '📮', price: 42, category: 'Autumn decor', description: 'A cute mailbox for your driveway.' }
+  { id: 'mailbox', name: 'Mailbox', emoji: '📮', price: 42, category: 'Autumn decor', description: 'A cute mailbox for your driveway.' },
+  { id: 'harvest_corn', name: 'Harvested Corn', emoji: '🌽', price: 0, category: 'Produce', description: 'Fresh corn harvested by your combine.' },
+  { id: 'harvest_wheat', name: 'Harvested Wheat', emoji: '🌾', price: 0, category: 'Produce', description: 'Fresh wheat harvested by your combine.' },
+  { id: 'harvest_sunflower', name: 'Sunflower Heads', emoji: '🌻', price: 0, category: 'Produce', description: 'Sunflower heads harvested by your combine.' },
+  { id: 'harvest_pumpkin', name: 'Pumpkin', emoji: '🎃', price: 0, category: 'Produce', description: 'A pumpkin picked by hand.' },
+  { id: 'harvest_peas', name: 'Peas', emoji: '🟢', price: 0, category: 'Produce', description: 'A handful of peas picked by hand.' }
 ];
 
 export function packSize(item) {

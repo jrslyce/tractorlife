@@ -15,9 +15,9 @@ const GIFT_ITEMS = {
   wood: { price: 12, emoji: "🪵" }, roof_shingles: { price: 90, emoji: "🏠" }, fence_kit: { price: 80, emoji: "🚧" },
   window_glass: { price: 65, emoji: "🪟" }, door: { price: 70, emoji: "🚪" }, lamp_light: { price: 55, emoji: "💡" },
   string_lights: { price: 95, emoji: "✨" }, fertilizer: { price: 25, emoji: "🪴", pack: 10 },
-  crop_spray: { price: 20, emoji: "🧴", pack: 50 }, corn_seeds: { price: 15, emoji: "🌽", pack: 50 },
-  wheat_seeds: { price: 10, emoji: "🌾", pack: 50 }, pumpkin_seeds: { price: 25, emoji: "🎃", pack: 50 },
-  sunflower_seeds: { price: 18, emoji: "🌻", pack: 50 }, pea_seeds: { price: 8, emoji: "🟢", pack: 50 }, paint: { price: 30, emoji: "🎨" }, hay_bale: { price: 28, emoji: "🟨" },
+  crop_spray: { price: 20, emoji: "🧴", pack: 200 }, corn_seeds: { price: 15, emoji: "🌽", pack: 100 },
+  wheat_seeds: { price: 10, emoji: "🌾", pack: 100 }, pumpkin_seeds: { price: 25, emoji: "🎃", pack: 100 },
+  sunflower_seeds: { price: 18, emoji: "🌻", pack: 100 }, pea_seeds: { price: 8, emoji: "🟢", pack: 100 }, paint: { price: 30, emoji: "🎨" }, hay_bale: { price: 28, emoji: "🟨" },
   scarecrow: { price: 60, emoji: "🧑‍🌾" }, pumpkin_pile: { price: 75, emoji: "🎃" }, corn_shocks: { price: 48, emoji: "🌽" }, mailbox: { price: 42, emoji: "📮" },
 };
 

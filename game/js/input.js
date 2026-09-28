@@ -26,7 +26,8 @@ var ACTIONS = {
   KeyC: 'cycleColor',
   KeyQ: 'detach',
   KeyT: 'talkShop', // M1: talk to shopkeeper
-  KeyL: 'openWagon' // load / unload the wagon or truck bed
+  KeyL: 'openWagon', // load / unload the wagon or truck bed
+  KeyU: 'unloadCombine'
 };
 
 var BUTTONS = [
@@ -37,7 +38,8 @@ var BUTTONS = [
   { action: 'jump',       emoji: '\u{1F9BF}', label: 'Jump' },   // person jumping
   { action: 'enterVehicle', emoji: '\u{1F697}', label: 'Enter' }, // hop in/out
   { action: 'talkShop',   emoji: '\u{1F3EA}', label: 'Shop' },   // M1: talk to shopkeeper
-  { action: 'openWagon',  emoji: '\u{1F6D2}', label: 'Cargo' }   // open the wagon / truck bed
+  { action: 'openWagon',  emoji: '\u{1F6D2}', label: 'Cargo' },
+  { action: 'unloadCombine', emoji: '🌾', label: 'Unload' }
 ];
 
 var CSS = [
