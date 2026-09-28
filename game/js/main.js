@@ -57,6 +57,7 @@ scene.fog = new THREE.Fog(0x87ceeb, perfProfile.constrained ? 115 : 130, perfPro
 
 // far plane reaches across the whole map so the shop beacon is always visible
 const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, perfProfile.maxView);
+scene.add(camera); // include camera-mounted first-person arm/item in the scene graph
 
 const renderer = new THREE.WebGLRenderer({
   antialias: !perfProfile.constrained,
@@ -273,7 +274,7 @@ function holdUnderPointer(e) {
 
 renderer.domElement.addEventListener('pointerdown', function (e) {
   tapTarget = null;
-  if (window.VT_LOCKED !== false || mode !== 'walking' || (e.button !== undefined && e.button !== 0)) return;
+  if (window.VT_LOCKED !== false || mode !== 'walking' || buildMode || (e.button !== undefined && e.button !== 0)) return;
   const hold = holdUnderPointer(e);
   if (!hold) {
     // Pumpkins and peas are hand-harvested: tap a ready tile while standing
@@ -306,9 +307,8 @@ renderer.domElement.addEventListener('pointerdown', function (e) {
         showToast('Your inventory is full — make room before picking.');
         return;
       }
-      money += crop.value;
       lastSig = '';
-      showToast(crop.itemId === 'harvest_pumpkin' ? '🎃 Pumpkin picked and added to your inventory!' : '🟢 Peas picked and added to your inventory!');
+      showToast(crop.itemId === 'harvest_pumpkin' ? '🎃 Pumpkin picked — sell it at the shop or place it in Build mode!' : '🟢 Peas picked — sell them at the shop!');
       e.stopImmediatePropagation();
       updateHUD();
       return;
@@ -369,8 +369,19 @@ input.setWalkingMode(true); // mode starts as walking (reset again on login)
 input.setShopNear(false);
 input.setWagonNear(false);
 
+const firstPersonArm = new THREE.Group();
+const sleeve = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.62, 0.3), new THREE.MeshStandardMaterial({ color: '#2f6fb5', roughness: 0.85 }));
+sleeve.position.set(0.42, -0.48, -0.72);
+const hand = new THREE.Mesh(new THREE.BoxGeometry(0.23, 0.24, 0.25), new THREE.MeshStandardMaterial({ color: '#f4c28a', roughness: 0.9 }));
+hand.position.set(0.42, -0.16, -0.72);
+firstPersonArm.add(sleeve, hand);
+firstPersonArm.visible = false;
+camera.add(firstPersonArm);
+inventory.setFirstPersonArm(firstPersonArm);
+
 // ---------------------------------------------------------------- state
 let mode = 'walking'; // 'walking' | 'driving'
+let buildMode = false;
 let vehicleType = 'tractor'; // the active (last driven) machine
 let vehicle = tractor;
 const vehicleColors = { tractor: 'red', combine: 'green', truck: 'gray' };
@@ -398,6 +409,7 @@ if (window.vtInventory) {
     inventory: window.vtInventory,
     getAssignedSlot: function () { return world.getAssignedSlot(); },
     getWalking: function () { return mode === 'walking' && !shopUI.isOpen() && window.VT_LOCKED === false; },
+    getBuildMode: function () { return buildMode; },
     onPlaced: function (entry) {
       if (entry.id === 'asphalt' || entry.id === 'gravel' || entry.id === 'brick') {
         placeSharedRoad(entry);
@@ -622,6 +634,26 @@ window.vtPurchaseItem = function (item, qty, balance) {
 
 const shopUI = new ShopUI({
   getMoney: function () { return money; },
+  getProduce: function () {
+    const goods = [
+      ['harvest_pumpkin', 'Pumpkins', '🎃', 18],
+      ['harvest_peas', 'Peas', '🟢', 2],
+      ['harvest_corn', 'Corn', '🌽', 7],
+      ['harvest_wheat', 'Wheat', '🌾', 4],
+      ['harvest_sunflower', 'Sunflower heads', '🌻', 10]
+    ];
+    return goods.filter(function (g) { return inventory.getCount(g[0]) > 0; }).map(function (g) {
+      return { id: g[0], name: g[1], emoji: g[2], value: g[3], qty: inventory.getCount(g[0]) };
+    });
+  },
+  onSell: function (itemId, qty, unitValue) {
+    const sold = inventory.consumeItem(itemId, qty);
+    if (sold !== qty) return { ok: false, error: 'Your harvest changed. Please try again.' };
+    money += sold * unitValue;
+    lastSig = '';
+    updateHUD();
+    return { ok: true };
+  },
   onPurchase: function (item, qty) {
     // M3 owns the inventory; use its integration hook when present.
     if (typeof window.vtPurchaseItem !== 'function') {
@@ -681,12 +713,12 @@ function updateHUD() {
   const label = farmLabel(farmSlot);
   const modeLine = mode === 'driving'
     ? MACHINE_ICONS[vehicleType] + ' Driving ' + MACHINE_NAMES[vehicleType]
-    : '🚶 Walking';
+    : (buildMode ? '🧱 First-person Build' : '🚶 Walking');
   const nearName = near ? MACHINE_NAMES[near.type] : '';
   // rebuild only when something actually changed
   const sig = vehicleType + '|' + money + '|' + currentTool + '|' + currentColor + '|' +
     s.tilled + '|' + s.planted + '|' + s.sprayed + '|' + s.harvested + '|' +
-    mode + '|' + farmSlot + '|' + label + '|' + nearName + '|' + outOfSupply + '|' +
+    mode + '|' + buildMode + '|' + farmSlot + '|' + label + '|' + nearName + '|' + outOfSupply + '|' +
     wagon.hitched + '|' + wagonNearShown + '|' + (shopNearShown && (wagonAtShop() || truckAtShop()));
   if (sig === lastSig) return;
   lastSig = sig;
@@ -717,7 +749,9 @@ function updateHUD() {
 
   let hint;
   if (mode === 'walking') {
-    hint = 'Walk up to a vehicle and press E (mobile: Enter). Tap ready pumpkins or peas nearby to pick them by hand.';
+    hint = buildMode
+      ? 'BUILD MODE · Select wood or a pumpkin on your hotbar. Aim at a surface and tap to place; stack blocks upward. Press B / Exit Build to leave.'
+      : 'Walk up to a vehicle and press E (mobile: Enter). Tap ready pumpkins or peas nearby to pick them by hand. Visit the shop to sell your harvest.';
   } else if (vehicleType === 'truck') {
     hint = wagon.hitched
       ? '🛒 Wagon hitched — park it by the shop and anything you buy loads onto it · F unhitches'
@@ -955,6 +989,7 @@ function nearestVehicleInfo() {
 }
 
 function enterVehicle(target) {
+  setBuildMode(false);
   const type = typeOfVehicle(target);
   if (!type) return;
   if (type !== vehicleType) {
@@ -1162,6 +1197,8 @@ function drainActions() {
   while ((a = input.takeAction()) !== null) {
     if (a === 'enterVehicle') {
       handleEnterExit();
+    } else if (a === 'toggleBuildMode' && mode === 'walking') {
+      setBuildMode(!buildMode);
     } else if (a === 'jump') {
       tryJump();
     } else if (a === 'toggleTool' && mode === 'driving') {
@@ -1208,10 +1245,33 @@ function drainActions() {
   updateHUD();
 }
 
+function setBuildMode(active) {
+  buildMode = !!active && mode === 'walking';
+  firstPersonArm.visible = buildMode;
+  character.setVisible(!buildMode);
+  inventory.setFirstPerson(buildMode);
+  input.setBuildMode(buildMode);
+  if (buildMode) showToast('🧱 Build mode: select an item in your hotbar, aim, then tap to place.');
+}
+
 // ---------------------------------------------------------------- camera
 function updateCamera(dt) {
   let dx, dy, dz, lax, laz, lookY;
-  if (mode === 'driving') {
+  if (buildMode && mode === 'walking') {
+    const a = character.group.rotation.y;
+    const fx = Math.sin(a), fz = Math.cos(a);
+    dx = character.group.position.x;
+    dy = 1.55;
+    dz = character.group.position.z;
+    lax = dx + fx * 8;
+    laz = dz + fz * 8;
+    lookY = 1.15;
+    camPos.set(dx, dy, dz);
+    camera.position.copy(camPos);
+    lookAt.set(lax, lookY, laz);
+    camera.lookAt(lookAt);
+    return;
+  } else if (mode === 'driving') {
     const cs = Math.cos(theta), sn = Math.sin(theta);
     fwd.set(cs, 0, -sn);
     // The truck gets a closer chase so it fills the frame like the tractor.

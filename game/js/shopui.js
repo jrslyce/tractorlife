@@ -8,6 +8,8 @@ export class ShopUI {
     this._getMoney = options.getMoney;
     this._onPurchase = options.onPurchase;
     this._onGift = options.onGift;
+    this._getProduce = options.getProduce || function () { return []; };
+    this._onSell = options.onSell;
     this._open = false;
     this._style = document.createElement('style');
     this._style.textContent = [
@@ -22,6 +24,8 @@ export class ShopUI {
       '.shop-category{margin:14px 0 6px;font-size:17px;color:#385b25}',
       '.shop-row{display:grid;grid-template-columns:42px minmax(0,1fr) auto;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(47,77,31,.2)}',
       '.shop-emoji{font-size:28px;text-align:center}.shop-name{font-weight:750}.shop-desc{font-size:13px;opacity:.8;margin-top:2px}',
+      '#shop-list{flex:1;min-height:80px}',
+      '#shop-produce{padding:4px 18px 16px;border-top:2px dashed rgba(47,77,31,.3)}#shop-produce h3{margin:10px 0 4px;color:#385b25}',
       '.shop-buy{min-width:96px;min-height:44px;padding:7px 10px;border:2px solid #2f4d1f;border-radius:10px;background:#ffe066;color:#233018;font-weight:800;font-size:15px;cursor:pointer}',
       '.shop-buy:disabled{opacity:.5;cursor:not-allowed}#shop-msg{min-height:22px;padding:0 20px 12px;font-weight:700;color:#8b3e2d}',
       '@media(max-width:520px){#shop-overlay{padding:8px}#shop-panel{max-height:94vh}#shop-head{padding:12px}#shop-head h2{font-size:20px}.shop-row{grid-template-columns:34px minmax(0,1fr) 82px;gap:7px}.shop-buy{min-width:82px;font-size:13px}.shop-desc{font-size:12px}}'
@@ -82,12 +86,15 @@ export class ShopUI {
     this._recipientWrap.appendChild(this._recipient);
     this._list = document.createElement('div');
     this._list.id = 'shop-list';
+    this._produce = document.createElement('div');
+    this._produce.id = 'shop-produce';
     this._message = document.createElement('div');
     this._message.id = 'shop-msg';
     panel.appendChild(head);
     panel.appendChild(greeting);
     panel.appendChild(this._recipientWrap);
     panel.appendChild(this._list);
+    panel.appendChild(this._produce);
     panel.appendChild(this._message);
     overlay.appendChild(panel);
     overlay.addEventListener('click', function (e) { if (e.target === overlay) self.close(); });
@@ -175,6 +182,38 @@ export class ShopUI {
     this.refreshBalance();
   }
 
+  _renderProduce() {
+    if (!this._produce) return;
+    this._produce.textContent = '';
+    var produce = this._getProduce() || [];
+    if (!produce.length) return;
+    var heading = document.createElement('h3');
+    heading.textContent = '📦 Sell your harvest';
+    this._produce.appendChild(heading);
+    for (var i = 0; i < produce.length; i++) {
+      (function (entry, ui) {
+        var row = document.createElement('div'); row.className = 'shop-row';
+        var icon = document.createElement('div'); icon.className = 'shop-emoji'; icon.textContent = entry.emoji;
+        var info = document.createElement('div');
+        var name = document.createElement('div'); name.className = 'shop-name'; name.textContent = entry.name + ' × ' + entry.qty;
+        var desc = document.createElement('div'); desc.className = 'shop-desc'; desc.textContent = '$' + entry.value + ' each · total $' + (entry.value * entry.qty);
+        info.appendChild(name); info.appendChild(desc);
+        var button = document.createElement('button'); button.type = 'button'; button.className = 'shop-buy'; button.textContent = 'Sell all';
+        button.addEventListener('click', function () {
+          var result = ui._onSell ? ui._onSell(entry.id, entry.qty, entry.value) : { ok: false };
+          if (!result || result.ok === false) {
+            ui._message.textContent = result && result.error ? result.error : 'Could not sell this harvest.';
+            return;
+          }
+          ui._message.textContent = 'Sold ' + entry.qty + ' ' + entry.name + ' for $' + (entry.qty * entry.value) + '!';
+          ui.refreshBalance();
+          ui._renderProduce();
+        });
+        row.appendChild(icon); row.appendChild(info); row.appendChild(button); ui._produce.appendChild(row);
+      })(produce[i], this);
+    }
+  }
+
   _finishGift(item, result) {
     if (!result || result.ok === false) {
       this._message.textContent = result && result.error ? result.error : 'Gift could not be sent.';
@@ -208,6 +247,7 @@ export class ShopUI {
 
   refreshBalance() {
     if (this._balance) this._balance.textContent = '💰 $' + Math.max(0, Math.floor(Number(this._getMoney()) || 0));
+    this._renderProduce();
   }
 
   open() {
