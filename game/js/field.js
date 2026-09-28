@@ -327,6 +327,17 @@ export class Field {
     };
   }
 
+  // Will this field pay out without buying anything? (sprayed crops ripen
+  // on their own; ready crops just need harvesting)
+  hasHarvestComing() {
+    const { SPRAYED, READY } = TileState;
+    for (let i = 0; i < this.count; i++) {
+      const st = this._states[i];
+      if (st === SPRAYED || st === READY) return true;
+    }
+    return false;
+  }
+
   plantAt(worldX, worldZ, cropType) {
     var tile = this.worldToTile(worldX, worldZ);
     if (!tile || tile.state !== TileState.TILLED) return false;

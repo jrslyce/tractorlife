@@ -1,17 +1,19 @@
 // game/js/world.js — multi-farm world management with distance culling.
 // ES module, Three.js (importmap 0.160.0). Imports Farm from './farm.js'.
 import * as THREE from 'three';
-import { Farm } from './farm.js';
+import { Farm, FARM_SPACING, NUM_FARMS } from './farm.js';
 
 // ---------------------------------------------------------------- constants
-var NUM_FARMS = 10;
-var FARM_SPACING = 140; // X distance between farm centers
 var CULL_DISTANCE = 440; // past fog far (430) so culled farms are fogged out
 
-// Shop area: south of the farms, across the E-W road
-var SHOP_CENTER_X = 680; // between farms 5 and 6 (slot 4 and 5)
-var SHOP_CENTER_Z = 55;  // south of the road strip (z ~40)
-var SHOP_TRIGGER_RADIUS = 4;
+// World extent along X: farm 0's west fence to the last farm's east fence.
+export const WORLD_MIN_X = -10;
+export const WORLD_MAX_X = (NUM_FARMS - 1) * FARM_SPACING + 160;
+
+// Shop: south of the E-W road, in the middle of the map so every farm can
+// reach it. (x, z) is the building's north-west corner; see shop.js.
+export const SHOP_X = Math.round(((NUM_FARMS - 1) * FARM_SPACING + 150) / 2) - 6;
+export const SHOP_Z = 55;
 
 // ---------------------------------------------------------------- World class
 export class World {
