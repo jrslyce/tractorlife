@@ -20,6 +20,7 @@ import { ITEM_BY_ID, packSize } from './items.js';
 import { Inventory } from './inventory.js';
 import { Wagon, WagonPanel, CargoHold, TRUCK_BED_SLOTS } from './wagon.js';
 import { PerformanceBudget } from './performance.js';
+import { steeringYawDelta } from './vehicle-physics.js';
 import { TOOL_ORDER, COMBINE_HEAD_ORDER, buildTool, buildCombineHead } from './equipment.js';
 import { login, restoreRememberedSession, rememberedEmail, hasRememberedEmail, forgetRememberedCredentials, startAutosave, fetchFarmers, fetchFarmState, fetchSharedWorld, placeSharedRoad, sendGift } from './net.js';
 
@@ -842,10 +843,9 @@ function stepPhysics(dt) {
 
   // steering only bites while rolling; reversing flips the turn direction
   const steeringRate = vehicleType === 'combine' ? 0.95 : STEER_RATE;
-  const steer = input.turn * steeringRate * Math.min(1, Math.abs(speed) / 2) * (speed < 0 ? -1 : 1);
-  // Truck's front axle uses the opposite yaw sign convention to the other
-  // vehicle models; align chassis yaw with its visible wheel direction.
-  theta += (vehicleType === 'truck' ? 1 : -1) * steer * dt;
+  // A positive input.turn is right; with +X as vehicle forward, rightward yaw
+  // is negative around Three.js' Y axis. Keep the same mapping for the truck.
+  theta += steeringYawDelta(input.turn, steeringRate, speed, dt);
   vehicle.rotation.y = theta;
 
   const steeringPivots = vehicle.userData.steeringPivots || [];
