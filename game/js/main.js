@@ -14,6 +14,7 @@ import { World } from './world.js';
 import { Shop } from './shop.js';
 import { ShopUI } from './shopui.js';
 import { Builder } from './build.js';
+import { RealtimeClient } from './realtime.js';
 import { TOOL_ORDER, COMBINE_HEAD_ORDER, buildTool, buildCombineHead } from './equipment.js';
 import { login, restoreRememberedSession, rememberedEmail, hasRememberedEmail, forgetRememberedCredentials, startAutosave, fetchFarmers, fetchFarmState, fetchSharedWorld, placeSharedRoad } from './net.js';
 
@@ -185,6 +186,7 @@ if (window.vtInventory) {
       if (entry.id === 'asphalt' || entry.id === 'gravel' || entry.id === 'brick') {
         placeSharedRoad(entry);
       }
+      if (realtime) realtime.sendBuild(entry);
     }
   });
 }
@@ -887,6 +889,7 @@ function resetToSpawn() {
 // ---------------------------------------------------------------- save/restore
 let session = null;
 let sharedWorldTimer = null;
+let realtime = null;
 
 function snapshot() {
   return {
@@ -1128,6 +1131,55 @@ function updateFarmLabels() {
 // added on join, removed (geometry materials disposed) on part, never
 // duplicated. Hash collisions: only the FIRST farmer per slot is rendered.
 const farmerChars = {}; // farmSlot -> Character
+const remoteTargets = {}; // farmSlot -> most recent realtime pose
+const remoteVehicles = {}; // simple voxel machine proxy while a farmer drives
+
+function makeRemoteVehicle() {
+  const group = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.BoxGeometry(3.2, 1.1, 2), new THREE.MeshStandardMaterial({ color: '#b94335', roughness: 0.8 }));
+  body.position.y = 0.9;
+  body.castShadow = true;
+  group.add(body);
+  const cab = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.3, 1.5), new THREE.MeshStandardMaterial({ color: '#d9e2dd', roughness: 0.5 }));
+  cab.position.set(-0.1, 2, 0);
+  group.add(cab);
+  const wheelGeo = new THREE.CylinderGeometry(0.65, 0.65, 0.45, 6);
+  const wheelMat = new THREE.MeshStandardMaterial({ color: '#242322', roughness: 1 });
+  for (let i = 0; i < 4; i++) {
+    const wheel = new THREE.Mesh(wheelGeo, wheelMat);
+    wheel.rotation.z = Math.PI / 2;
+    wheel.position.set(i < 2 ? -1.1 : 1.1, 0.55, i % 2 ? -0.95 : 0.95);
+    wheel.castShadow = true;
+    group.add(wheel);
+  }
+  group.visible = false;
+  scene.add(group);
+  return group;
+}
+
+function acceptRealtimeMessage(msg) {
+  if (!msg || !msg.email) return;
+  const own = session && session.email ? String(session.email).toLowerCase() : '';
+  if (String(msg.email).toLowerCase() === own) return;
+  let slot = -1;
+  for (let i = 0; i < farmerRoster.length; i++) {
+    if (String(farmerRoster[i].email).toLowerCase() === String(msg.email).toLowerCase()) {
+      slot = farmerRoster[i].slot;
+      break;
+    }
+  }
+  if (slot < 0 || slot === world.getAssignedSlot()) return;
+  if (msg.type === 'pose' && msg.pose) {
+    remoteTargets[slot] = {
+      x: msg.pose.x, z: msg.pose.z, theta: msg.pose.theta,
+      mode: msg.pose.mode, machine: msg.pose.machine
+    };
+  } else if (msg.type === 'leave') {
+    delete remoteTargets[slot];
+  } else if (msg.type === 'build' && builder && msg.entry) {
+    builder.restore([msg.entry], true);
+  }
+}
 
 function reconcileFarmerCharacters() {
   const farms = world.getFarms();
@@ -1146,6 +1198,12 @@ function reconcileFarmerCharacters() {
     const gone = farmerChars[have[i]];
     scene.remove(gone.group);
     disposeGroup(gone.group); // materials only — BOX geometry is shared
+    if (remoteVehicles[have[i]]) {
+      scene.remove(remoteVehicles[have[i]]);
+      disposeGroup(remoteVehicles[have[i]]);
+      delete remoteVehicles[have[i]];
+    }
+    delete remoteTargets[have[i]];
     delete farmerChars[have[i]];
   }
 
@@ -1162,6 +1220,7 @@ function reconcileFarmerCharacters() {
     ch.setVisible(true);
     scene.add(ch.group);
     farmerChars[keys[i]] = ch;
+    remoteVehicles[keys[i]] = makeRemoteVehicle();
   }
 }
 
@@ -1173,7 +1232,26 @@ function updateFarmerCharacters(dt) {
     const ch = farmerChars[keys[i]];
     const farm = farms[Number(keys[i])];
     const culled = farm ? farm._culled : true;
-    if (ch.group.visible !== !culled) ch.setVisible(!culled);
+    const target = remoteTargets[keys[i]];
+    if (target) {
+      const t = 1 - Math.exp(-12 * dt);
+      ch.group.position.x += (target.x - ch.group.position.x) * t;
+      ch.group.position.z += (target.z - ch.group.position.z) * t;
+      let d = target.theta - ch.group.rotation.y;
+      while (d > Math.PI) d -= Math.PI * 2;
+      while (d < -Math.PI) d += Math.PI * 2;
+      ch.group.rotation.y += d * t;
+    }
+    const driving = !!(target && target.mode === 'driving');
+    if (ch.group.visible !== (!culled && !driving)) ch.setVisible(!culled && !driving);
+    const proxy = remoteVehicles[keys[i]];
+    if (proxy) {
+      proxy.visible = !culled && driving;
+      if (target) {
+        proxy.position.set(ch.group.position.x, 0, ch.group.position.z);
+        proxy.rotation.y = target.theta;
+      }
+    }
     ch.update(dt);
   }
 }
@@ -1249,6 +1327,20 @@ function setupLogin() {
     lastSig = '';
     updateHUD();
     startFarmerPolling();
+    if (realtime) {
+      realtime.close();
+      realtime = null;
+    }
+    if (session.mode === 'online') {
+      realtime = new RealtimeClient(function () {
+        if (mode === 'driving') {
+          return { x: vehicle.position.x, z: vehicle.position.z, theta: theta, mode: 'driving', machine: vehicleType, color: currentColor };
+        }
+        return { x: character.group.position.x, z: character.group.position.z,
+          theta: character.group.rotation.y, mode: 'walking', machine: null, color: '' };
+      }, acceptRealtimeMessage);
+      realtime.connect();
+    }
     if (sharedWorldTimer !== null) {
       clearInterval(sharedWorldTimer);
       sharedWorldTimer = null;

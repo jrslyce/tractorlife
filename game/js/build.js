@@ -206,25 +206,25 @@ export class Builder {
 
   serializeLocal() {
     return this._placed.filter(function (entry) {
-      return !ROAD_IDS[entry.id];
+      return !ROAD_IDS[entry.id] && !entry.remote;
     });
   }
 
-  restore(entries) {
+  restore(entries, allowForeign) {
     if (!Array.isArray(entries)) return false;
     for (var i = 0; i < entries.length; i++) {
       var entry = entries[i];
       var item = entry && ITEM_BY_ID[entry.id];
       if (!item || !isFinite(entry.x) || !isFinite(entry.z)) continue;
       var p = { x: Math.round(entry.x), z: Math.round(entry.z) };
-      if (!this._canPlace(item, p.x, p.z) || this._occupied[cellKey(p.x, p.z)]) continue;
+      if ((!allowForeign && !this._canPlace(item, p.x, p.z)) || this._occupied[cellKey(p.x, p.z)]) continue;
       var mesh = this._makeMesh(item);
       mesh.position.x = p.x;
       mesh.position.z = p.z;
       if (entry.color && mesh.material.color) mesh.material.color.set(entry.color);
       this.scene.add(mesh);
       this._occupied[cellKey(p.x, p.z)] = mesh;
-      this._placed.push({ id: item.id, x: p.x, z: p.z, color: entry.color || COLORS[item.id] });
+      this._placed.push({ id: item.id, x: p.x, z: p.z, color: entry.color || COLORS[item.id], remote: !!allowForeign });
     }
     return true;
   }
