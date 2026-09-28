@@ -200,21 +200,19 @@ export class Field {
     scene.add(under);
     this._underMesh = under;
 
-    // --- crop overlays: one InstancedMesh, BLOCKS slots per tile (1 draw call) ---
+    // --- crop overlays: one InstancedMesh, BLOCKS slots per planted tile ---
+    // Slots are handed out only to tiles that currently show a crop, and the
+    // draw count tracks the high-water mark, so an empty field draws nothing.
+    // Reserving BLOCKS slots for every tile of all 40 fields meant ~250k
+    // always-drawn boxes (plus the shadow pass), which stalled the renderer.
     const cropGeo = new THREE.BoxGeometry(1, 1, 1);
     const cropMat = new THREE.MeshStandardMaterial({ roughness: 0.85, metalness: 0 });
     const crops = new THREE.InstancedMesh(cropGeo, cropMat, count * BLOCKS);
-    for (let i = 0; i < count; i++) {
-      for (let b = 0; b < BLOCKS; b++) {
-        this._dummy.position.set(this._tx[i], 0, this._tz[i]);
-        this._dummy.scale.set(0, 0, 0); // hidden until a crop appears
-        this._dummy.updateMatrix();
-        crops.setMatrixAt(i * BLOCKS + b, this._dummy.matrix);
-        crops.setColorAt(i * BLOCKS + b, col('#4e9e3f'));
-      }
-    }
-    crops.instanceMatrix.needsUpdate = true;
-    if (crops.instanceColor) crops.instanceColor.needsUpdate = true;
+    crops.setColorAt(0, col('#4e9e3f')); // allocate instanceColor up front
+    crops.count = 0;
+    this._slotOf = new Int32Array(count).fill(-1); // tile -> crop slot, -1 = none
+    this._freeSlots = [];
+    this._slotHigh = 0; // slots handed out so far (draw count = high * BLOCKS)
     crops.castShadow = crops.receiveShadow = true;
     crops.frustumCulled = false;
     scene.add(crops);
@@ -353,13 +351,15 @@ export class Field {
   serialize() {
     const states = new Array(this.count);
     const timers = new Array(this.count);
-    const cropTypes = new Array(this.count);
-    const fertilized = new Array(this.count);
+    // one base-36 char / one '0'|'1' per tile: plain arrays pushed the
+    // 10-farm save past the Worker's 512 KiB state limit
+    let cropTypes = '';
+    let fertilized = '';
     for (let i = 0; i < this.count; i++) {
       states[i] = STATE_CODES[this._states[i]] || 0;
       timers[i] = Math.round(this._timers[i] * 100) / 100;
-      cropTypes[i] = CROP_CODES[this._cropTypes[i]] || 0;
-      fertilized[i] = this._fertilized[i] ? 1 : 0;
+      cropTypes += (CROP_CODES[this._cropTypes[i]] || 0).toString(36);
+      fertilized += this._fertilized[i] ? '1' : '0';
     }
     return {
       states: states,
@@ -383,10 +383,14 @@ export class Field {
           : TileState.UNTILLED;
       const t = d.timers ? d.timers[i] : 0;
       this._timers[i] = typeof t === 'number' && isFinite(t) && t > 0 ? t : 0;
-      const cropCode = d.cropTypes && d.cropTypes[i];
+      const cropCode = typeof d.cropTypes === 'string'
+        ? parseInt(d.cropTypes.charAt(i), 36)
+        : (d.cropTypes && d.cropTypes[i]);
       this._cropTypes[i] = typeof cropCode === 'number' && cropCode >= 0 && cropCode < CROP_TYPES.length
         ? CROP_TYPES[cropCode] : 'generic';
-      this._fertilized[i] = d.fertilized && d.fertilized[i] ? 1 : 0;
+      this._fertilized[i] = typeof d.fertilized === 'string'
+        ? (d.fertilized.charAt(i) === '1' ? 1 : 0)
+        : (d.fertilized && d.fertilized[i] ? 1 : 0);
     }
     const keys = ['tilled', 'planted', 'sprayed', 'harvested'];
     for (let k = 0; k < keys.length; k++) {
@@ -409,11 +413,21 @@ export class Field {
     const stage = stateStage(st);
     const crop = this._cropTypes[i] || 'generic';
     const blocks = stage ? ((TYPE_BLOCKS[crop] && TYPE_BLOCKS[crop][stage]) || CROP_BLOCKS[st]) : CROP_BLOCKS[st];
+    let slot = this._slotOf[i];
+    if (!blocks || blocks.length === 0) {
+      if (slot < 0) return;
+      this._slotOf[i] = -1;
+      this._freeSlots.push(slot);
+    } else if (slot < 0) {
+      slot = this._freeSlots.length ? this._freeSlots.pop() : this._slotHigh++;
+      this._slotOf[i] = slot;
+      this._cropMesh.count = this._slotHigh * BLOCKS;
+    }
     const cx = this._tx[i];
     const cz = this._tz[i];
     for (let b = 0; b < BLOCKS; b++) {
-      const idx = i * BLOCKS + b;
-      const def = blocks[b];
+      const idx = slot * BLOCKS + b;
+      const def = this._slotOf[i] >= 0 ? blocks[b] : null;
       if (def) {
         this._dummy.position.set(cx + def[0], def[1], cz + def[2]);
         this._dummy.scale.set(def[3], def[4], def[5]);
