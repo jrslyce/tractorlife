@@ -20,12 +20,19 @@ export const STATE_NAMES = [
 export const STATE_CODES = {};
 for (let si = 0; si < STATE_NAMES.length; si++) STATE_CODES[STATE_NAMES[si]] = si;
 
+export const CROP_TYPES = ['generic', 'corn', 'wheat', 'pumpkin', 'sunflower', 'peas'];
+export const CROP_VALUES = { generic: 10, peas: 2, wheat: 4, corn: 7, sunflower: 10, pumpkin: 18 };
+const CROP_CODES = {};
+for (let ci = 0; ci < CROP_TYPES.length; ci++) CROP_CODES[CROP_TYPES[ci]] = ci;
+const GROW_SECONDS = { generic: 5, peas: 4, wheat: 5, corn: 8, sunflower: 8, pumpkin: 12 };
+const RIPEN_SECONDS = { generic: 6, peas: 4, wheat: 5, corn: 7, sunflower: 8, pumpkin: 10 };
+
 // --- tuning ---
 const GROW_SPROUT_S = 5; // PLANTED -> GROWING
 const RIPEN_S = 6; // SPRAYED -> READY (only reachable after spray)
 const HARVEST_MONEY = 10; // per READY tile harvested
 const TILE_H = 0.16; // tile box height (flat voxel slab)
-const BLOCKS = 2; // crop overlay blocks per tile (InstancedMesh slots)
+const BLOCKS = 4; // crop overlay voxels per tile (InstancedMesh slots)
 const EPS = 1e-4; // bar-edge tolerance so grid-aligned bars hit exactly one row
 
 // --- palette ---
@@ -65,6 +72,50 @@ const CROP_BLOCKS = {
   ],
 };
 
+// Distinct voxel silhouettes. Entries follow the same [dx,y,dz,sx,sy,sz,color]
+// layout as the generic stage palette above.
+const TYPE_BLOCKS = {
+  generic: CROP_BLOCKS,
+  corn: {
+    PLANTED: [[0, 0.3, 0, 0.22, 0.25, 0.22, '#75b84b']],
+    GROWING: [[0, 0.65, 0, 0.22, 1.05, 0.22, '#4f8d32'], [-0.22, 0.75, 0, 0.38, 0.16, 0.16, '#66a940'], [0.22, 0.42, 0, 0.36, 0.15, 0.14, '#43802c']],
+    SPRAYED: [[0, 0.65, 0, 0.22, 1.05, 0.22, '#428044'], [-0.22, 0.75, 0, 0.38, 0.16, 0.16, '#57a54a'], [0.22, 0.42, 0, 0.36, 0.15, 0.14, '#39763c']],
+    READY: [[0, 0.85, 0, 0.24, 1.55, 0.24, '#548334'], [-0.22, 0.78, 0, 0.38, 0.18, 0.16, '#6b9e3c'], [0.18, 0.92, 0, 0.22, 0.45, 0.24, '#e1bd42'], [0, 1.72, 0, 0.45, 0.22, 0.45, '#9c7130']]
+  },
+  wheat: {
+    PLANTED: [[0, 0.28, 0, 0.2, 0.2, 0.2, '#85bd54']],
+    GROWING: [[-0.18, 0.5, 0, 0.15, 0.72, 0.15, '#75a741'], [0.05, 0.55, 0.08, 0.15, 0.82, 0.15, '#86ad42'], [0.22, 0.45, -0.1, 0.15, 0.65, 0.15, '#69963a']],
+    SPRAYED: [[-0.18, 0.5, 0, 0.15, 0.72, 0.15, '#729a4a'], [0.05, 0.55, 0.08, 0.15, 0.82, 0.15, '#83a34b'], [0.22, 0.45, -0.1, 0.15, 0.65, 0.15, '#63884a']],
+    READY: [[-0.2, 0.7, 0, 0.15, 1.15, 0.15, '#b69737'], [0.02, 0.75, 0.08, 0.15, 1.25, 0.15, '#d1b448'], [0.23, 0.65, -0.1, 0.15, 1.05, 0.15, '#b28e32'], [0.05, 1.42, 0.08, 0.25, 0.25, 0.25, '#efd16a']]
+  },
+  pumpkin: {
+    PLANTED: [[0, 0.28, 0, 0.22, 0.18, 0.22, '#5caa3e']],
+    GROWING: [[0, 0.34, 0, 0.56, 0.35, 0.56, '#70a646'], [0.2, 0.34, 0.1, 0.18, 0.15, 0.18, '#85b452']],
+    SPRAYED: [[0, 0.36, 0, 0.62, 0.4, 0.62, '#779e43'], [0.2, 0.38, 0.1, 0.18, 0.15, 0.18, '#95ba55']],
+    READY: [[0, 0.43, 0, 0.72, 0.66, 0.72, '#e77825'], [-0.18, 0.42, 0, 0.18, 0.55, 0.55, '#f18a2c'], [0.18, 0.42, 0, 0.18, 0.55, 0.55, '#c95c1e'], [0, 0.83, 0, 0.15, 0.2, 0.15, '#477b35']]
+  },
+  sunflower: {
+    PLANTED: [[0, 0.3, 0, 0.2, 0.23, 0.2, '#78b74b']],
+    GROWING: [[0, 0.6, 0, 0.2, 0.95, 0.2, '#4d8b35'], [0.2, 0.7, 0, 0.38, 0.16, 0.18, '#78b64a'], [-0.2, 0.48, 0, 0.38, 0.16, 0.18, '#68a63f']],
+    SPRAYED: [[0, 0.6, 0, 0.2, 0.95, 0.2, '#478647'], [0.2, 0.7, 0, 0.38, 0.16, 0.18, '#72aa4b'], [-0.2, 0.48, 0, 0.38, 0.16, 0.18, '#5f9845']],
+    READY: [[0, 0.85, 0, 0.2, 1.5, 0.2, '#47813a'], [0, 1.68, 0, 0.72, 0.2, 0.72, '#efc930'], [0, 1.68, 0, 0.38, 0.25, 0.38, '#704d28'], [0.2, 1.68, 0, 0.18, 0.4, 0.18, '#f6dc54']]
+  },
+  peas: {
+    PLANTED: [[0, 0.28, 0, 0.22, 0.2, 0.22, '#83bd4c']],
+    GROWING: [[0, 0.38, 0, 0.6, 0.4, 0.58, '#579442'], [0.18, 0.44, 0.12, 0.24, 0.2, 0.24, '#76ac4d']],
+    SPRAYED: [[0, 0.4, 0, 0.64, 0.42, 0.62, '#4e8745'], [0.18, 0.48, 0.12, 0.25, 0.2, 0.25, '#6da34d']],
+    READY: [[0, 0.42, 0, 0.68, 0.48, 0.68, '#4c8d42'], [-0.2, 0.55, 0.15, 0.22, 0.17, 0.16, '#b3cf58'], [0.17, 0.55, -0.12, 0.22, 0.17, 0.16, '#bad85c'], [0.05, 0.55, 0.2, 0.22, 0.17, 0.16, '#a9c94e']]
+  }
+};
+
+function stateStage(state) {
+  if (state === TileState.PLANTED) return 'PLANTED';
+  if (state === TileState.GROWING) return 'GROWING';
+  if (state === TileState.SPRAYED) return 'SPRAYED';
+  if (state === TileState.READY) return 'READY';
+  return '';
+}
+
 // soil under the tile grid (gap colour): darker than every TILE_COLORS entry
 // so the 0.06 grid gaps read as shadowed soil, never as grass.
 const SOIL_UNDER = '#4a3a26';
@@ -91,6 +142,8 @@ export class Field {
     this.count = count;
 
     this._states = new Array(count).fill(TileState.UNTILLED);
+    this._cropTypes = new Array(count).fill('generic');
+    this._fertilized = new Uint8Array(count);
     this._timers = new Float32Array(count); // seconds in current timed state
     this._jitter = new Float32Array(count); // untilled "clump" shade variation
     this._tx = new Float32Array(count); // tile world centers
@@ -180,14 +233,19 @@ export class Field {
       const s = states[i];
       if (s === PLANTED) {
         timers[i] += dt;
-        if (timers[i] >= GROW_SPROUT_S) {
+        var type = this._cropTypes[i] || 'generic';
+        var growTime = GROW_SECONDS[type] || GROW_SPROUT_S;
+        if (this._fertilized[i]) growTime *= 0.6;
+        if (timers[i] >= growTime) {
           states[i] = GROWING;
           timers[i] = 0;
           this._refresh(i);
         }
       } else if (s === SPRAYED) {
         timers[i] += dt;
-        if (timers[i] >= RIPEN_S) {
+        var ripenTime = RIPEN_SECONDS[this._cropTypes[i]] || RIPEN_S;
+        if (this._fertilized[i]) ripenTime *= 0.6;
+        if (timers[i] >= ripenTime) {
           states[i] = TileState.READY;
           timers[i] = 0;
           this._refresh(i);
@@ -201,7 +259,7 @@ export class Field {
   // ---------- implement pass ----------
   // Working bar of `width` centered at (worldX, worldZ), perpendicular to heading
   // (0 = facing +X), one tile deep along the heading. Illegal tiles are skipped.
-  applyEffect(worldX, worldZ, width, effect, headingRad) {
+  applyEffect(worldX, worldZ, width, effect, headingRad, cropType) {
     const key = String(effect == null ? '' : effect).toLowerCase();
     const legal = EFFECTS[key];
     const out = { affected: 0, money: 0 };
@@ -226,6 +284,10 @@ export class Field {
       if (next === null) continue; // illegal on this tile → skipped
 
       this._states[i] = next;
+      if (key === 'plant') {
+        this._cropTypes[i] = CROP_CODES[cropType] !== undefined ? cropType : 'generic';
+        this._fertilized[i] = 0;
+      }
       this._timers[i] = 0;
       this._refresh(i);
       out.affected++;
@@ -234,7 +296,8 @@ export class Field {
       else if (next === SPRAYED) this._tally.sprayed++;
       else if (next === HARVEST_MONEY_STATE) {
         this._tally.harvested++;
-        out.money += HARVEST_MONEY;
+        out.money += CROP_VALUES[this._cropTypes[i]] || HARVEST_MONEY;
+        this._fertilized[i] = 0;
       }
     }
     return out;
@@ -261,20 +324,48 @@ export class Field {
       cx: this.originX + col * this.tile,
       cz: this.originZ + row * this.tile,
       state: this._states[row * this.cols + col],
+      cropType: this._cropTypes[row * this.cols + col],
     };
+  }
+
+  plantAt(worldX, worldZ, cropType) {
+    var tile = this.worldToTile(worldX, worldZ);
+    if (!tile || tile.state !== TileState.TILLED) return false;
+    var index = tile.row * this.cols + tile.col;
+    this._cropTypes[index] = CROP_CODES[cropType] !== undefined ? cropType : 'generic';
+    this._states[index] = TileState.PLANTED;
+    this._timers[index] = 0;
+    this._tally.planted++;
+    this._refresh(index);
+    return true;
+  }
+
+  fertilizeAt(worldX, worldZ) {
+    var tile = this.worldToTile(worldX, worldZ);
+    if (!tile || (tile.state !== TileState.PLANTED && tile.state !== TileState.GROWING && tile.state !== TileState.SPRAYED)) return false;
+    var index = tile.row * this.cols + tile.col;
+    if (this._fertilized[index]) return false;
+    this._fertilized[index] = 1;
+    return true;
   }
 
   // ---------- persistence ----------
   serialize() {
     const states = new Array(this.count);
     const timers = new Array(this.count);
+    const cropTypes = new Array(this.count);
+    const fertilized = new Array(this.count);
     for (let i = 0; i < this.count; i++) {
       states[i] = STATE_CODES[this._states[i]] || 0;
       timers[i] = Math.round(this._timers[i] * 100) / 100;
+      cropTypes[i] = CROP_CODES[this._cropTypes[i]] || 0;
+      fertilized[i] = this._fertilized[i] ? 1 : 0;
     }
     return {
       states: states,
       timers: timers,
+      cropTypes: cropTypes,
+      fertilized: fertilized,
       tilled: this._tally.tilled,
       planted: this._tally.planted,
       sprayed: this._tally.sprayed,
@@ -292,6 +383,10 @@ export class Field {
           : TileState.UNTILLED;
       const t = d.timers ? d.timers[i] : 0;
       this._timers[i] = typeof t === 'number' && isFinite(t) && t > 0 ? t : 0;
+      const cropCode = d.cropTypes && d.cropTypes[i];
+      this._cropTypes[i] = typeof cropCode === 'number' && cropCode >= 0 && cropCode < CROP_TYPES.length
+        ? CROP_TYPES[cropCode] : 'generic';
+      this._fertilized[i] = d.fertilized && d.fertilized[i] ? 1 : 0;
     }
     const keys = ['tilled', 'planted', 'sprayed', 'harvested'];
     for (let k = 0; k < keys.length; k++) {
@@ -311,7 +406,9 @@ export class Field {
     this._tileMesh.setColorAt(i, tmp);
     this._tileMesh.instanceColor.needsUpdate = true;
 
-    const blocks = CROP_BLOCKS[st];
+    const stage = stateStage(st);
+    const crop = this._cropTypes[i] || 'generic';
+    const blocks = stage ? ((TYPE_BLOCKS[crop] && TYPE_BLOCKS[crop][stage]) || CROP_BLOCKS[st]) : CROP_BLOCKS[st];
     const cx = this._tx[i];
     const cz = this._tz[i];
     for (let b = 0; b < BLOCKS; b++) {
