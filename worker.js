@@ -235,6 +235,20 @@ export class FarmerList {
   }
 }
 
+// Farm footprints, matching game/js/farm.js: each farm spans x
+// slot*140 + (-6 .. 105.5) and z -54.5 .. 27.5. Returns -1 on public land.
+const FARM_MIN_X = -6;
+const FARM_MAX_X = 105.5;
+const FARM_MIN_Z = -54.5;
+const FARM_MAX_Z = 27.5;
+function farmSlotAt(x, z) {
+  if (z < FARM_MIN_Z || z > FARM_MAX_Z) return -1;
+  for (let slot = 0; slot < 10; slot++) {
+    if (x >= slot * 140 + FARM_MIN_X && x <= slot * 140 + FARM_MAX_X) return slot;
+  }
+  return -1;
+}
+
 // Shared public road tiles. A single named Durable Object serializes writes,
 // making placement idempotent without replacing the entire shared snapshot.
 export class SharedWorld {
@@ -264,12 +278,8 @@ export class SharedWorld {
         return json({ ok: false, error: "invalid tile" }, 400);
       }
       // Reject tiles inside any farm bounds; only public land can be shared road.
-      for (let slot = 0; slot < 10; slot++) {
-        const minX = slot * 140 - 6;
-        const maxX = slot * 140 + 105.5;
-        if (body.x >= minX && body.x <= maxX && body.z >= -72.5 && body.z <= 27.5) {
-          return json({ ok: false, error: "roads may only be placed on public land" }, 403);
-        }
+      if (farmSlotAt(body.x, body.z) >= 0) {
+        return json({ ok: false, error: "roads may only be placed on public land" }, 403);
       }
       const key = body.x + "," + body.z;
       const roads = await this.ctx.storage.get("roads") || {};
