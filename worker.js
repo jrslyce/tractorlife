@@ -9,13 +9,15 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // How long a farmer stays on the /api/farmers list after their last login.
 const FARMER_RECENT_MS = 30 * 24 * 60 * 60 * 1000;
 const encoder = new TextEncoder();
+// Mirrors game/js/items.js: price per purchase, and `pack` units per purchase.
 const GIFT_ITEMS = {
   asphalt: { price: 4, emoji: "⬛" }, gravel: { price: 2, emoji: "◽" }, brick: { price: 6, emoji: "🧱" },
   wood: { price: 12, emoji: "🪵" }, roof_shingles: { price: 90, emoji: "🏠" }, fence_kit: { price: 80, emoji: "🚧" },
   window_glass: { price: 65, emoji: "🪟" }, door: { price: 70, emoji: "🚪" }, lamp_light: { price: 55, emoji: "💡" },
-  string_lights: { price: 95, emoji: "✨" }, fertilizer: { price: 25, emoji: "🪴" }, corn_seeds: { price: 15, emoji: "🌽" },
-  wheat_seeds: { price: 10, emoji: "🌾" }, pumpkin_seeds: { price: 25, emoji: "🎃" }, sunflower_seeds: { price: 18, emoji: "🌻" },
-  pea_seeds: { price: 8, emoji: "🟢" }, paint: { price: 30, emoji: "🎨" }, hay_bale: { price: 28, emoji: "🟨" },
+  string_lights: { price: 95, emoji: "✨" }, fertilizer: { price: 25, emoji: "🪴", pack: 10 },
+  crop_spray: { price: 20, emoji: "🧴", pack: 200 }, corn_seeds: { price: 15, emoji: "🌽", pack: 100 },
+  wheat_seeds: { price: 10, emoji: "🌾", pack: 100 }, pumpkin_seeds: { price: 25, emoji: "🎃", pack: 100 },
+  sunflower_seeds: { price: 18, emoji: "🌻", pack: 100 }, pea_seeds: { price: 8, emoji: "🟢", pack: 100 }, paint: { price: 30, emoji: "🎨" }, hay_bale: { price: 28, emoji: "🟨" },
   scarecrow: { price: 60, emoji: "🧑‍🌾" }, pumpkin_pile: { price: 75, emoji: "🎃" }, corn_shocks: { price: 48, emoji: "🌽" }, mailbox: { price: 42, emoji: "📮" },
 };
 
@@ -237,9 +239,10 @@ export class GameSaves {
         for (let i = 0; i < slots.length; i++) if (!slots[i]) { target = i; break; }
       }
       if (target < 0) return json({ ok: false, error: "recipient inventory is full" }, 409);
-      if (slots[target] && (Number(slots[target].qty) || 0) + body.qty > 999) return json({ ok: false, error: "recipient stack is full" }, 409);
-      if (slots[target]) slots[target].qty = Math.max(0, Number(slots[target].qty) || 0) + body.qty;
-      else slots[target] = { itemId: body.itemId, qty: body.qty, emoji: item.emoji };
+      const units = body.qty * (item.pack || 1);
+      if (slots[target] && (Number(slots[target].qty) || 0) + units > 9999) return json({ ok: false, error: "recipient stack is full" }, 409);
+      if (slots[target]) slots[target].qty = Math.max(0, Number(slots[target].qty) || 0) + units;
+      else slots[target] = { itemId: body.itemId, qty: units, emoji: item.emoji };
       const inbox = Array.isArray(state.giftInbox) ? state.giftInbox.slice(-19) : [];
       inbox.push({ requestId: body.requestId, from: body.from, itemId: body.itemId, qty: body.qty, at: Date.now() });
       state.giftInbox = inbox;
@@ -357,15 +360,20 @@ export class FarmerList {
 }
 
 // Farm footprints, matching game/js/farm.js: each farm spans x
-// slot*140 + (-6 .. 105.5) and z -54.5 .. 27.5. Returns -1 on public land.
+// slot*180 + (-6 .. 149.5) (pads, fields, build yard) and z -54.5 .. 27.5.
+// Returns -1 on public land.
+const FARM_SPACING = 180;
 const FARM_MIN_X = -6;
-const FARM_MAX_X = 105.5;
+const FARM_MAX_X = 149.5;
+// World X extent, matching WORLD_MIN_X / WORLD_MAX_X in game/js/world.js.
+const WORLD_MIN_X = -10;
+const WORLD_MAX_X = 9 * FARM_SPACING + 160;
 const FARM_MIN_Z = -54.5;
 const FARM_MAX_Z = 27.5;
 function farmSlotAt(x, z) {
   if (z < FARM_MIN_Z || z > FARM_MAX_Z) return -1;
   for (let slot = 0; slot < 10; slot++) {
-    if (x >= slot * 140 + FARM_MIN_X && x <= slot * 140 + FARM_MAX_X) return slot;
+    if (x >= slot * FARM_SPACING + FARM_MIN_X && x <= slot * FARM_SPACING + FARM_MAX_X) return slot;
   }
   return -1;
 }
@@ -382,7 +390,9 @@ export class SharedWorld {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/read") {
       const roads = await this.ctx.storage.get("roads") || {};
-      const entries = Object.keys(roads).map((key) => roads[key]);
+      // Tiles laid before the farms were widened can now sit inside a farm.
+      const entries = Object.keys(roads).map((key) => roads[key])
+        .filter((tile) => farmSlotAt(tile.x, tile.z) < 0);
       return json({ ok: true, roads: entries, stamp: await this.ctx.storage.get("stamp") || 0 });
     }
     if (request.method === "POST" && url.pathname === "/place") {
@@ -395,7 +405,7 @@ export class SharedWorld {
       }
       if (!isPlainObject(body) || !["asphalt", "gravel", "brick"].includes(body.id) ||
           !Number.isSafeInteger(body.x) || !Number.isSafeInteger(body.z) ||
-          body.x < -10 || body.x > 1385 || body.z < -78 || body.z > 80) {
+          body.x < WORLD_MIN_X || body.x > WORLD_MAX_X || body.z < -78 || body.z > 80) {
         return json({ ok: false, error: "invalid tile" }, 400);
       }
       // Reject tiles inside any farm bounds; only public land can be shared road.
@@ -466,7 +476,7 @@ export class RealtimeRoom {
     if (msg.type === "pose") {
       const pose = msg.pose;
       if (!isPlainObject(pose) || !Number.isFinite(pose.x) || !Number.isFinite(pose.z) ||
-          !Number.isFinite(pose.theta) || pose.x < -10 || pose.x > 1385 || pose.z < -78 || pose.z > 80 ||
+          !Number.isFinite(pose.theta) || pose.x < WORLD_MIN_X || pose.x > WORLD_MAX_X || pose.z < -78 || pose.z > 80 ||
           !["walking", "driving"].includes(pose.mode) ||
           (pose.machine !== null && !["tractor", "combine", "truck"].includes(pose.machine))) return;
       this._broadcast({ type: "pose", email: attachment.email, pose: {
@@ -480,7 +490,7 @@ export class RealtimeRoom {
       const roads = ["asphalt", "gravel", "brick"];
       if (!isPlainObject(entry) || !["asphalt", "gravel", "brick", "wood", "roof_shingles", "fence_kit", "window_glass", "door", "lamp_light", "hay_bale", "scarecrow", "pumpkin_pile", "corn_shocks", "string_lights", "mailbox"].includes(entry.id) ||
           !Number.isSafeInteger(entry.x) || !Number.isSafeInteger(entry.z) ||
-          entry.x < -10 || entry.x > 1385 || entry.z < -78 || entry.z > 80) return;
+          entry.x < WORLD_MIN_X || entry.x > WORLD_MAX_X || entry.z < -78 || entry.z > 80) return;
       // Roads go on public land; everything else only on the sender's farm.
       const slot = farmSlotAt(entry.x, entry.z);
       if (roads.includes(entry.id) ? slot >= 0 : slot !== assignFarmSlot(attachment.email)) return;

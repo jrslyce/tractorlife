@@ -279,6 +279,7 @@ export class Field {
       if (Math.abs(side) > halfW + EPS || Math.abs(along) > halfD + EPS) continue;
 
       const st = this._states[i];
+      if (key === 'harvest' && (this._cropTypes[i] === 'pumpkin' || this._cropTypes[i] === 'peas')) continue;
       const next = legal(st);
       if (next === null) continue; // illegal on this tile → skipped
 
@@ -296,10 +297,33 @@ export class Field {
       else if (next === HARVEST_MONEY_STATE) {
         this._tally.harvested++;
         out.money += CROP_VALUES[this._cropTypes[i]] || HARVEST_MONEY;
+        const produceId = {
+          corn: 'harvest_corn', wheat: 'harvest_wheat', sunflower: 'harvest_sunflower',
+          pumpkin: 'harvest_pumpkin', peas: 'harvest_peas'
+        }[this._cropTypes[i]];
+        if (produceId) {
+          if (!out.produce) out.produce = {};
+          out.produce[produceId] = (out.produce[produceId] || 0) + 1;
+        }
         this._fertilized[i] = 0;
       }
     }
     return out;
+  }
+
+  harvestAt(worldX, worldZ) {
+    const tile = this.worldToTile(worldX, worldZ);
+    if (!tile || tile.state !== TileState.READY) return null;
+    const productId = tile.cropType === 'pumpkin' ? 'harvest_pumpkin' :
+      (tile.cropType === 'peas' ? 'harvest_peas' : null);
+    if (!productId) return null;
+    const index = tile.row * this.cols + tile.col;
+    this._states[index] = TileState.HARVESTED;
+    this._timers[index] = 0;
+    this._fertilized[index] = 0;
+    this._tally.harvested++;
+    this._refresh(index);
+    return { itemId: productId, value: CROP_VALUES[tile.cropType] || 0 };
   }
 
   // ---------- queries ----------
@@ -325,6 +349,17 @@ export class Field {
       state: this._states[row * this.cols + col],
       cropType: this._cropTypes[row * this.cols + col],
     };
+  }
+
+  // Will this field pay out without buying anything? (sprayed crops ripen
+  // on their own; ready crops just need harvesting)
+  hasHarvestComing() {
+    const { SPRAYED, READY } = TileState;
+    for (let i = 0; i < this.count; i++) {
+      const st = this._states[i];
+      if (st === SPRAYED || st === READY) return true;
+    }
+    return false;
   }
 
   plantAt(worldX, worldZ, cropType) {

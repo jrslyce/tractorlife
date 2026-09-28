@@ -10,13 +10,15 @@ import { buildTractor, applyLivery, LIVERY_NAMES } from './tractor.js';
 import { buildCombine } from './combine.js';
 import { buildTruck } from './vehicle.js';
 import { Character } from './character.js';
-import { World } from './world.js';
+import { World, WORLD_MIN_X, WORLD_MAX_X, SHOP_X, SHOP_Z } from './world.js';
+import { FARM_SPACING } from './farm.js';
 import { Shop } from './shop.js';
 import { ShopUI } from './shopui.js';
 import { Builder } from './build.js';
 import { RealtimeClient } from './realtime.js';
-import { ITEM_BY_ID } from './items.js';
+import { ITEM_BY_ID, packSize } from './items.js';
 import { Inventory } from './inventory.js';
+import { Wagon, WagonPanel, CargoHold, TRUCK_BED_SLOTS } from './wagon.js';
 import { TOOL_ORDER, COMBINE_HEAD_ORDER, buildTool, buildCombineHead } from './equipment.js';
 import { login, restoreRememberedSession, rememberedEmail, hasRememberedEmail, forgetRememberedCredentials, startAutosave, fetchFarmers, fetchFarmState, fetchSharedWorld, placeSharedRoad, sendGift } from './net.js';
 
@@ -25,10 +27,8 @@ const VEHICLE_SCALES = { tractor: 0.5, combine: 0.5, truck: 0.5 };
 // cycle order for the Machine button: tractor -> combine -> truck -> tractor
 const MACHINES = ['tractor', 'combine', 'truck'];
 
-// world bounds (farms span roughly x -10..1385, z -78..38)
-// M1: expanded southward to include the shop area (z up to ~80)
-const WORLD_MIN_X = -10;
-const WORLD_MAX_X = 1385;
+// world bounds: x from world.js (farm 0's west fence to the last farm's east
+// fence), z from the farms' north edge down past the shop (z up to ~80)
 const WORLD_MIN_Z = -78;
 const WORLD_MAX_Z = 80;
 
@@ -38,12 +38,13 @@ function clampZ(z) { return z < WORLD_MIN_Z ? WORLD_MIN_Z : (z > WORLD_MAX_Z ? W
 // ---------------------------------------------------------------- scene
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87ceeb);
-// far distance reaches the next farms (140 units apart) so neighbours show.
+// far distance reaches the next farms (180 units apart) so neighbours show.
 // Keep it under world.js CULL_DISTANCE (440) so farms are fogged out before
 // they are culled; the shop (~70 units south of spawn) is well inside it.
 scene.fog = new THREE.Fog(0x87ceeb, 130, 430);
 
-const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 700);
+// far plane reaches across the whole map so the shop beacon is always visible
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 1000);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(innerWidth, innerHeight);
@@ -71,28 +72,30 @@ scene.add(sun);
 scene.add(sun.target);
 
 // ---------------------------------------------------------------- ground
-// covers every farm + shop area: x -90..1410, z -220..180 (expanded southward for M1)
+// covers every farm + shop area with ~90 units of margin on every side
+const GROUND_W = WORLD_MAX_X - WORLD_MIN_X + 180;
 const ground = new THREE.Mesh(
-  new THREE.PlaneGeometry(1500, 400),
+  new THREE.PlaneGeometry(GROUND_W, 400),
   new THREE.MeshStandardMaterial({ color: '#5aa02c', roughness: 1 })
 );
 ground.rotation.x = -Math.PI / 2;
-ground.position.set(660, 0, -20);
+ground.position.set((WORLD_MIN_X + WORLD_MAX_X) / 2, 0, -20);
 ground.receiveShadow = true;
 scene.add(ground);
 
 // --- M1: E-W road strip along farms' south edge ---
-// Road runs from x ≈ -10 to x ≈ 1390, at z ≈ 30-40 (south of spawn points at z ≈ -12)
+// Road runs the full width of the world at z ≈ 29-41 (south of the farms)
+var ROAD_LEN = WORLD_MAX_X - WORLD_MIN_X + 20;
 var roadMat = new THREE.MeshStandardMaterial({ color: '#4a4a4a', roughness: 0.95 });
-var roadGeo = new THREE.BoxGeometry(1400, 0.05, 12);
+var roadGeo = new THREE.BoxGeometry(ROAD_LEN, 0.05, 12);
 var road = new THREE.Mesh(roadGeo, roadMat);
-road.position.set(690, 0.025, 35);
+road.position.set((WORLD_MIN_X + WORLD_MAX_X) / 2, 0.025, 35);
 road.receiveShadow = true;
 scene.add(road);
 
 // Road center line dashes
 var dashMat = new THREE.MeshStandardMaterial({ color: '#e6c34a', roughness: 0.9 });
-for (var di = 0; di < 140; di++) {
+for (var di = 0; di < ROAD_LEN / 10; di++) {
   var dash = new THREE.Mesh(new THREE.BoxGeometry(2, 0.06, 0.3), dashMat);
   dash.position.set(-10 + di * 10, 0.03, 35);
   scene.add(dash);
@@ -136,9 +139,42 @@ inventory.install(document.body);
 window.vtInventory = inventory;
 
 // ---------------------------------------------------------------- M1: Shop
-// Placed south of the road, between farms 5 and 6 (slot 4 and 5).
-// Uses constants from world.js (SHOP_CENTER_X, SHOP_CENTER_Z).
-var shop = new Shop(scene, 680, 55);
+// South of the road in the middle of the map (SHOP_X/SHOP_Z from world.js).
+var shop = new Shop(scene, SHOP_X, SHOP_Z);
+
+// Shop beacon: a tall striped mast with a glowing lantern, drawn without fog
+// so it shows over the horizon from every farm (camera far plane is 700).
+(function buildShopBeacon() {
+  const beacon = new THREE.Group();
+  const pole = new THREE.MeshStandardMaterial({ color: '#f5f0e0', roughness: 0.6, fog: false });
+  const stripe = new THREE.MeshStandardMaterial({ color: '#c0392b', roughness: 0.6, fog: false });
+  for (let i = 0; i < 12; i++) {
+    const seg = new THREE.Mesh(new THREE.BoxGeometry(0.8, 3, 0.8), i % 2 ? stripe : pole);
+    seg.position.y = 1.5 + i * 3;
+    beacon.add(seg);
+  }
+  const lantern = new THREE.Mesh(new THREE.BoxGeometry(4, 4, 4),
+    new THREE.MeshBasicMaterial({ color: '#ffe066', fog: false }));
+  lantern.position.y = 38;
+  beacon.add(lantern);
+  beacon.position.set(SHOP_X + 13.5, 0, SHOP_Z + 4);
+  scene.add(beacon);
+})();
+
+// HUD arrow: always points from the player toward the shop door, with the
+// distance, so the shop is easy to find from any farm.
+const shopPointer = document.createElement('div');
+shopPointer.id = 'shop-pointer';
+shopPointer.style.cssText = 'position:fixed;left:50%;top:8px;transform:translateX(-50%);z-index:31;' +
+  'display:none;align-items:center;gap:6px;padding:4px 12px;border:3px solid #2f4d1f;border-radius:999px;' +
+  'background:rgba(255,251,232,.94);color:#233018;font:700 15px system-ui,-apple-system,sans-serif;' +
+  'pointer-events:none;box-shadow:0 2px 0 rgba(0,0,0,.2);white-space:nowrap;';
+shopPointer.innerHTML = '<span>🏪 Shop</span><span id="shop-arrow" style="display:inline-block;font-size:20px;line-height:1">⬆</span><span id="shop-dist"></span>';
+document.body.appendChild(shopPointer);
+const shopArrow = shopPointer.querySelector('#shop-arrow');
+const shopDist = shopPointer.querySelector('#shop-dist');
+const camDir = new THREE.Vector3();
+let shopPointerSig = '';
 
 // ---------------------------------------------------------------- vehicles
 const tractor = buildTractor('red');
@@ -152,6 +188,152 @@ for (let vi = 0; vi < MACHINES.length; vi++) {
   scene.add(vehicles[vk]);
 }
 
+// ---------------------------------------------------------------- wagon
+// Hitches to the truck's rear bumper (truck model x = -10, scale 0.5).
+const wagon = new Wagon(scene);
+const TRUCK_HITCH = new THREE.Vector3(-11, 0, 0); // truck model space
+const hitchWorld = new THREE.Vector3();
+const shopDoor = new THREE.Vector3(SHOP_X + 6, 0, SHOP_Z - 2);
+const WAGON_SHOP_RANGE = 30; // park the wagon this close to the shop door to load purchases
+const truckBed = new CargoHold(TRUCK_BED_SLOTS, 'Truck Bed', '🚚');
+const wagonPanel = new WagonPanel(wagon, inventory, function () { lastSig = ''; });
+const TRUCK_SHOP_RANGE = 30;
+const TAP_REACH = 10; // world units: how close you must be to use a tapped wagon/truck bed
+
+function truckHitchPoint() {
+  truck.updateMatrixWorld();
+  return truck.localToWorld(hitchWorld.copy(TRUCK_HITCH));
+}
+
+function wagonAtShop() {
+  return wagon.distanceTo(shopDoor.x, shopDoor.z) <= WAGON_SHOP_RANGE;
+}
+
+function truckAtShop() {
+  return Math.hypot(truck.position.x - shopDoor.x, truck.position.z - shopDoor.z) <= TRUCK_SHOP_RANGE;
+}
+
+// The cargo hold the walking player can reach right now (wagon first).
+function reachableHold() {
+  if (mode !== 'walking') return null;
+  const x = character.group.position.x, z = character.group.position.z;
+  if (wagon.isNear(x, z)) return wagon;
+  if (distanceToVehicle(truck, x, z) <= ENTER_DIST + 1.5) return truckBed;
+  return null;
+}
+
+// Tap / click the wagon or the truck to open its bed. Runs in the capture
+// phase on the canvas so a tap on a vehicle never also places a block.
+const tapRay = new THREE.Raycaster();
+const tapPointer = new THREE.Vector2();
+const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+const groundHit = new THREE.Vector3();
+let tapTarget = null;
+let tapStart = null;
+
+function holdUnderPointer(e) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  if (!rect.width || !rect.height) return null;
+  tapPointer.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+  tapRay.setFromCamera(tapPointer, camera);
+  const hits = tapRay.intersectObjects([wagon.group, truck], true);
+  if (!hits.length) return null;
+  let o = hits[0].object;
+  while (o) {
+    if (o === wagon.group) return wagon;
+    if (o === truck) return truckBed;
+    o = o.parent;
+  }
+  return null;
+}
+
+renderer.domElement.addEventListener('pointerdown', function (e) {
+  tapTarget = null;
+  if (window.VT_LOCKED !== false || mode !== 'walking' || (e.button !== undefined && e.button !== 0)) return;
+  const hold = holdUnderPointer(e);
+  if (!hold) {
+    // Pumpkins and peas are hand-harvested: tap a ready tile while standing
+    // nearby. Other crops remain combine-only.
+    const rect = renderer.domElement.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    tapPointer.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+    tapRay.setFromCamera(tapPointer, camera);
+    if (!tapRay.ray.intersectPlane(groundPlane, groundHit)) return;
+    const px = character.group.position.x, pz = character.group.position.z;
+    if (Math.hypot(px - groundHit.x, pz - groundHit.z) > 5) return;
+    const slot = world.getFarmAtPosition(groundHit.x, groundHit.z);
+    if (slot < 0 || slot !== world.getAssignedSlot()) return;
+    const fields = world.getFarms()[slot].getFields();
+    for (let i = 0; i < fields.length; i++) {
+      if (!fields[i].isInside(groundHit.x, groundHit.z)) continue;
+      const tile = fields[i].worldToTile(groundHit.x, groundHit.z);
+      if (tile && inventory.canAdd('harvest_' + (tile.cropType === 'peas' ? 'peas' : tile.cropType))) {
+        // continue into the harvest transaction below
+      } else if (tile && (tile.cropType === 'pumpkin' || tile.cropType === 'peas') && tile.state === 'ready') {
+        e.stopImmediatePropagation();
+        showToast('Your inventory is full — make room before picking.');
+        return;
+      }
+      const crop = fields[i].harvestAt(groundHit.x, groundHit.z);
+      if (!crop) return;
+      const added = inventory.buy(crop.itemId, 1);
+      if (!added.ok) {
+        e.stopImmediatePropagation();
+        showToast('Your inventory is full — make room before picking.');
+        return;
+      }
+      money += crop.value;
+      lastSig = '';
+      showToast(crop.itemId === 'harvest_pumpkin' ? '🎃 Pumpkin picked and added to your inventory!' : '🟢 Peas picked and added to your inventory!');
+      e.stopImmediatePropagation();
+      updateHUD();
+      return;
+    }
+    return;
+  }
+  tapTarget = hold;
+  tapStart = { x: e.clientX, y: e.clientY, t: performance.now() };
+  e.stopImmediatePropagation(); // don't let the builder place an item on the vehicle
+}, true);
+
+addEventListener('pointerup', function (e) {
+  const hold = tapTarget;
+  tapTarget = null;
+  if (!hold || !tapStart) return;
+  const moved = Math.hypot(e.clientX - tapStart.x, e.clientY - tapStart.y);
+  if (moved > 20 || performance.now() - tapStart.t > 800) return; // a drag, not a tap
+  if (window.VT_LOCKED !== false || mode !== 'walking') return;
+  const x = character.group.position.x, z = character.group.position.z;
+  const dist = hold === wagon ? wagon.distanceTo(x, z) : distanceToVehicle(truck, x, z);
+  if (dist > TAP_REACH) {
+    showToast('Walk up to the ' + (hold === wagon ? 'wagon' : 'truck') + ' to open its bed');
+    return;
+  }
+  wagonPanel.open(hold);
+});
+
+function toggleHitch() {
+  if (wagon.hitched) {
+    wagon.hitched = false;
+    showToast('🛒 Wagon unhitched');
+  } else {
+    const hp = truckHitchPoint();
+    if (!wagon.canHitchAt(hp.x, hp.z)) {
+      showToast('Back the truck up to the wagon’s red hitch, then press F (Tool)');
+      return;
+    }
+    wagon.hitched = true;
+    showToast('🛒 Wagon hitched — let’s go!');
+  }
+  lastSig = '';
+}
+
+function stepWagon() {
+  if (!wagon.hitched) return;
+  const hp = truckHitchPoint();
+  wagon.follow(hp.x, hp.z);
+}
+
 // ---------------------------------------------------------------- character
 const character = new Character();
 scene.add(character.group);
@@ -161,6 +343,7 @@ inventory.setCharacter(character);
 const input = new Input();
 input.setWalkingMode(true); // mode starts as walking (reset again on login)
 input.setShopNear(false);
+input.setWagonNear(false);
 
 // ---------------------------------------------------------------- state
 let mode = 'walking'; // 'walking' | 'driving'
@@ -171,6 +354,9 @@ const toolSelections = { tractor: -1, combine: 0, truck: -1 };
 
 // M1: shop proximity flag
 let shopNearShown = false;
+let wagonNearShown = false;
+// '' | 'plant' | 'spray': the attached implement has no supplies loaded
+let outOfSupply = '';
 
 let theta = 0; // vehicle rotation.y; forward = (cos θ, 0, −sin θ)
 let speed = 0;
@@ -333,10 +519,11 @@ hudStyle.textContent = `
   box-shadow: 0 3px 0 rgba(0,0,0,.2); -webkit-user-select: none; user-select: none; }
 #hud-top-left { left: 10px; top: 10px; font-size: 15px; line-height: 1.45; }
 #hud-top-left b { font-size: 17px; }
-#hud-top-right { right: 10px; top: 10px; font-size: 13px; line-height: 1.5;
+#hud-top-right { right: 10px; top: 38px; font-size: 13px; line-height: 1.5;
   text-align: left; max-width: 45%; }
 #hud-hint { position: absolute; left: 10px;
-  bottom: 10px; bottom: calc(10px + env(safe-area-inset-bottom));
+  /* sits above the hotbar (10px offset + ~70px tall), which is always shown */
+  bottom: 90px; bottom: calc(90px + env(safe-area-inset-bottom));
   max-width: 45%; font-size: 14px; font-weight: 600; color: #1c3b12; }
 .sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px;
   border: 1px solid rgba(0,0,0,.35); vertical-align: -1px; margin-right: 4px; }
@@ -390,7 +577,23 @@ let money = 0;
 let lastSig = '';
 window.vtPurchaseItem = function (item, qty, balance) {
   if (!item || !Number.isInteger(qty) || qty < 1 || money < item.price * qty) return { ok: false, error: 'Not enough money.' };
-  return inventory.buy(item.id, qty);
+  const units = qty * packSize(item);
+  // Wagon parked at the shop: purchases go straight onto it for the trip home.
+  if (wagonAtShop()) {
+    const loaded = wagon.add(item.id, units);
+    if (loaded.ok) {
+      showToast('🛒 ' + item.name + ' loaded onto your wagon');
+      return loaded;
+    }
+  }
+  if (truckAtShop()) {
+    const loaded = truckBed.add(item.id, units);
+    if (loaded.ok) {
+      showToast('🚚 ' + item.name + ' loaded into your truck bed');
+      return loaded;
+    }
+  }
+  return inventory.buy(item.id, units);
 };
 
 const shopUI = new ShopUI({
@@ -459,7 +662,8 @@ function updateHUD() {
   // rebuild only when something actually changed
   const sig = vehicleType + '|' + money + '|' + currentTool + '|' + currentColor + '|' +
     s.tilled + '|' + s.planted + '|' + s.sprayed + '|' + s.harvested + '|' +
-    mode + '|' + farmSlot + '|' + label + '|' + nearName;
+    mode + '|' + farmSlot + '|' + label + '|' + nearName + '|' + outOfSupply + '|' +
+    wagon.hitched + '|' + wagonNearShown + '|' + (shopNearShown && (wagonAtShop() || truckAtShop()));
   if (sig === lastSig) return;
   lastSig = sig;
 
@@ -481,18 +685,25 @@ function updateHUD() {
     '<div>🌱 Planted: <b>' + s.planted + '</b></div>' +
     '<div>🫧 Sprayed: <b>' + s.sprayed + '</b></div>' +
     '<div>🌾 Harvested: <b>' + s.harvested + '</b></div>' +
+    (mode === 'driving' && vehicleType === 'combine' ?
+      '<div>🛢️ Combine bin: <b>' + combineBinCount() + '/' + COMBINE_BIN_CAPACITY + '</b>' +
+      '<div style="height:10px;margin:3px 0 6px;background:rgba(0,0,0,.28);border:1px solid rgba(255,255,255,.55);border-radius:5px;overflow:hidden">' +
+      '<div style="height:100%;width:' + Math.min(100, combineBinCount() * 100 / COMBINE_BIN_CAPACITY) + '%;background:#e5b83e"></div></div></div>' : '') +
     '<div style="margin-top:4px">' + legendHTML + '</div>';
 
   let hint;
   if (mode === 'walking') {
-    hint = 'Walk up to a vehicle and press E to hop in (mobile: Enter)';
+    hint = 'Walk up to a vehicle and press E (mobile: Enter). Tap ready pumpkins or peas nearby to pick them by hand.';
   } else if (vehicleType === 'truck') {
-    hint = 'The truck carries no implements — stop and press E to hop out';
+    hint = wagon.hitched
+      ? '🛒 Wagon hitched — park it by the shop and anything you buy loads onto it · F unhitches'
+      : 'Back up to the wagon’s red hitch and press F (Tool) to hitch it';
   } else if (vehicleType === 'combine') {
     if (currentTool < 0) hint = 'Press F or Tool to fit a corn or soybean head';
     else if (s.harvested === 0) hint = 'Drive the ' + info.name + ' across golden, ready crops to harvest';
     else hint = 'Harvest ready crops with the ' + info.name + ' — press F to switch heads';
-    hint += ' · M or Machine switches vehicles';
+    hint += ' · U / Unload beside wagon · M or Machine switches vehicles';
+    if (combineBinCount() >= COMBINE_BIN_CAPACITY) hint = 'Combine bin full — park beside the wagon and press U / Unload at the side auger.';
   } else if (s.tilled === 0) {
     hint = 'Use Tool or press F to attach the PLOW — drive into any field';
   } else if (s.planted === 0) {
@@ -500,20 +711,84 @@ function updateHUD() {
   } else if (s.sprayed === 0 || s.sprayed < s.planted) {
     hint = 'Crops are green — attach the SPRAYER';
   } else if (s.harvested === 0) {
-    hint = 'Golden crops! Attach the HARVESTER to collect ($10 per tile)';
+    hint = 'Golden crops! Attach the HARVESTER to collect them for cash';
   } else {
     hint = 'Great farming! Keep going 💰';
   }
   if (mode === 'driving' && vehicleType === 'tractor') hint += ' · M or Machine switches vehicles';
+  if (outOfSupply === 'plant') {
+    hint = 'The planter is empty — buy seeds at the 🏪 Shop (follow the arrow at the top)';
+  } else if (outOfSupply === 'spray') {
+    hint = 'The sprayer is empty — buy Crop Spray at the 🏪 Shop (follow the arrow at the top)';
+  }
+  if (wagonNearShown) {
+    const hold = reachableHold();
+    hint = hold === wagon
+      ? 'Tap the wagon (or press L) to load or unload supplies'
+      : 'Tap the truck bed (or press L) to load or unload supplies · E hops in';
+  }
   if (mode === 'walking' && shop.isNear(character.group.position.x, character.group.position.z)) {
-    hint = 'Press E or tap Shop — talk to the shopkeeper';
+    hint = wagonAtShop() || truckAtShop()
+      ? 'Press E or tap Shop — purchases load onto your ' + (wagonAtShop() ? 'wagon' : 'truck')
+      : 'Press E or tap Shop — talk to the shopkeeper';
   }
   hudHint.textContent = hint;
+}
+
+function updateShopPointer() {
+  const visible = window.VT_LOCKED === false && !shopUI.isOpen();
+  shopPointer.style.display = visible ? 'flex' : 'none';
+  if (!visible) return;
+  const px = mode === 'driving' ? vehicle.position.x : character.group.position.x;
+  const pz = mode === 'driving' ? vehicle.position.z : character.group.position.z;
+  const dx = shopDoor.x - px;
+  const dz = shopDoor.z - pz;
+  const dist = Math.sqrt(dx * dx + dz * dz);
+  camera.getWorldDirection(camDir);
+  const fl = Math.sqrt(camDir.x * camDir.x + camDir.z * camDir.z) || 1;
+  const fx = camDir.x / fl, fz = camDir.z / fl;
+  // screen-right on the ground is (−fz, fx); angle is clockwise from "ahead"
+  const deg = Math.round(Math.atan2(dx * -fz + dz * fx, dx * fx + dz * fz) * 180 / Math.PI / 5) * 5;
+  const text = dist < 14 ? 'is right here!' : Math.round(dist) + ' m';
+  const sig = deg + '|' + text;
+  if (sig === shopPointerSig) return;
+  shopPointerSig = sig;
+  shopArrow.style.transform = 'rotate(' + deg + 'deg)';
+  shopArrow.style.visibility = dist < 14 ? 'hidden' : 'visible';
+  shopDist.textContent = text;
+}
+
+// ---------------------------------------------------------------- fps
+// Frames-per-second readout in the top-right corner (above the stats card),
+// averaged over half-second windows.
+const fpsBadge = document.createElement('div');
+fpsBadge.id = 'fps';
+fpsBadge.style.cssText = 'position:fixed;right:10px;top:10px;z-index:31;pointer-events:none;' +
+  'padding:2px 8px;border:2px solid #2f4d1f;border-radius:8px;background:rgba(255,251,232,.9);' +
+  'color:#233018;font:700 13px ui-monospace,Menlo,monospace;';
+fpsBadge.textContent = '-- FPS';
+document.body.appendChild(fpsBadge);
+let fpsFrames = 0;
+let fpsSince = performance.now();
+
+function updateFps(now) {
+  fpsFrames++;
+  const elapsed = now - fpsSince;
+  if (elapsed < 500) return;
+  fpsBadge.textContent = Math.round(fpsFrames * 1000 / elapsed) + ' FPS';
+  fpsFrames = 0;
+  fpsSince = now;
 }
 
 // ---------------------------------------------------------------- physics
 const MAX_FWD = 9;
 const MAX_REV = 4;
+const TRUCK_MAX_FWD = 23.4;
+const COMBINE_BIN_CAPACITY = 200;
+let combineBin = {};
+function combineBinCount() {
+  return Object.keys(combineBin).reduce(function (total, id) { return total + combineBin[id]; }, 0);
+}
 const ACCEL_RATE = 6;
 const BRAKE_RATE = 10;
 const STEER_RATE = 1.6;
@@ -532,7 +807,8 @@ const lookAt = new THREE.Vector3();
 function stepPhysics(dt) {
   if (mode !== 'driving') return;
   const drive = input.drive;
-  const maxForward = vehicleType === 'combine' ? 5.5 : MAX_FWD;
+  // the truck is the fast road machine for hauling the wagon to the shop
+  const maxForward = vehicleType === 'combine' ? 5.5 : (vehicleType === 'truck' ? TRUCK_MAX_FWD : MAX_FWD);
   const maxReverse = vehicleType === 'combine' ? 2.5 : MAX_REV;
   const target = drive > 0 ? drive * maxForward : drive * maxReverse;
   const stopping = input.brake || drive === 0;
@@ -544,7 +820,9 @@ function stepPhysics(dt) {
   // steering only bites while rolling; reversing flips the turn direction
   const steeringRate = vehicleType === 'combine' ? 0.95 : STEER_RATE;
   const steer = input.turn * steeringRate * Math.min(1, Math.abs(speed) / 2) * (speed < 0 ? -1 : 1);
-  theta -= steer * dt;
+  // Truck's front axle uses the opposite yaw sign convention to the other
+  // vehicle models; align chassis yaw with its visible wheel direction.
+  theta += (vehicleType === 'truck' ? 1 : -1) * steer * dt;
   vehicle.rotation.y = theta;
 
   const steeringPivots = vehicle.userData.steeringPivots || [];
@@ -748,7 +1026,15 @@ function handleEnterExit() {
 // field.applyEffect heading: along = dx·cos(h)+dz·sin(h) with dx = tile.x − x,
 // so forward in (x,z) = (cos h, sin h). Tractor forward = (cos θ, −sin θ),
 // therefore h = −θ. Width is world units; implements share the machine scale.
+function hasSupplyFor(effect) {
+  if (effect === 'plant') return inventory.findSlot(function (id) { return /_seeds$/.test(id); }) >= 0;
+  if (effect === 'spray') return inventory.findSlot(function (id) { return id === 'crop_spray'; }) >= 0;
+  return true;
+}
+
 function stepFieldWork(dt) {
+  const toolEffect = mode === 'driving' && toolGroup ? toolGroup.userData.effect : '';
+  outOfSupply = hasSupplyFor(toolEffect) ? '' : toolEffect;
   // work only counts while driving, and only over fields on your own farm
   if (mode === 'driving' && toolGroup && Math.abs(speed) > 0.4) {
     const mountKey = toolGroup.userData.mount === 'front' ? 'front' : 'rear';
@@ -765,29 +1051,41 @@ function stepFieldWork(dt) {
       const width = toolGroup.userData.width * VEHICLE_SCALES[vehicleType];
       const farmFields = world.getFarms()[slot].getFields();
       const effect = toolGroup.userData.effect;
+      // The planter and sprayer run on supplies bought at the shop: seeds
+      // (the selected bag first, else any bag in the hotbar) and crop spray.
+      // One unit works one tile; with none loaded the implement does nothing.
       let cropType = 'generic';
-      let plantLimit = 0;
-      let canApply = true;
+      let supplySlot = -1;
+      let supplyLimit = 0;
       if (effect === 'plant') {
-        const selected = inventory.getSelectedItem();
-        if (!selected || !/_seeds$/.test(selected.itemId) || selected.qty < 1) {
-          canApply = false;
-        } else {
-          cropType = selected.itemId.slice(0, -6);
+        supplySlot = inventory.findSlot(function (id) { return /_seeds$/.test(id); });
+        if (supplySlot >= 0) {
+          cropType = inventory.getSlot(supplySlot).itemId.slice(0, -6);
           if (cropType === 'pea') cropType = 'peas';
-          plantLimit = selected.qty;
         }
+      } else if (effect === 'spray') {
+        supplySlot = inventory.findSlot(function (id) { return id === 'crop_spray'; });
       }
-      if (canApply) {
+      const needsSupply = effect === 'plant' || effect === 'spray';
+      if (needsSupply && supplySlot >= 0) supplyLimit = inventory.getSlot(supplySlot).qty;
+      if (effect === 'harvest') supplyLimit = Math.max(0, COMBINE_BIN_CAPACITY - combineBinCount());
+      if (!needsSupply || supplySlot >= 0) {
+        if (effect !== 'harvest' || supplyLimit > 0) {
         for (let i = 0; i < farmFields.length; i++) {
           if (farmFields[i].isInside(tmpLocal.x, tmpLocal.z)) {
             const res = farmFields[i].applyEffect(
-              tmpLocal.x, tmpLocal.z, width, effect, -theta, cropType, plantLimit
+              tmpLocal.x, tmpLocal.z, width, effect, -theta, cropType, supplyLimit
             );
             if (res.money) money += res.money;
-            if (effect === 'plant' && res.affected > 0) inventory.useMany(res.affected);
+            if (needsSupply && res.affected > 0) inventory.useFromSlot(supplySlot, res.affected);
+            if (res.produce) {
+              Object.keys(res.produce).forEach(function (id) {
+                combineBin[id] = (combineBin[id] || 0) + res.produce[id];
+              });
+            }
             break;
           }
+        }
         }
       }
     }
@@ -800,6 +1098,33 @@ function stepFieldWork(dt) {
   }
 }
 
+function unloadCombineIntoWagon() {
+  if (mode !== 'driving' || vehicleType !== 'combine') return;
+  const auger = vehicle.localToWorld(new THREE.Vector3(-1.5, 0, 3.5));
+  if (wagon.distanceTo(auger.x, auger.z) > 5) {
+    showToast('Move the wagon beside the combine’s side auger to unload.');
+    return;
+  }
+  const total = combineBinCount();
+  if (!total) { showToast('The combine bin is empty.'); return; }
+  const missingSlots = Object.keys(combineBin).filter(function (id) {
+    return !wagon.cargo.some(function (stack) { return stack && stack.itemId === id; });
+  }).length;
+  const freeSlots = wagon.cargo.filter(function (stack) { return !stack; }).length;
+  if (missingSlots > freeSlots) { showToast('The wagon has no room for this harvest.'); return; }
+  for (const id of Object.keys(combineBin)) {
+    const result = wagon.add(id, combineBin[id]);
+    if (!result.ok) {
+      showToast(result.error || 'The wagon is full.');
+      return;
+    }
+  }
+  combineBin = {};
+  showToast('🌾 Unloaded ' + total + ' units from the side auger into the wagon.');
+  lastSig = '';
+  updateHUD();
+}
+
 // ---------------------------------------------------------------- actions
 function drainActions() {
   let a;
@@ -808,6 +1133,15 @@ function drainActions() {
       handleEnterExit();
     } else if (a === 'jump') {
       tryJump();
+    } else if (a === 'cycleTool' && mode === 'driving' && vehicleType === 'truck') {
+      toggleHitch(); // the truck's only "tool" is the wagon hitch
+    } else if (a === 'detach' && mode === 'driving' && vehicleType === 'truck') {
+      if (wagon.hitched) toggleHitch();
+    } else if (a === 'openWagon') {
+      const hold = reachableHold();
+      if (hold) wagonPanel.open(hold);
+    } else if (a === 'unloadCombine') {
+      unloadCombineIntoWagon();
     } else if (a === 'cycleTool') {
       const types = attachmentTypes();
       if (types.length > 0) {
@@ -926,9 +1260,13 @@ function resetToSpawn() {
   // truck, then combine. Rotated to face down the lane (+X).
   tractor.position.set(sp.x + 7, 0, sp.z - 1);
   tractor.rotation.y = 0;
-  truck.position.set(sp.x + 26, 0, sp.z - 1);
+  truck.position.set(sp.x + 30, 0, sp.z - 1);
   truck.rotation.y = 0;
-  combine.position.set(sp.x + 48, 0, sp.z - 1);
+  // the wagon starts hitched behind the truck
+  const hp = truckHitchPoint();
+  wagon.snapBehind(hp.x, hp.z, 0);
+  wagon.hitched = true;
+  combine.position.set(sp.x + 52, 0, sp.z - 1);
   combine.rotation.y = 0;
   vehicles.tractor.visible = true;
   vehicles.combine.visible = true;
@@ -947,6 +1285,11 @@ function resetToSpawn() {
 }
 
 // ---------------------------------------------------------------- save/restore
+// Save layout 2 = farms 180 apart with an east build yard. Older saves were
+// made with farms 140 apart, so world-space positions must be shifted.
+const FARM_LAYOUT = 2;
+const OLD_FARM_SPACING = 140;
+const STARTER_MONEY = 100; // a brand-new farm can afford its first seeds and spray
 let session = null;
 let sharedWorldTimer = null;
 let realtime = null;
@@ -954,6 +1297,7 @@ let realtime = null;
 function snapshot() {
   return {
     v: 3,
+    layout: FARM_LAYOUT,
     machine: vehicleType,
     money: Math.max(0, Math.floor(money)),
     tool: currentTool,
@@ -969,6 +1313,9 @@ function snapshot() {
     world: world.serialize(),
     structures: builder ? builder.serializeLocal() : [],
     inventory: inventory.serialize(),
+    wagon: wagon.serialize(),
+    combineBin: combineBin,
+    truckBed: truckBed.serializeCargo(),
     appliedGiftIds: appliedGiftIds.slice(-100),
   };
 }
@@ -978,6 +1325,19 @@ function snapshot() {
 function applyState(s) {
   if (!s || typeof s !== 'object') return false;
   if (s.inventory && typeof s.inventory === 'object') inventory.restore(s.inventory);
+  combineBin = {};
+  if (s.combineBin && typeof s.combineBin === 'object') {
+    Object.keys(s.combineBin).forEach(function (id) {
+      if (/^harvest_(corn|wheat|sunflower)$/.test(id) && Number.isFinite(s.combineBin[id])) {
+        combineBin[id] = Math.max(0, Math.min(COMBINE_BIN_CAPACITY, Math.floor(s.combineBin[id])));
+      }
+    });
+    while (combineBinCount() > COMBINE_BIN_CAPACITY) {
+      const id = Object.keys(combineBin).pop();
+      combineBin[id] -= combineBinCount() - COMBINE_BIN_CAPACITY;
+      if (combineBin[id] <= 0) delete combineBin[id];
+    }
+  }
   if (Array.isArray(s.giftInbox)) {
     var seenGifts = [];
     try {
@@ -990,7 +1350,7 @@ function applyState(s) {
       if (!gift || !gift.requestId || appliedGiftIds.indexOf(gift.requestId) !== -1) continue;
       var giftInfo = ITEM_BY_ID[gift.itemId];
       if (giftInfo) {
-        var grant = inventory.buy(gift.itemId, gift.qty);
+        var grant = inventory.buy(gift.itemId, gift.qty * packSize(giftInfo));
         if (grant.ok) {
           if (seenGifts.indexOf(gift.requestId) === -1) showToast('🎁 ' + gift.from + ' sent you ' + (gift.qty > 1 ? gift.qty + ' × ' : '') + giftInfo.name + '!');
           seenGifts.push(gift.requestId);
@@ -1004,7 +1364,18 @@ function applyState(s) {
     try { localStorage.setItem('vt-seen-gifts:' + (session ? session.email : ''), JSON.stringify(appliedGiftIds)); }
     catch (err2) { /* storage may be unavailable */ }
   }
-  if (builder && Array.isArray(s.structures)) builder.restore(s.structures);
+  // Pre-layout-2 saves: structures move with their farm (+40 per slot), and
+  // saved vehicle/character positions are dropped so everyone starts at the
+  // new spawn lane instead of in the wrong place.
+  const oldLayout = s.layout !== FARM_LAYOUT;
+  let structures = Array.isArray(s.structures) ? s.structures : [];
+  if (oldLayout) {
+    const shift = world.getAssignedSlot() * (FARM_SPACING - OLD_FARM_SPACING);
+    structures = structures.map(function (e) {
+      return e && typeof e === 'object' ? Object.assign({}, e, { x: e.x + shift }) : e;
+    });
+  }
+  if (builder) builder.restore(structures);
   const legacy = s.v !== 2 && Array.isArray(s.fields);
 
   // --- machine ---
@@ -1036,6 +1407,7 @@ function applyState(s) {
   }
 
   // --- active vehicle pose ---
+  if (oldLayout) { s = Object.assign({}, s, { tx: NaN, tz: NaN, cx: NaN, cz: NaN, cy: 0, mode: 'walking' }); }
   if (typeof s.tx === 'number' && isFinite(s.tx)) vehicle.position.x = clampX(s.tx);
   if (typeof s.tz === 'number' && isFinite(s.tz)) vehicle.position.z = clampZ(s.tz);
   vehicle.position.y = 0;
@@ -1079,12 +1451,35 @@ function applyState(s) {
     detachTool();
   }
 
+  // --- wagon (hitched wagons re-seat behind wherever the truck is) ---
+  if (!oldLayout && s.wagon) wagon.restore(s.wagon);
+  truckBed.restoreCargo(s.truckBed);
+  if (wagon.hitched) {
+    const hp = truckHitchPoint();
+    wagon.snapBehind(hp.x, hp.z, truck.rotation.y);
+  }
+
   // snap the chase cam behind the restored pose (no cross-map swoop)
   snapCamera();
 
   lastSig = '';
   updateHUD();
   return true;
+}
+
+// Seeds now cost money, so a farm with no cash, no seeds and nothing growing
+// could never earn again. Top it back up to the price of a seed bag + spray.
+function rescueStuckFarm() {
+  const RESCUE = 40;
+  if (money >= RESCUE) return;
+  const isSupply = function (id) { return /_seeds$/.test(id) || id === 'crop_spray'; };
+  if (inventory.findSlot(isSupply) >= 0) return;
+  if (wagon.hasAny(isSupply) || truckBed.hasAny(isSupply)) return;
+  const farms = world.getFarms();
+  const own = farms[world.getAssignedSlot()];
+  if (own && own.getFields().some(function (f) { return f.hasHarvestComing(); })) return;
+  money = RESCUE;
+  showToast('🤝 The farm co-op topped you up to $' + RESCUE + ' for seeds and spray');
 }
 
 // ---------------------------------------------------------------- farmers
@@ -1252,7 +1647,7 @@ function acceptRealtimeMessage(msg) {
     var giftItem = ITEM_BY_ID[msg.itemId];
     if (giftItem) {
       var grantResult = { ok: true };
-      if (!msg.requestId || appliedGiftIds.indexOf(msg.requestId) === -1) grantResult = inventory.buy(msg.itemId, msg.qty);
+      if (!msg.requestId || appliedGiftIds.indexOf(msg.requestId) === -1) grantResult = inventory.buy(msg.itemId, msg.qty * packSize(giftItem));
       if (grantResult.ok && msg.requestId && appliedGiftIds.indexOf(msg.requestId) === -1) appliedGiftIds.push(msg.requestId);
       appliedGiftIds = appliedGiftIds.slice(-100);
       try { localStorage.setItem('vt-seen-gifts:' + session.email, JSON.stringify(appliedGiftIds)); } catch (err) { /* ignore */ }
@@ -1421,8 +1816,17 @@ function setupLogin() {
     const slot = world.getAssignedSlot();
 
     resetToSpawn();
+    money = 0;
+    wagon.restoreCargo([]); // a fresh login never inherits the last player's cargo
+    truckBed.restoreCargo([]);
     applyState(res.state);
     world.setAssignedSlot(slot); // resolved slot stays authoritative
+    if (!res.state) {
+      money = STARTER_MONEY; // brand-new farm
+      showToast('🌱 Welcome, farmer! Here’s $' + STARTER_MONEY + ' — follow the 🏪 arrow to buy seeds and spray');
+    } else {
+      rescueStuckFarm();
+    }
     refreshFarmLabels(); // "Your Farm" follows the resolved slot
     reconcileFarmerCharacters(); // never mirror a character onto our own slot
 
@@ -1508,6 +1912,7 @@ let last = performance.now();
 let enterVisible = false;
 renderer.setAnimationLoop(function () {
   const now = performance.now();
+  updateFps(now);
   let dt = (now - last) / 1000;
   last = now;
   if (!(dt > 0)) dt = 0.016;
@@ -1516,6 +1921,7 @@ renderer.setAnimationLoop(function () {
   input.update(dt);
   drainActions();
   stepPhysics(dt);
+  stepWagon();
   stepCharacter(dt);
   stepFieldWork(dt);
   maybeFetchForeignState();
@@ -1538,13 +1944,21 @@ renderer.setAnimationLoop(function () {
   }
   if (shopNear) shop.facePlayer(character.group.position.x, character.group.position.z);
 
+  const wagonNear = reachableHold() !== null;
+  if (wagonNear !== wagonNearShown) {
+    wagonNearShown = wagonNear;
+    input.setWagonNear(wagonNear);
+  }
+  updateShopPointer();
+
   updateCamera(dt);
   world.updateCulling(camera.position.x, camera.position.z);
   updateFarmerCharacters(dt);
   updateSun();
   updateHUD();
   updateFarmLabels();
-  inventory.setVisible(mode === 'walking' && window.VT_LOCKED === false);
+  // the hotbar stays up while driving too, so you can see seeds/spray running low
+  inventory.setVisible(window.VT_LOCKED === false && !wagonPanel.isOpen());
   renderer.render(scene, camera);
 });
 

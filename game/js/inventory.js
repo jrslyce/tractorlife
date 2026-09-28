@@ -15,18 +15,20 @@ var HOTBAR_GAP = 4;
 var ITEM_EMOJI = {
   gravel: '⬜', asphalt: '⬛', brick: '🧱', wood: '🪵', corn_seeds: '🌽',
   wheat_seeds: '🌾', pumpkin_seeds: '🎃', sunflower_seeds: '🌻', pea_seeds: '🟢',
-  fertilizer: '🪴', paint: '🎨', lamp_light: '💡', hay_bale: '🟨', scarecrow: '🧑‍🌾',
+  fertilizer: '🪴', crop_spray: '🧴', paint: '🎨', lamp_light: '💡', hay_bale: '🟨', scarecrow: '🧑‍🌾',
   pumpkin_pile: '🎃', corn_shocks: '🌽', string_lights: '✨', mailbox: '📮',
-  roof_shingles: '🏠', fence_kit: '🪵', window_glass: '🪟', door: '🚪'
+  roof_shingles: '🏠', fence_kit: '🪵', window_glass: '🪟', door: '🚪',
+  harvest_corn: '🌽', harvest_wheat: '🌾', harvest_sunflower: '🌻', harvest_pumpkin: '🎃', harvest_peas: '🟢'
 };
 var ITEM_COLORS = {
   gravel: '#85827a', asphalt: '#333536', brick: '#9a4f3f', wood: '#81552f',
   corn_seeds: '#d6b33d', wheat_seeds: '#c6a544', pumpkin_seeds: '#d47732',
-  sunflower_seeds: '#e4bd32', pea_seeds: '#6f9a43', fertilizer: '#60482f',
+  sunflower_seeds: '#e4bd32', pea_seeds: '#6f9a43', fertilizer: '#60482f', crop_spray: '#4d9ad8',
   paint: '#d84d58', lamp_light: '#f5d86b', hay_bale: '#d8b84d',
   scarecrow: '#86593b', pumpkin_pile: '#e87925', corn_shocks: '#c69f32',
   string_lights: '#f2cc58', mailbox: '#b94738', roof_shingles: '#8c4638',
-  fence_kit: '#9a8058', window_glass: '#8bd2e8', door: '#754a2b'
+  fence_kit: '#9a8058', window_glass: '#8bd2e8', door: '#754a2b',
+  harvest_corn: '#d6b33d', harvest_wheat: '#c6a544', harvest_sunflower: '#e4bd32', harvest_pumpkin: '#e87925', harvest_peas: '#6f9a43'
 };
 
 // ---------------------------------------------------------------- Item class
@@ -78,6 +80,13 @@ export class Inventory {
       }
     }
     return { ok: false, error: 'inventory full' };
+  }
+
+  canAdd(itemId) {
+    for (var i = 0; i < this._slots.length; i++) {
+      if (!this._slots[i] || this._slots[i].itemId === itemId) return true;
+    }
+    return false;
   }
 
   // Select a slot by index (0-based). Returns the item or null.
@@ -135,6 +144,46 @@ export class Inventory {
     this._updateHeldItem();
     this.updateDOM();
     return true;
+  }
+
+  // Stack in slot `idx` (or null).
+  getSlot(idx) {
+    return idx >= 0 && idx < this._slots.length ? this._slots[idx] : null;
+  }
+
+  // First slot index whose item id passes `test`, preferring the selected
+  // slot; -1 when none does.
+  findSlot(test) {
+    var sel = this.getSelectedItem();
+    if (sel && sel.qty > 0 && test(sel.itemId)) return this._selectedSlot;
+    for (var i = 0; i < this._slots.length; i++) {
+      var s = this._slots[i];
+      if (s && s.qty > 0 && test(s.itemId)) return i;
+    }
+    return -1;
+  }
+
+  // Consume up to `amount` from slot `idx`; returns how many were used.
+  useFromSlot(idx, amount) {
+    var s = this.getSlot(idx);
+    amount = Math.floor(Number(amount));
+    if (!s || !isFinite(amount) || amount <= 0) return 0;
+    var used = Math.min(amount, s.qty);
+    s.qty -= used;
+    if (s.qty <= 0) this._slots[idx] = null;
+    this._updateHeldItem();
+    this.updateDOM();
+    return used;
+  }
+
+  // Remove and return the whole stack in slot `idx` ({itemId, qty} or null).
+  takeSlot(idx) {
+    var s = this.getSlot(idx);
+    if (!s) return null;
+    this._slots[idx] = null;
+    this._updateHeldItem();
+    this.updateDOM();
+    return { itemId: s.itemId, qty: s.qty };
   }
 
   // Get slot count
