@@ -21,6 +21,8 @@ export class World {
     this._farms = [];
     this._playerEmail = playerEmail || '';
     this._assignedSlot = -1;
+    this._lastCullX = NaN;
+    this._lastCullZ = NaN;
 
     // Assign this player to a farm slot based on email hash
     this._assignFarmSlot();
@@ -87,6 +89,11 @@ export class World {
   // nearest edge (not its spawn point), and the threshold sits beyond the
   // fog's far distance so a culled farm is already invisible anyway.
   updateCulling(playerX, playerZ) {
+    const dx = playerX - this._lastCullX;
+    const dz = playerZ - this._lastCullZ;
+    if (dx * dx + dz * dz < 64) return; // no need to recull until moved 8 units
+    this._lastCullX = playerX;
+    this._lastCullZ = playerZ;
     var cullSq = CULL_DISTANCE * CULL_DISTANCE;
     for (var i = 0; i < this._farms.length; i++) {
       var farm = this._farms[i];

@@ -1,7 +1,7 @@
 // Best-effort authenticated realtime transport. The Worker session cookie is
 // sent automatically by same-origin WebSocket upgrades.
 export class RealtimeClient {
-  constructor(getPose, onMessage) {
+  constructor(getPose, onMessage, poseInterval) {
     this._getPose = getPose;
     this._onMessage = onMessage || function () {};
     this._socket = null;
@@ -9,6 +9,9 @@ export class RealtimeClient {
     this._retry = null;
     this._closed = false;
     this._delay = 1000;
+    this._poseInterval = Math.max(125, Number(poseInterval) || 125);
+    this._onVisibility = this._onVisibility.bind(this);
+    document.addEventListener('visibilitychange', this._onVisibility);
   }
 
   connect() {
@@ -21,8 +24,7 @@ export class RealtimeClient {
     var self = this;
     socket.onopen = function () {
       self._delay = 1000;
-      if (self._timer !== null) clearInterval(self._timer);
-      self._timer = setInterval(function () { self.sendPose(); }, 125);
+      self._startPoseTimer();
       self.sendPose();
     };
     socket.onmessage = function (event) {
@@ -36,6 +38,18 @@ export class RealtimeClient {
       if (self._timer !== null) { clearInterval(self._timer); self._timer = null; }
       self._scheduleRetry();
     };
+  }
+
+  _startPoseTimer() {
+    if (this._timer !== null || document.hidden || !this._socket || this._socket.readyState !== WebSocket.OPEN) return;
+    var self = this;
+    this._timer = setInterval(function () { self.sendPose(); }, this._poseInterval);
+  }
+
+  _onVisibility() {
+    if (document.hidden) {
+      if (this._timer !== null) { clearInterval(this._timer); this._timer = null; }
+    } else this._startPoseTimer();
   }
 
   _scheduleRetry() {
@@ -67,6 +81,7 @@ export class RealtimeClient {
 
   close() {
     this._closed = true;
+    document.removeEventListener('visibilitychange', this._onVisibility);
     if (this._retry !== null) { clearTimeout(this._retry); this._retry = null; }
     if (this._timer !== null) { clearInterval(this._timer); this._timer = null; }
     if (this._socket) {
