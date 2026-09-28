@@ -283,6 +283,95 @@ export class SharedWorld {
   }
 }
 
+// One low-volume WebSocket room for live player poses and build events.
+export class RealtimeRoom {
+  constructor(ctx, env) {
+    this.ctx = ctx;
+    this.env = env;
+  }
+
+  async fetch(request) {
+    const url = new URL(request.url);
+    if (url.pathname !== "/connect" || request.headers.get("upgrade") !== "websocket") {
+      return json({ ok: false, error: "websocket upgrade required" }, 426);
+    }
+    const email = url.searchParams.get("email");
+    if (!normalizeEmail(email)) return json({ ok: false, error: "bad identity" }, 400);
+    const pair = new WebSocketPair();
+    const client = pair[0];
+    const server = pair[1];
+    this.ctx.acceptWebSocket(server);
+    server.serializeAttachment({ email: email, lastAt: 0 });
+    server.send(JSON.stringify({ type: "hello", email: email }));
+    this._broadcast({ type: "join", email: email }, server);
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  webSocketMessage(socket, raw) {
+    const attachment = socket.deserializeAttachment() || {};
+    const now = Date.now();
+    if (now - (attachment.lastAt || 0) < 50) return;
+    attachment.lastAt = now;
+    socket.serializeAttachment(attachment);
+    if ((typeof raw === "string" ? raw.length : raw.byteLength) > 8192) return;
+    let msg;
+    try { msg = JSON.parse(typeof raw === "string" ? raw : new TextDecoder().decode(raw)); }
+    catch (err) { return; }
+    if (!isPlainObject(msg)) return;
+    if (msg.type === "pose") {
+      const pose = msg.pose;
+      if (!isPlainObject(pose) || !Number.isFinite(pose.x) || !Number.isFinite(pose.z) ||
+          !Number.isFinite(pose.theta) || pose.x < -10 || pose.x > 1385 || pose.z < -78 || pose.z > 80 ||
+          !["walking", "driving"].includes(pose.mode) ||
+          (pose.machine !== null && !["tractor", "combine", "truck"].includes(pose.machine))) return;
+      this._broadcast({ type: "pose", email: attachment.email, pose: {
+        x: pose.x, z: pose.z, theta: pose.theta, mode: pose.mode,
+        machine: pose.machine || null, color: typeof pose.color === "string" ? pose.color.slice(0, 20) : ""
+      } }, socket);
+      return;
+    }
+    if (msg.type === "build") {
+      const entry = msg.entry;
+      const roads = ["asphalt", "gravel", "brick"];
+      if (!isPlainObject(entry) || !["asphalt", "gravel", "brick", "wood", "roof_shingles", "fence_kit", "window_glass", "door", "lamp_light", "hay_bale", "scarecrow", "pumpkin_pile", "corn_shocks", "string_lights", "mailbox"].includes(entry.id) ||
+          !Number.isSafeInteger(entry.x) || !Number.isSafeInteger(entry.z) ||
+          entry.x < -10 || entry.x > 1385 || entry.z < -78 || entry.z > 80) return;
+      const ownerSlot = assignFarmSlot(attachment.email);
+      let inFarm = false;
+      for (let slot = 0; slot < 10; slot++) {
+        const minX = slot * 140 - 6;
+        const maxX = slot * 140 + 105.5;
+        if (entry.x >= minX && entry.x <= maxX && entry.z >= -72.5 && entry.z <= 27.5) inFarm = true;
+      }
+      if (roads.includes(entry.id) === inFarm) return;
+      if (!roads.includes(entry.id)) {
+        const minX = ownerSlot * 140 - 6;
+        const maxX = ownerSlot * 140 + 105.5;
+        if (entry.x < minX || entry.x > maxX || entry.z < -72.5 || entry.z > 27.5) return;
+      }
+      this._broadcast({ type: "build", email: attachment.email, entry: { id: entry.id, x: entry.x, z: entry.z } }, socket);
+    }
+  }
+
+  webSocketClose(socket, code, reason, wasClean) {
+    const attachment = socket.deserializeAttachment() || {};
+    this._broadcast({ type: "leave", email: attachment.email || "" }, socket);
+  }
+
+  webSocketError(socket) {
+    try { socket.close(1011, "room error"); } catch (err) { /* already closed */ }
+  }
+
+  _broadcast(message, except) {
+    const encoded = JSON.stringify(message);
+    const sockets = this.ctx.getWebSockets();
+    for (let i = 0; i < sockets.length; i++) {
+      if (sockets[i] === except) continue;
+      try { sockets[i].send(encoded); } catch (err) { /* socket may be closing */ }
+    }
+  }
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -469,6 +558,15 @@ export default {
       const world = env.SHARED_WORLD.get(env.SHARED_WORLD.idFromName("shared-world"));
       const target = "https://shared-world/" + (request.method === "GET" ? "read" : "place");
       return world.fetch(new Request(target, request));
+    }
+
+    if (url.pathname === "/api/realtime") {
+      if (request.headers.get("upgrade") !== "websocket") return json({ ok: false, error: "websocket upgrade required" }, 426);
+      const session = await readSession(request, env);
+      if (!session) return json({ ok: false, error: "unauthorized" }, 401);
+      const room = env.REALTIME.get(env.REALTIME.idFromName("map-room"));
+      const target = "https://realtime/connect?email=" + encodeURIComponent(session.email);
+      return room.fetch(new Request(target, request));
     }
 
     if (url.pathname.startsWith("/api/")) {
