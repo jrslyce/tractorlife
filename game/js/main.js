@@ -12,6 +12,7 @@ import { buildTruck } from './vehicle.js';
 import { Character } from './character.js';
 import { World } from './world.js';
 import { Shop } from './shop.js';
+import { ShopUI } from './shopui.js';
 import { TOOL_ORDER, COMBINE_HEAD_ORDER, buildTool, buildCombineHead } from './equipment.js';
 import { login, restoreRememberedSession, rememberedEmail, hasRememberedEmail, forgetRememberedCredentials, startAutosave, fetchFarmers, fetchFarmState } from './net.js';
 
@@ -150,6 +151,7 @@ scene.add(character.group);
 // ---------------------------------------------------------------- input
 const input = new Input();
 input.setWalkingMode(true); // mode starts as walking (reset again on login)
+input.setShopNear(false);
 
 // ---------------------------------------------------------------- state
 let mode = 'walking'; // 'walking' | 'driving'
@@ -343,6 +345,22 @@ const legendHTML = LEGEND.map(
 let money = 0;
 let lastSig = '';
 
+const shopUI = new ShopUI({
+  getMoney: function () { return money; },
+  onPurchase: function (item, qty) {
+    // M3 owns the inventory; use its integration hook when present.
+    if (typeof window.vtPurchaseItem !== 'function') {
+      return { ok: false, error: 'Your inventory is not ready yet.' };
+    }
+    var result = window.vtPurchaseItem(item, qty, money);
+    if (!result || result.ok === false) return result || { ok: false, error: 'Purchase failed.' };
+    money -= item.price * qty;
+    lastSig = '';
+    updateHUD();
+    return { ok: true };
+  }
+});
+
 // own-farm stats: that is the farm the player actually controls
 function ownFarmStats() {
   const farms = world.getFarms();
@@ -428,6 +446,9 @@ function updateHUD() {
     hint = 'Great farming! Keep going 💰';
   }
   if (mode === 'driving' && vehicleType === 'tractor') hint += ' · M or Machine switches vehicles';
+  if (mode === 'walking' && shop.isNear(character.group.position.x, character.group.position.z)) {
+    hint = 'Press E or tap Shop — talk to the shopkeeper';
+  }
   hudHint.textContent = hint;
 }
 
@@ -654,6 +675,10 @@ function handleEnterExit() {
   if (mode === 'driving') {
     exitVehicle();
   } else {
+    if (shop.isNear(character.group.position.x, character.group.position.z)) {
+      shopUI.open();
+      return;
+    }
     const near = nearestVehicleInfo();
     if (near) enterVehicle(near.vehicle);
   }
@@ -719,8 +744,7 @@ function drainActions() {
     } else if (a === 'cycleMachine') {
       if (mode === 'driving') switchMachine();
     } else if (a === 'talkShop') {
-      // M1: placeholder — shop UI will be wired in M2
-      console.log('Shop dialog triggered (M1 placeholder)');
+      if (mode === 'walking' && shop.isNear(character.group.position.x, character.group.position.z)) shopUI.open();
     }
   }
   updateHUD();
@@ -1278,6 +1302,7 @@ renderer.setAnimationLoop(function () {
     input.setShopNear(false);
     shopNearShown = false;
   }
+  if (shopNear) shop.facePlayer(character.group.position.x, character.group.position.z);
 
   updateCamera(dt);
   world.updateCulling(camera.position.x, camera.position.z);
