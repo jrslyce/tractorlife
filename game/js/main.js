@@ -13,6 +13,7 @@ import { Character } from './character.js';
 import { World } from './world.js';
 import { Shop } from './shop.js';
 import { ShopUI } from './shopui.js';
+import { Builder } from './build.js';
 import { TOOL_ORDER, COMBINE_HEAD_ORDER, buildTool, buildCombineHead } from './equipment.js';
 import { login, restoreRememberedSession, rememberedEmail, hasRememberedEmail, forgetRememberedCredentials, startAutosave, fetchFarmers, fetchFarmState } from './net.js';
 
@@ -167,6 +168,20 @@ let theta = 0; // vehicle rotation.y; forward = (cos θ, 0, −sin θ)
 let speed = 0;
 let velY = 0; // character vertical velocity
 let onGround = true;
+
+// M4: placement controller activates once M3 exposes the game inventory.
+var builder = null;
+if (window.vtInventory) {
+  builder = new Builder({
+    scene: scene,
+    camera: camera,
+    canvas: renderer.domElement,
+    world: world,
+    inventory: window.vtInventory,
+    getAssignedSlot: function () { return world.getAssignedSlot(); },
+    getWalking: function () { return mode === 'walking' && !shopUI.isOpen() && window.VT_LOCKED === false; }
+  });
+}
 
 // ---------------------------------------------------------------- tools
 let currentTool = -1; // index into the active vehicle's attachment list; -1 = detached
