@@ -850,7 +850,8 @@ function stepPhysics(dt) {
 
   const steeringPivots = vehicle.userData.steeringPivots || [];
   for (let i = 0; i < steeringPivots.length; i++) {
-    steeringPivots[i].rotation.y = input.turn * 0.42 * (speed < 0 ? -1 : 1);
+    // Visual wheel angle follows the same right-positive convention as yaw.
+    steeringPivots[i].rotation.y = -input.turn * 0.42 * (speed < 0 ? -1 : 1);
   }
 
   const cs = Math.cos(theta), sn = Math.sin(theta);
@@ -974,6 +975,7 @@ function enterVehicle(target) {
   character.setVisible(false); // hidden while driving
   input.setWalkingMode(false);
   mode = 'driving';
+  input.setDrivingMode(true);
   lastSig = '';
 }
 
@@ -1027,6 +1029,7 @@ function exitVehicle() {
   character.setVisible(true);
   input.setWalkingMode(true);
   mode = 'walking';
+  input.setDrivingMode(false);
   speed = 0; // the vehicle stays exactly where it is
   lastSig = '';
 }
@@ -1161,6 +1164,16 @@ function drainActions() {
       handleEnterExit();
     } else if (a === 'jump') {
       tryJump();
+    } else if (a === 'toggleTool' && mode === 'driving') {
+      if (vehicleType === 'truck') {
+        toggleHitch();
+      } else if (currentTool >= 0) {
+        detachTool();
+      } else {
+        const types = attachmentTypes();
+        const selected = toolSelections[vehicleType];
+        if (types.length) attachTool(selected >= 0 ? selected : (vehicleType === 'combine' ? 0 : 0));
+      }
     } else if (a === 'cycleTool' && mode === 'driving' && vehicleType === 'truck') {
       toggleHitch(); // the truck's only "tool" is the wagon hitch
     } else if (a === 'detach' && mode === 'driving' && vehicleType === 'truck') {
@@ -1966,6 +1979,9 @@ renderer.setAnimationLoop(function () {
     enterVisible = wantEnter;
     input.setEnterVisible(wantEnter);
   }
+  input.setToolControl(mode === 'driving' && (!!vehicle.userData.mounts || vehicleType === 'truck'),
+    mode === 'driving' && (vehicleType === 'truck' ? wagon.hitched : currentTool >= 0));
+  input.setUnloadVisible(mode === 'driving' && vehicleType === 'combine' && Object.keys(combineBin).length > 0);
 
   // M1: shop proximity check — show "Talk to shopkeeper" when near
   const shopNear = shop.isNear(character.group.position.x, character.group.position.z);

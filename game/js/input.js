@@ -32,7 +32,7 @@ var ACTIONS = {
 
 var BUTTONS = [
   { action: 'cycleMachine', emoji: '\u{1F69C}', label: 'Machine' }, // tractor / combine
-  { action: 'cycleTool',  emoji: '\u{1F69C}', label: 'Tool' },   // tractor
+  { action: 'toggleTool', emoji: '🔧', label: 'Attach' },
   { action: 'cycleColor', emoji: '\u{1F3A8}', label: 'Color' },  // palette
   { action: 'detach',     emoji: '\u{1F50C}', label: 'Detach' }, // plug
   { action: 'jump',       emoji: '\u{1F9BF}', label: 'Jump' },   // person jumping
@@ -66,6 +66,25 @@ var CSS = [
   '  box-shadow: 0 1px 0 rgba(0,0,0,.25); }',
   '#vt-buttons .vt-ico { display: block; font-size: 30px; line-height: 1.1; }',
   '#vt-buttons .vt-lbl { display: block; font-size: 14px; margin-top: 2px; }',
+  '#vt-buttons.vt-driving { left:50%; right:auto; top:calc(8px + env(safe-area-inset-top)); bottom:auto;',
+  '  transform:translateX(-50%); flex-direction:row; gap:6px; }',
+  '#vt-buttons.vt-driving button { min-width:56px; min-height:56px; width:62px; padding:4px;',
+  '  margin:0; border-radius:14px; font-size:12px; }',
+  '#vt-buttons.vt-driving .vt-ico { font-size:22px; } #vt-buttons.vt-driving .vt-lbl { font-size:10px; }',
+  '#vt-vehicle-controls { position:fixed; inset:0; z-index:40; display:none; pointer-events:none;',
+  '  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);',
+  '  box-sizing:border-box; touch-action:none; }',
+  '#vt-steering-wheel { position:absolute; left:max(18px,calc(18px + env(safe-area-inset-left)));',
+  '  bottom:max(24px,calc(24px + env(safe-area-inset-bottom))); width:clamp(104px,18vw,146px); aspect-ratio:1;',
+  '  border:10px solid #493d2a; border-radius:50%; box-sizing:border-box; pointer-events:auto; touch-action:none;',
+  '  background:radial-gradient(circle,#776746 0 17%,#332a1d 18% 25%,transparent 26%),conic-gradient(#d8c392,#6f5d3e,#d8c392,#6f5d3e,#d8c392);',
+  '  box-shadow:0 3px 0 rgba(0,0,0,.38),inset 0 0 0 4px #e4d6b6; transition:transform 80ms linear; }',
+  '#vt-pedals { position:absolute; right:max(18px,calc(18px + env(safe-area-inset-right)));',
+  '  bottom:max(24px,calc(24px + env(safe-area-inset-bottom))); display:flex; align-items:flex-end; gap:10px; pointer-events:auto; }',
+  '.vt-pedal { width:clamp(64px,10vw,88px); height:clamp(90px,17vh,138px); border:3px solid #29441d;',
+  '  border-radius:16px; color:#203017; background:#fffbe8; box-shadow:0 4px 0 rgba(0,0,0,.32);',
+  '  font:800 14px system-ui,sans-serif; touch-action:none; } #vt-gas { height:clamp(108px,21vh,164px); background:#e7ce72; }',
+  '.vt-pedal.vt-active { transform:translateY(3px); box-shadow:0 1px 0 rgba(0,0,0,.3); }',
 
   // --- short viewports ---------------------------------------------------
   // Below 780px tall the 6-button column (6 x 76 + 5 x 12 + 18 = 516px) would
@@ -145,6 +164,16 @@ export class Input {
     this._drive = 0;
     this._turn = 0;
     this._brake = false;
+    this._pedalDrive = 0;
+    this._pedalBrake = false;
+    this._wheelTurn = 0;
+    this._drivingMode = false;
+    this._enterNear = false;
+    this._shopNear = false;
+    this._wagonNear = false;
+    this._toolAvailable = false;
+    this._toolAttached = false;
+    this._unloadAvailable = false;
     this._charDrive = 0;
     this._charTurn = 0;
     this._charJump = false;
@@ -163,13 +192,14 @@ export class Input {
     this._installGestures();
     this._installJoystick();
     this._installButtons();
+    this._installVehicleControls();
   }
 
   // ---- public API -------------------------------------------------------
 
   get drive() { return this._drive; }   // -1..1  forward positive
   get turn() { return this._turn; }     // -1..1  right positive
-  get brake() { return this._brake; }
+  get brake() { return this._brake || this._pedalBrake; }
   get keyActions() { return this._pending.slice(); }
 
   // character movement getters
@@ -187,6 +217,56 @@ export class Input {
   setWalkingMode(walking) { this._walkingMode = walking; }
   isWalkingMode() { return this._walkingMode; }
 
+  setDrivingMode(driving) {
+    driving = !!driving;
+    if (this._drivingMode === driving) return;
+    this._drivingMode = driving;
+    if (this._btnWrap) this._btnWrap.classList.toggle('vt-driving', this._drivingMode);
+    if (document.body) document.body.classList.toggle('vt-driving', this._drivingMode);
+    if (this._vehicleControls) this._vehicleControls.style.display = hasTouch && this._drivingMode ? 'block' : 'none';
+    if (this._drivingMode) {
+      this._joyDrive = 0;
+      this._joyTurn = 0;
+      if (this._joy) this._joy.style.display = 'none';
+    } else {
+      this._clearVehicleControls();
+    }
+    this._setButtonLabel('enterVehicle', this._drivingMode ? '🚪' : '🚜', this._drivingMode ? 'Exit' : 'Enter');
+    this._updateContextButtons();
+  }
+
+  setEnterVisible(visible) { this._enterNear = !!visible; this._updateContextButtons(); }
+  setToolControl(available, attached) {
+    this._toolAvailable = !!available;
+    this._toolAttached = !!attached;
+    this._setButtonLabel('toggleTool', '🔧', this._toolAttached ? 'Detach' : 'Attach');
+    this._updateContextButtons();
+  }
+  setUnloadVisible(visible) { this._unloadAvailable = !!visible; this._updateContextButtons(); }
+
+  _setButtonLabel(action, emoji, label) {
+    var b = this._btnByAction && this._btnByAction[action];
+    if (!b) return;
+    var ico = b.querySelector('.vt-ico'), lbl = b.querySelector('.vt-lbl');
+    if (ico) ico.textContent = emoji;
+    if (lbl) lbl.textContent = label;
+  }
+  _setButtonVisible(action, visible) {
+    var b = this._btnByAction && this._btnByAction[action];
+    if (b) b.style.display = visible ? 'block' : 'none';
+  }
+  _updateContextButtons() {
+    this._setButtonVisible('enterVehicle', this._drivingMode || this._enterNear);
+    this._setButtonVisible('talkShop', !this._drivingMode && this._shopNear);
+    this._setButtonVisible('openWagon', !this._drivingMode && this._wagonNear);
+    this._setButtonVisible('toggleTool', this._drivingMode && this._toolAvailable);
+    this._setButtonVisible('unloadCombine', this._drivingMode && this._unloadAvailable);
+    this._setButtonVisible('cycleMachine', this._drivingMode);
+    this._setButtonVisible('cycleColor', !this._drivingMode);
+    this._setButtonVisible('detach', false);
+    this._setButtonVisible('jump', !this._drivingMode);
+  }
+
   // caller consumes the one-shot jump flag, then clears it
   clearJump() { this._charJump = false; }
 
@@ -199,16 +279,12 @@ export class Input {
 
   // M1: show/hide the shop talk prompt (mobile Enter button repurposed)
   setShopNear(visible) {
-    var b = this._btnByAction ? this._btnByAction['talkShop'] : null;
-    if (!b) return;
-    b.style.display = visible ? 'block' : 'none';
+    this._shopNear = !!visible; this._updateContextButtons();
   }
 
   // show/hide the Wagon button (only while standing next to the wagon)
   setWagonNear(visible) {
-    var b = this._btnByAction ? this._btnByAction['openWagon'] : null;
-    if (!b) return;
-    b.style.display = visible ? 'block' : 'none';
+    this._wagonNear = !!visible; this._updateContextButtons();
   }
 
   update(dt) {
@@ -223,8 +299,8 @@ export class Input {
       this._charTurn = approach(this._charTurn, tt, dt);
     } else {
       // vehicle driving mode
-      var vtd = clamp(this._keyDrive + this._joyDrive, -1, 1);
-      var vtt = clamp(this._keyTurn + this._joyTurn, -1, 1);
+      var vtd = clamp(this._keyDrive + (this._drivingMode ? this._pedalDrive : this._joyDrive), -1, 1);
+      var vtt = clamp(this._keyTurn + (this._drivingMode ? this._wheelTurn : this._joyTurn), -1, 1);
       this._drive = approach(this._drive, vtd, dt);
       this._turn = approach(this._turn, vtt, dt);
     }
@@ -241,7 +317,8 @@ export class Input {
     if (this._style && this._style.parentNode) this._style.parentNode.removeChild(this._style);
     if (this._btnWrap && this._btnWrap.parentNode) this._btnWrap.parentNode.removeChild(this._btnWrap);
     if (this._joy && this._joy.parentNode) this._joy.parentNode.removeChild(this._joy);
-    this._style = null; this._btnWrap = null; this._joy = null; this._knob = null;
+    if (this._vehicleControls && this._vehicleControls.parentNode) this._vehicleControls.parentNode.removeChild(this._vehicleControls);
+    this._style = null; this._btnWrap = null; this._joy = null; this._knob = null; this._vehicleControls = null;
     this._held = {};
     this._pending.length = 0;
     this._keyDrive = this._keyTurn = this._joyDrive = this._joyTurn = 0;
@@ -502,5 +579,77 @@ export class Input {
       })(BUTTONS[i]);
     }
     document.body.appendChild(this._btnWrap);
+    this._updateContextButtons();
+  }
+
+  _clearVehicleControls() {
+    this._pedalDrive = 0;
+    this._pedalBrake = false;
+    this._wheelTurn = 0;
+    if (this._activeWheelPointer !== undefined) this._activeWheelPointer = null;
+    if (this._wheel) this._wheel.style.transform = 'rotate(0deg)';
+    if (this._gas) this._gas.classList.remove('vt-active');
+    if (this._brakePedal) this._brakePedal.classList.remove('vt-active');
+  }
+
+  _installVehicleControls() {
+    var self = this;
+    var wrap = document.createElement('div');
+    wrap.id = 'vt-vehicle-controls';
+    var wheel = document.createElement('div');
+    wheel.id = 'vt-steering-wheel';
+    wheel.setAttribute('aria-label', 'Steering wheel');
+    var pedals = document.createElement('div');
+    pedals.id = 'vt-pedals';
+    var brake = document.createElement('button');
+    brake.type = 'button'; brake.id = 'vt-brake'; brake.className = 'vt-pedal'; brake.textContent = 'BRAKE';
+    var gas = document.createElement('button');
+    gas.type = 'button'; gas.id = 'vt-gas'; gas.className = 'vt-pedal'; gas.textContent = 'GAS';
+    pedals.appendChild(brake); pedals.appendChild(gas);
+    wrap.appendChild(wheel); wrap.appendChild(pedals);
+    document.body.appendChild(wrap);
+    this._vehicleControls = wrap; this._wheel = wheel; this._gas = gas; this._brakePedal = brake;
+
+    var wheelMove = function (e) {
+      if (self._activeWheelPointer !== e.pointerId) return;
+      var rect = wheel.getBoundingClientRect();
+      var dx = e.clientX - (rect.left + rect.width / 2);
+      var value = clamp(dx / (rect.width * 0.34), -1, 1);
+      self._wheelTurn = Math.abs(value) < DEAD ? 0 : value;
+      wheel.style.transform = 'rotate(' + (self._wheelTurn * 110) + 'deg)';
+      if (e.cancelable) e.preventDefault();
+    };
+    var wheelEnd = function (e) {
+      if (self._activeWheelPointer !== e.pointerId) return;
+      self._activeWheelPointer = null; self._wheelTurn = 0; wheel.style.transform = 'rotate(0deg)';
+    };
+    this._listen(wheel, 'pointerdown', function (e) {
+      if (locked()) return;
+      self._activeWheelPointer = e.pointerId;
+      if (wheel.setPointerCapture) wheel.setPointerCapture(e.pointerId);
+      wheelMove(e);
+    }, false);
+    this._listen(wheel, 'pointermove', wheelMove, false);
+    this._listen(wheel, 'pointerup', wheelEnd, false);
+    this._listen(wheel, 'pointercancel', wheelEnd, false);
+    this._listen(wheel, 'lostpointercapture', wheelEnd, false);
+
+    var pedal = function (el, kind, down) {
+      if (locked()) return;
+      if (kind === 'gas') self._pedalDrive = down ? 1 : 0;
+      else self._pedalBrake = down;
+      el.classList.toggle('vt-active', down);
+    };
+    [[gas, 'gas'], [brake, 'brake']].forEach(function (pair) {
+      var el = pair[0], kind = pair[1];
+      self._listen(el, 'pointerdown', function (e) {
+        if (el.setPointerCapture) el.setPointerCapture(e.pointerId);
+        pedal(el, kind, true); if (e.cancelable) e.preventDefault();
+      }, false);
+      var release = function () { pedal(el, kind, false); };
+      self._listen(el, 'pointerup', release, false);
+      self._listen(el, 'pointercancel', release, false);
+      self._listen(el, 'lostpointercapture', release, false);
+    });
   }
 }
