@@ -196,8 +196,10 @@ export class Shop {
 
   // Check if player is within trigger zone
   isNear(playerX, playerZ) {
-    var dx = playerX - this._centerX;
-    var dz = playerZ - this._centerZ;
+    // Door is centered on the south wall at local x=6,z=0. Trigger just
+    // outside it, not at the building origin (which is behind the west wall).
+    var dx = playerX - (this._centerX + 6);
+    var dz = playerZ - (this._centerZ - 2);
     return (dx * dx + dz * dz) <= (this._triggerRadius * this._triggerRadius);
   }
 
