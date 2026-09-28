@@ -270,6 +270,7 @@ renderer.domElement.addEventListener('pointerdown', function (e) {
       if (tile && inventory.canAdd('harvest_' + (tile.cropType === 'peas' ? 'peas' : tile.cropType))) {
         // continue into the harvest transaction below
       } else if (tile && (tile.cropType === 'pumpkin' || tile.cropType === 'peas') && tile.state === 'ready') {
+        e.stopImmediatePropagation();
         showToast('Your inventory is full — make room before picking.');
         return;
       }
@@ -277,6 +278,7 @@ renderer.domElement.addEventListener('pointerdown', function (e) {
       if (!crop) return;
       const added = inventory.buy(crop.itemId, 1);
       if (!added.ok) {
+        e.stopImmediatePropagation();
         showToast('Your inventory is full — make room before picking.');
         return;
       }
