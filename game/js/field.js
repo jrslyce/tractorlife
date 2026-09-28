@@ -353,13 +353,13 @@ export class Field {
   serialize() {
     const states = new Array(this.count);
     const timers = new Array(this.count);
-    const cropTypes = new Array(this.count);
-    const fertilized = new Array(this.count);
+    let cropTypes = '';
+    let fertilized = '';
     for (let i = 0; i < this.count; i++) {
       states[i] = STATE_CODES[this._states[i]] || 0;
       timers[i] = Math.round(this._timers[i] * 100) / 100;
-      cropTypes[i] = CROP_CODES[this._cropTypes[i]] || 0;
-      fertilized[i] = this._fertilized[i] ? 1 : 0;
+      cropTypes += (CROP_CODES[this._cropTypes[i]] || 0).toString(36);
+      fertilized += this._fertilized[i] ? '1' : '0';
     }
     return {
       states: states,
@@ -383,10 +383,14 @@ export class Field {
           : TileState.UNTILLED;
       const t = d.timers ? d.timers[i] : 0;
       this._timers[i] = typeof t === 'number' && isFinite(t) && t > 0 ? t : 0;
-      const cropCode = d.cropTypes && d.cropTypes[i];
+      const cropCode = typeof d.cropTypes === 'string'
+        ? parseInt(d.cropTypes.charAt(i), 36)
+        : (d.cropTypes && d.cropTypes[i]);
       this._cropTypes[i] = typeof cropCode === 'number' && cropCode >= 0 && cropCode < CROP_TYPES.length
         ? CROP_TYPES[cropCode] : 'generic';
-      this._fertilized[i] = d.fertilized && d.fertilized[i] ? 1 : 0;
+      this._fertilized[i] = typeof d.fertilized === 'string'
+        ? (d.fertilized.charAt(i) === '1' ? 1 : 0)
+        : (d.fertilized && d.fertilized[i] ? 1 : 0);
     }
     const keys = ['tilled', 'planted', 'sprayed', 'harvested'];
     for (let k = 0; k < keys.length; k++) {

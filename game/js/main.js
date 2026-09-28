@@ -15,7 +15,7 @@ import { Shop } from './shop.js';
 import { ShopUI } from './shopui.js';
 import { Builder } from './build.js';
 import { TOOL_ORDER, COMBINE_HEAD_ORDER, buildTool, buildCombineHead } from './equipment.js';
-import { login, restoreRememberedSession, rememberedEmail, hasRememberedEmail, forgetRememberedCredentials, startAutosave, fetchFarmers, fetchFarmState } from './net.js';
+import { login, restoreRememberedSession, rememberedEmail, hasRememberedEmail, forgetRememberedCredentials, startAutosave, fetchFarmers, fetchFarmState, fetchSharedWorld, placeSharedRoad } from './net.js';
 
 // per-vehicle scale; wheel roll radius and tool width read from this table
 const VEHICLE_SCALES = { tractor: 0.5, combine: 0.5, truck: 0.5 };
@@ -179,7 +179,12 @@ if (window.vtInventory) {
     world: world,
     inventory: window.vtInventory,
     getAssignedSlot: function () { return world.getAssignedSlot(); },
-    getWalking: function () { return mode === 'walking' && !shopUI.isOpen() && window.VT_LOCKED === false; }
+    getWalking: function () { return mode === 'walking' && !shopUI.isOpen() && window.VT_LOCKED === false; },
+    onPlaced: function (entry) {
+      if (entry.id === 'asphalt' || entry.id === 'gravel' || entry.id === 'brick') {
+        placeSharedRoad(entry);
+      }
+    }
   });
 }
 
@@ -880,10 +885,11 @@ function resetToSpawn() {
 
 // ---------------------------------------------------------------- save/restore
 let session = null;
+let sharedWorldTimer = null;
 
 function snapshot() {
   return {
-    v: 2,
+    v: 3,
     machine: vehicleType,
     money: Math.max(0, Math.floor(money)),
     tool: currentTool,
@@ -897,13 +903,15 @@ function snapshot() {
     cz: character.group.position.z,
     ctheta: character.group.rotation.y,
     world: world.serialize(),
+    structures: builder ? builder.serializeLocal() : [],
   };
 }
 
-// Accepts the v2 shape ({world: …}) and the legacy v1 shape (flat `fields`
+// Accepts the v2/v3 shape ({world: …}) and the legacy v1 shape (flat `fields`
 // array of 4 Field serialisations, no `world` key, always driving).
 function applyState(s) {
   if (!s || typeof s !== 'object') return false;
+  if (builder && Array.isArray(s.structures)) builder.restore(s.structures);
   const legacy = s.v !== 2 && Array.isArray(s.fields);
 
   // --- machine ---
@@ -1240,6 +1248,19 @@ function setupLogin() {
     lastSig = '';
     updateHUD();
     startFarmerPolling();
+    if (sharedWorldTimer !== null) {
+      clearInterval(sharedWorldTimer);
+      sharedWorldTimer = null;
+    }
+    if (builder && session.mode === 'online') {
+      var syncRoads = function () {
+        fetchSharedWorld().then(function (data) {
+          if (data && Array.isArray(data.roads)) builder.restore(data.roads);
+        });
+      };
+      syncRoads();
+      sharedWorldTimer = setInterval(syncRoads, 15000);
+    }
   }
 
   form.addEventListener('submit', function (e) {
