@@ -70,7 +70,23 @@ export class Builder {
     if (!item) return false;
     var slot = this.world.getFarmAtPosition(x, z);
     if (ROAD_IDS[item.id]) return slot < 0;
+    if (/^(corn|wheat|pumpkin|sunflower|pea)_seeds$/.test(item.id) || item.id === 'fertilizer') {
+      if (slot !== this.getAssignedSlot()) return false;
+      var field = this._fieldAt(slot, x, z);
+      var tile = field && field.worldToTile(x, z);
+      if (!tile) return false;
+      if (item.id === 'fertilizer') return tile.state === 'planted' || tile.state === 'growing' || tile.state === 'sprayed';
+      return tile.state === 'tilled';
+    }
     return slot === this.getAssignedSlot() && (BLOCK_IDS[item.id] || DECOR_IDS[item.id]);
+  }
+
+  _fieldAt(slot, x, z) {
+    var farm = this.world.getFarms()[slot];
+    if (!farm) return null;
+    var fields = farm.getFields();
+    for (var i = 0; i < fields.length; i++) if (fields[i].isInside(x, z)) return fields[i];
+    return null;
   }
 
   _makeMesh(item) {
@@ -138,7 +154,7 @@ export class Builder {
   _onClick(e) {
     if (!this._enabled || !this.getWalking() || e.button !== 0) return;
     var item = this._item();
-    if (!item || !(ROAD_IDS[item.id] || BLOCK_IDS[item.id] || DECOR_IDS[item.id])) return;
+    if (!item || !(ROAD_IDS[item.id] || BLOCK_IDS[item.id] || DECOR_IDS[item.id] || /^(corn|wheat|pumpkin|sunflower|pea)_seeds$/.test(item.id) || item.id === 'fertilizer')) return;
     if (!this._rayFromEvent(e)) return;
     var p = this._cellPosition();
     if (!this._canPlace(item, p.x, p.z)) return;
@@ -146,6 +162,20 @@ export class Builder {
     if (this._occupied[key]) return;
     var selected = this.inventory.getSelectedItem();
     if (!selected || selected.itemId !== item.id || selected.qty < 1) return;
+    if (item.id === 'fertilizer' || /_seeds$/.test(item.id)) {
+      var slot = this.world.getFarmAtPosition(p.x, p.z);
+      var field = this._fieldAt(slot, p.x, p.z);
+      var cropType = item.id.slice(0, -6);
+      if (cropType === 'pea') cropType = 'peas';
+      var success = item.id === 'fertilizer'
+        ? field && field.fertilizeAt(p.x, p.z)
+        : field && field.plantAt(p.x, p.z, cropType);
+      if (!success) return;
+      this.inventory.useOne();
+      this.inventory.updateDOM();
+      this.onPlaced({ id: item.id, x: p.x, z: p.z, farmSlot: slot });
+      return;
+    }
     var mesh = this._makeMesh(item);
     mesh.position.x = p.x;
     mesh.position.z = p.z;
