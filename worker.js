@@ -356,6 +356,20 @@ export class FarmerList {
   }
 }
 
+// Farm footprints, matching game/js/farm.js: each farm spans x
+// slot*140 + (-6 .. 105.5) and z -54.5 .. 27.5. Returns -1 on public land.
+const FARM_MIN_X = -6;
+const FARM_MAX_X = 105.5;
+const FARM_MIN_Z = -54.5;
+const FARM_MAX_Z = 27.5;
+function farmSlotAt(x, z) {
+  if (z < FARM_MIN_Z || z > FARM_MAX_Z) return -1;
+  for (let slot = 0; slot < 10; slot++) {
+    if (x >= slot * 140 + FARM_MIN_X && x <= slot * 140 + FARM_MAX_X) return slot;
+  }
+  return -1;
+}
+
 // Shared public road tiles. A single named Durable Object serializes writes,
 // making placement idempotent without replacing the entire shared snapshot.
 export class SharedWorld {
@@ -385,12 +399,8 @@ export class SharedWorld {
         return json({ ok: false, error: "invalid tile" }, 400);
       }
       // Reject tiles inside any farm bounds; only public land can be shared road.
-      for (let slot = 0; slot < 10; slot++) {
-        const minX = slot * 140 - 6;
-        const maxX = slot * 140 + 105.5;
-        if (body.x >= minX && body.x <= maxX && body.z >= -72.5 && body.z <= 27.5) {
-          return json({ ok: false, error: "roads may only be placed on public land" }, 403);
-        }
+      if (farmSlotAt(body.x, body.z) >= 0) {
+        return json({ ok: false, error: "roads may only be placed on public land" }, 403);
       }
       const key = body.x + "," + body.z;
       const roads = await this.ctx.storage.get("roads") || {};
@@ -433,7 +443,7 @@ export class RealtimeRoom {
     const client = pair[0];
     const server = pair[1];
     this.ctx.acceptWebSocket(server);
-    server.serializeAttachment({ email: email, lastAt: 0 });
+    server.serializeAttachment({ email: email });
     server.send(JSON.stringify({ type: "hello", email: email }));
     this._broadcast({ type: "join", email: email }, server);
     return new Response(null, { status: 101, webSocket: client });
@@ -441,15 +451,18 @@ export class RealtimeRoom {
 
   webSocketMessage(socket, raw) {
     const attachment = socket.deserializeAttachment() || {};
-    const now = Date.now();
-    if (now - (attachment.lastAt || 0) < 50) return;
-    attachment.lastAt = now;
-    socket.serializeAttachment(attachment);
     if ((typeof raw === "string" ? raw.length : raw.byteLength) > 8192) return;
     let msg;
     try { msg = JSON.parse(typeof raw === "string" ? raw : new TextDecoder().decode(raw)); }
     catch (err) { return; }
     if (!isPlainObject(msg)) return;
+    // Throttle each message type on its own clock: a build sent right after
+    // a pose (the client streams poses every 125 ms) must not be dropped.
+    const clock = msg.type === "pose" ? "lastPoseAt" : "lastBuildAt";
+    const now = Date.now();
+    if (now - (attachment[clock] || 0) < 50) return;
+    attachment[clock] = now;
+    socket.serializeAttachment(attachment);
     if (msg.type === "pose") {
       const pose = msg.pose;
       if (!isPlainObject(pose) || !Number.isFinite(pose.x) || !Number.isFinite(pose.z) ||
@@ -468,19 +481,9 @@ export class RealtimeRoom {
       if (!isPlainObject(entry) || !["asphalt", "gravel", "brick", "wood", "roof_shingles", "fence_kit", "window_glass", "door", "lamp_light", "hay_bale", "scarecrow", "pumpkin_pile", "corn_shocks", "string_lights", "mailbox"].includes(entry.id) ||
           !Number.isSafeInteger(entry.x) || !Number.isSafeInteger(entry.z) ||
           entry.x < -10 || entry.x > 1385 || entry.z < -78 || entry.z > 80) return;
-      const ownerSlot = assignFarmSlot(attachment.email);
-      let inFarm = false;
-      for (let slot = 0; slot < 10; slot++) {
-        const minX = slot * 140 - 6;
-        const maxX = slot * 140 + 105.5;
-        if (entry.x >= minX && entry.x <= maxX && entry.z >= -72.5 && entry.z <= 27.5) inFarm = true;
-      }
-      if (roads.includes(entry.id) === inFarm) return;
-      if (!roads.includes(entry.id)) {
-        const minX = ownerSlot * 140 - 6;
-        const maxX = ownerSlot * 140 + 105.5;
-        if (entry.x < minX || entry.x > maxX || entry.z < -72.5 || entry.z > 27.5) return;
-      }
+      // Roads go on public land; everything else only on the sender's farm.
+      const slot = farmSlotAt(entry.x, entry.z);
+      if (roads.includes(entry.id) ? slot >= 0 : slot !== assignFarmSlot(attachment.email)) return;
       this._broadcast({ type: "build", email: attachment.email, entry: { id: entry.id, x: entry.x, z: entry.z } }, socket);
     }
   }

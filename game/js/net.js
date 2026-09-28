@@ -272,7 +272,7 @@ export function placeSharedRoad(tile) {
   }
   var cleanTile = { id: tile.id, x: tile.x, z: tile.z };
   return post('/api/world/place', cleanTile, WORLD_TIMEOUT_MS).then(function (res) {
-    if (!res.ok) { queueSharedRoad(cleanTile); return null; }
+    if (!res.ok) { if (isRetryableStatus(res.status)) queueSharedRoad(cleanTile); return null; }
     return res.json().then(function (data) {
       if (!data || !data.ok) queueSharedRoad(cleanTile);
       return data && data.ok ? data : null;
@@ -297,6 +297,13 @@ export function sendGift(to, itemId, qty) {
   }, function () { return { ok: false, error: 'Gift could not be sent.' }; }).catch(function () {
     return { ok: false, error: 'Gift could not be sent.' };
   });
+}
+
+// Only transient failures are worth retrying. A 4xx such as "not public
+// land" (403) or "invalid tile" (400) will never succeed, so re-queuing it
+// would retry it on every sync forever.
+function isRetryableStatus(status) {
+  return status === 401 || status === 408 || status === 429 || status >= 500;
 }
 
 function readRoadQueue() {
@@ -324,7 +331,7 @@ function flushSharedRoadQueue() {
   queue.forEach(function (tile) {
     chain = chain.then(function () {
       return post('/api/world/place', tile, WORLD_TIMEOUT_MS).then(function (res) {
-        if (!res.ok) remaining.push(tile);
+        if (!res.ok && isRetryableStatus(res.status)) remaining.push(tile);
       }, function () { remaining.push(tile); });
     });
   });
