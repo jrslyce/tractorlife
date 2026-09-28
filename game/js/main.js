@@ -33,9 +33,10 @@ function clampZ(z) { return z < WORLD_MIN_Z ? WORLD_MIN_Z : (z > WORLD_MAX_Z ? W
 // ---------------------------------------------------------------- scene
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87ceeb);
-// far distance reaches the next farms (140 units apart) so neighbours show
-// M1: extended to cover the shop area (z up to ~80)
-scene.fog = new THREE.Fog(0x87ceeb, 130, 480);
+// far distance reaches the next farms (140 units apart) so neighbours show.
+// Keep it under world.js CULL_DISTANCE (440) so farms are fogged out before
+// they are culled; the shop (~70 units south of spawn) is well inside it.
+scene.fog = new THREE.Fog(0x87ceeb, 130, 430);
 
 const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 700);
 
