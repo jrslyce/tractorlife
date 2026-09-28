@@ -15,8 +15,10 @@ import { Shop } from './shop.js';
 import { ShopUI } from './shopui.js';
 import { Builder } from './build.js';
 import { RealtimeClient } from './realtime.js';
+import { ITEM_BY_ID } from './items.js';
+import { Inventory } from './inventory.js';
 import { TOOL_ORDER, COMBINE_HEAD_ORDER, buildTool, buildCombineHead } from './equipment.js';
-import { login, restoreRememberedSession, rememberedEmail, hasRememberedEmail, forgetRememberedCredentials, startAutosave, fetchFarmers, fetchFarmState, fetchSharedWorld, placeSharedRoad } from './net.js';
+import { login, restoreRememberedSession, rememberedEmail, hasRememberedEmail, forgetRememberedCredentials, startAutosave, fetchFarmers, fetchFarmState, fetchSharedWorld, placeSharedRoad, sendGift } from './net.js';
 
 // per-vehicle scale; wheel roll radius and tool width read from this table
 const VEHICLE_SCALES = { tractor: 0.5, combine: 0.5, truck: 0.5 };
@@ -128,6 +130,9 @@ hayBale(57, 0.8, -13, 0.7);
 // ---------------------------------------------------------------- world (10 farms)
 // All field work / stats / serialize / restore go through world.getFarms().
 const world = new World(scene, '');
+const inventory = new Inventory();
+inventory.install(document.body);
+window.vtInventory = inventory;
 
 // ---------------------------------------------------------------- M1: Shop
 // Placed south of the road, between farms 5 and 6 (slot 4 and 5).
@@ -149,6 +154,7 @@ for (let vi = 0; vi < MACHINES.length; vi++) {
 // ---------------------------------------------------------------- character
 const character = new Character();
 scene.add(character.group);
+inventory.setCharacter(character);
 
 // ---------------------------------------------------------------- input
 const input = new Input();
@@ -351,6 +357,21 @@ const hudLeft = document.getElementById('hud-top-left');
 const hudRight = document.getElementById('hud-top-right');
 const hudHint = document.getElementById('hud-hint');
 
+const toast = document.createElement('div');
+toast.style.cssText = 'position:fixed;left:50%;top:18%;transform:translateX(-50%);z-index:90;' +
+  'display:none;max-width:90vw;padding:12px 18px;border:3px solid #2f4d1f;border-radius:14px;' +
+  'background:#fffbe8;color:#233018;font:700 17px system-ui,-apple-system,sans-serif;' +
+  'box-shadow:0 4px 0 rgba(0,0,0,.25);text-align:center;pointer-events:none;';
+document.body.appendChild(toast);
+let toastTimer = null;
+let appliedGiftIds = [];
+function showToast(text) {
+  toast.textContent = text;
+  toast.style.display = 'block';
+  if (toastTimer !== null) clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { toast.style.display = 'none'; toastTimer = null; }, 4200);
+}
+
 const LEGEND = [
   ['🟫', '#7a5a3a', 'untilled'],
   ['⬛', '#5a3f28', 'tilled'],
@@ -366,6 +387,10 @@ const legendHTML = LEGEND.map(
 
 let money = 0;
 let lastSig = '';
+window.vtPurchaseItem = function (item, qty, balance) {
+  if (!item || !Number.isInteger(qty) || qty < 1 || money < item.price * qty) return { ok: false, error: 'Not enough money.' };
+  return inventory.buy(item.id, qty);
+};
 
 const shopUI = new ShopUI({
   getMoney: function () { return money; },
@@ -380,6 +405,17 @@ const shopUI = new ShopUI({
     lastSig = '';
     updateHUD();
     return { ok: true };
+  },
+  onGift: function (item, qty, recipient) {
+    return sendGift(recipient, item.id, qty).then(function (result) {
+      if (result && result.ok) {
+        money = Math.max(0, money - item.price * qty);
+        lastSig = '';
+        updateHUD();
+        shopUI.refreshBalance();
+      }
+      return result;
+    });
   }
 });
 
@@ -698,6 +734,7 @@ function handleEnterExit() {
     exitVehicle();
   } else {
     if (shop.isNear(character.group.position.x, character.group.position.z)) {
+      shopUI.setRecipients(farmerRoster, session ? session.email : '');
       shopUI.open();
       return;
     }
@@ -766,7 +803,13 @@ function drainActions() {
     } else if (a === 'cycleMachine') {
       if (mode === 'driving') switchMachine();
     } else if (a === 'talkShop') {
-      if (mode === 'walking' && shop.isNear(character.group.position.x, character.group.position.z)) shopUI.open();
+      if (mode === 'walking' && shop.isNear(character.group.position.x, character.group.position.z)) {
+        shopUI.setRecipients(farmerRoster, session ? session.email : '');
+        shopUI.open();
+      }
+    } else if (typeof a === 'string' && a.indexOf('hotbar:') === 0) {
+      inventory.selectSlot(Number(a.slice(7)));
+      inventory.updateDOM();
     }
   }
   updateHUD();
@@ -907,6 +950,8 @@ function snapshot() {
     ctheta: character.group.rotation.y,
     world: world.serialize(),
     structures: builder ? builder.serializeLocal() : [],
+    inventory: inventory.serialize(),
+    appliedGiftIds: appliedGiftIds.slice(-100),
   };
 }
 
@@ -914,6 +959,33 @@ function snapshot() {
 // array of 4 Field serialisations, no `world` key, always driving).
 function applyState(s) {
   if (!s || typeof s !== 'object') return false;
+  if (s.inventory && typeof s.inventory === 'object') inventory.restore(s.inventory);
+  if (Array.isArray(s.giftInbox)) {
+    var seenGifts = [];
+    try {
+      var localSeenGifts = JSON.parse(localStorage.getItem('vt-seen-gifts:' + (session ? session.email : '')) || '[]');
+      if (Array.isArray(localSeenGifts)) seenGifts = localSeenGifts;
+    } catch (err) { /* local storage is optional */ }
+    appliedGiftIds = Array.isArray(s.appliedGiftIds) ? s.appliedGiftIds.slice(-100) : [];
+    for (var gi = 0; gi < s.giftInbox.length; gi++) {
+      var gift = s.giftInbox[gi];
+      if (!gift || !gift.requestId || appliedGiftIds.indexOf(gift.requestId) !== -1) continue;
+      var giftInfo = ITEM_BY_ID[gift.itemId];
+      if (giftInfo) {
+        var grant = inventory.buy(gift.itemId, gift.qty);
+        if (grant.ok) {
+          if (seenGifts.indexOf(gift.requestId) === -1) showToast('🎁 ' + gift.from + ' sent you ' + (gift.qty > 1 ? gift.qty + ' × ' : '') + giftInfo.name + '!');
+          seenGifts.push(gift.requestId);
+          appliedGiftIds.push(gift.requestId);
+        } else {
+          showToast('🎁 Make room in your inventory for a gift from ' + gift.from + '.');
+        }
+      }
+    }
+    appliedGiftIds = appliedGiftIds.slice(-100);
+    try { localStorage.setItem('vt-seen-gifts:' + (session ? session.email : ''), JSON.stringify(appliedGiftIds)); }
+    catch (err2) { /* storage may be unavailable */ }
+  }
   if (builder && Array.isArray(s.structures)) builder.restore(s.structures);
   const legacy = s.v !== 2 && Array.isArray(s.fields);
 
@@ -1023,6 +1095,7 @@ function refreshFarmers() {
     }
     slotToEmail = map;
     farmerRoster = roster;
+    if (shopUI) shopUI.setRecipients(farmerRoster, own);
     refreshFarmLabels(); // label text changes only when the list changes
     reconcileFarmerCharacters();
     lastSig = ''; // farm label may have changed
@@ -1157,6 +1230,21 @@ function makeRemoteVehicle() {
 }
 
 function acceptRealtimeMessage(msg) {
+  if (msg && msg.type === 'gift' && session && String(msg.to).toLowerCase() === String(session.email).toLowerCase()) {
+    var giftItem = ITEM_BY_ID[msg.itemId];
+    if (giftItem) {
+      var grantResult = { ok: true };
+      if (!msg.requestId || appliedGiftIds.indexOf(msg.requestId) === -1) grantResult = inventory.buy(msg.itemId, msg.qty);
+      if (grantResult.ok && msg.requestId && appliedGiftIds.indexOf(msg.requestId) === -1) appliedGiftIds.push(msg.requestId);
+      appliedGiftIds = appliedGiftIds.slice(-100);
+      try { localStorage.setItem('vt-seen-gifts:' + session.email, JSON.stringify(appliedGiftIds)); } catch (err) { /* ignore */ }
+      inventory.updateDOM();
+      showToast(grantResult.ok
+        ? '🎁 ' + msg.from + ' sent you ' + (msg.qty > 1 ? msg.qty + ' × ' : '') + giftItem.name + '!'
+        : '🎁 Make room in your inventory for a gift from ' + msg.from + '.');
+    }
+    return;
+  }
   if (!msg || !msg.email) return;
   const own = session && session.email ? String(session.email).toLowerCase() : '';
   if (String(msg.email).toLowerCase() === own) return;
@@ -1438,6 +1526,7 @@ renderer.setAnimationLoop(function () {
   updateSun();
   updateHUD();
   updateFarmLabels();
+  inventory.setVisible(mode === 'walking' && window.VT_LOCKED === false);
   renderer.render(scene, camera);
 });
 

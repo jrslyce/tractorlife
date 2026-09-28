@@ -278,7 +278,8 @@ export class Input {
       }
       var action = ACTIONS[code];
       if (action && !e.repeat) self._pending.push(action);
-      if (action || code === 'Space' || code.indexOf('Arrow') === 0) {
+      if (/^Digit[1-9]$/.test(code) && !e.repeat) self._pending.push('hotbar:' + (Number(code.slice(5)) - 1));
+      if (action || /^Digit[1-9]$/.test(code) || code === 'Space' || code.indexOf('Arrow') === 0) {
         if (e.cancelable) e.preventDefault();
       }
     };
