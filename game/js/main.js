@@ -577,24 +577,34 @@ const MACHINE_LABELS = { tractor: '🚜 Tractor', combine: '🌾 Combine', truck
 const hudStyle = document.createElement('style');
 hudStyle.textContent = `
 #hud { position: fixed; inset: 0; pointer-events: none; z-index: 30;
-  font-family: system-ui, -apple-system, sans-serif; }
+  font-family: system-ui, -apple-system, sans-serif; color:#f5f5e8; }
 #hud .card { position: absolute; max-width: 42%; box-sizing: border-box;
-  background: rgba(255, 251, 232, .92); border: 3px solid #2f4d1f;
-  border-radius: 16px; padding: 8px 10px; color: #233018;
-  box-shadow: 0 3px 0 rgba(0,0,0,.2); -webkit-user-select: none; user-select: none; }
-#hud-top-left { left: 10px; top: 10px; font-size: 15px; line-height: 1.45; }
-#hud-top-left b { font-size: 17px; }
-#hud-top-right { right: 10px; top: 38px; font-size: 13px; line-height: 1.5;
-  text-align: left; max-width: 45%; }
-#hud-hint { position: absolute; left: 10px;
-  /* sits above the hotbar (10px offset + ~70px tall), which is always shown */
-  bottom: 90px; bottom: calc(90px + env(safe-area-inset-bottom));
-  max-width: 45%; font-size: 14px; font-weight: 600; color: #1c3b12; }
+  background:rgba(19,27,21,.88); border:2px solid #a9ca72;
+  border-radius:8px; padding:8px 11px; color:#f5f5e8;
+  box-shadow:3px 3px 0 rgba(0,0,0,.55); -webkit-user-select:none; user-select:none; }
+#hud-top-left { left:max(10px,env(safe-area-inset-left)); top:max(10px,env(safe-area-inset-top));
+  font-size:13px; line-height:1.35; min-width:150px; }
+#hud-top-left b { color:#ffe36b; font-size:19px; font-variant-numeric:tabular-nums; }
+#hud-top-left div:nth-child(2) { color:#b9e27e; font-weight:800; text-transform:uppercase; font-size:11px; letter-spacing:.06em; }
+#hud-top-right { right:max(10px,env(safe-area-inset-right)); top:max(10px,env(safe-area-inset-top));
+  display:grid; grid-template-columns:repeat(2,minmax(74px,auto)); gap:3px 10px;
+  font-size:12px; line-height:1.35; text-align:left; max-width:48%; }
+#hud-top-right b { color:#ffe36b; font-variant-numeric:tabular-nums; }
+#hud-hint { position:absolute; left:50%; bottom:calc(80px + env(safe-area-inset-bottom));
+  transform:translateX(-50%); width:max-content; max-width:min(620px,calc(100vw - 28px));
+  font-size:13px; font-weight:700; text-align:center; color:#fffbe8; padding:7px 12px; }
+#build-reticle { display:none; position:absolute; left:50%; top:50%; width:18px; height:18px;
+  transform:translate(-50%,-50%); filter:drop-shadow(1px 1px 1px #101710); }
+#build-reticle:before,#build-reticle:after { content:""; position:absolute; background:#fffbe8; border:1px solid #19241b; }
+#build-reticle:before { left:8px;top:0;width:2px;height:18px; } #build-reticle:after { top:8px;left:0;width:18px;height:2px; }
+body.vt-build-mode #build-reticle { display:block; }
 .sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px;
   border: 1px solid rgba(0,0,0,.35); vertical-align: -1px; margin-right: 4px; }
 .leg { white-space: nowrap; }
-/* short viewports: keep the hint card clear of the bottom-right button row */
-@media (max-height: 700px) { #hud #hud-hint { max-width: 32%; } }
+@media(max-width:640px){#hud-top-left{min-width:0;max-width:43%;font-size:11px;padding:6px 8px}
+  #hud-top-left b{font-size:16px}#hud-top-right{max-width:48%;grid-template-columns:repeat(2,minmax(52px,auto));font-size:10px;padding:6px 8px}
+  #hud-hint{bottom:calc(78px + env(safe-area-inset-bottom));font-size:11px;padding:6px 9px}}
+@media(max-height:520px){#hud-hint{bottom:calc(64px + env(safe-area-inset-bottom));max-width:52vw}}
 `;
 document.head.appendChild(hudStyle);
 
@@ -604,6 +614,7 @@ hud.innerHTML = `
   <div class="card" id="hud-top-left"></div>
   <div class="card" id="hud-top-right"></div>
   <div class="card" id="hud-hint"></div>
+  <div id="build-reticle" aria-hidden="true"></div>
 `;
 document.body.appendChild(hud);
 const hudLeft = document.getElementById('hud-top-left');
@@ -612,9 +623,9 @@ const hudHint = document.getElementById('hud-hint');
 
 const toast = document.createElement('div');
 toast.style.cssText = 'position:fixed;left:50%;top:18%;transform:translateX(-50%);z-index:90;' +
-  'display:none;max-width:90vw;padding:12px 18px;border:3px solid #2f4d1f;border-radius:14px;' +
-  'background:#fffbe8;color:#233018;font:700 17px system-ui,-apple-system,sans-serif;' +
-  'box-shadow:0 4px 0 rgba(0,0,0,.25);text-align:center;pointer-events:none;';
+  'display:none;max-width:90vw;padding:10px 15px;border:2px solid #b9e27e;border-radius:8px;' +
+  'background:rgba(19,27,21,.96);color:#f7f6e9;font:750 15px system-ui,-apple-system,sans-serif;' +
+  'box-shadow:3px 3px 0 rgba(0,0,0,.5);text-align:center;pointer-events:none;';
 document.body.appendChild(toast);
 let toastTimer = null;
 let appliedGiftIds = [];
@@ -624,19 +635,6 @@ function showToast(text) {
   if (toastTimer !== null) clearTimeout(toastTimer);
   toastTimer = setTimeout(function () { toast.style.display = 'none'; toastTimer = null; }, 4200);
 }
-
-const LEGEND = [
-  ['🟫', '#7a5a3a', 'untilled'],
-  ['⬛', '#5a3f28', 'tilled'],
-  ['🌱', '#6b4a2e', 'planted'],
-  ['🌿', '#4e9e3f', 'growing'],
-  ['🫧', '#3f8f7a', 'sprayed'],
-  ['🌾', '#e0b83a', 'ready'],
-  ['📦', '#8a7a5a', 'harvested'],
-];
-const legendHTML = LEGEND.map(
-  function (e) { return '<div class="leg"><span class="sw" style="background:' + e[1] + '"></span>' + e[0] + '</div>'; }
-).join('');
 
 let money = 0;
 let lastSig = '';
@@ -766,15 +764,14 @@ function updateHUD() {
   hudLeft.innerHTML = left;
 
   hudRight.innerHTML =
-    '<div>🟫 Tilled: <b>' + s.tilled + '</b></div>' +
-    '<div>🌱 Planted: <b>' + s.planted + '</b></div>' +
-    '<div>🫧 Sprayed: <b>' + s.sprayed + '</b></div>' +
-    '<div>🌾 Harvested: <b>' + s.harvested + '</b></div>' +
+    '<div>🟫 Soil <b>' + s.tilled + '</b></div>' +
+    '<div>🌱 Crops <b>' + s.planted + '</b></div>' +
+    '<div>🫧 Fed <b>' + s.sprayed + '</b></div>' +
+    '<div>🌾 Picked <b>' + s.harvested + '</b></div>' +
     (mode === 'driving' && vehicleType === 'combine' ?
       '<div>🛢️ Combine bin: <b>' + combineBinCount() + '/' + COMBINE_BIN_CAPACITY + '</b>' +
       '<div style="height:10px;margin:3px 0 6px;background:rgba(0,0,0,.28);border:1px solid rgba(255,255,255,.55);border-radius:5px;overflow:hidden">' +
-      '<div style="height:100%;width:' + Math.min(100, combineBinCount() * 100 / COMBINE_BIN_CAPACITY) + '%;background:#e5b83e"></div></div></div>' : '') +
-    '<div style="margin-top:4px">' + legendHTML + '</div>';
+      '<div style="height:100%;width:' + Math.min(100, combineBinCount() * 100 / COMBINE_BIN_CAPACITY) + '%;background:#e5b83e"></div></div></div>' : '');
 
   let hint;
   if (mode === 'walking') {
@@ -1283,6 +1280,7 @@ function setBuildMode(active) {
   buildMode = !!active && mode === 'walking';
   firstPersonArm.visible = buildMode;
   character.setVisible(!buildMode);
+  document.body.classList.toggle('vt-build-mode', buildMode);
   inventory.setFirstPerson(buildMode);
   input.setBuildMode(buildMode);
   if (buildMode) showToast('🧱 Build mode: select an item in your hotbar, aim, then tap to place.');

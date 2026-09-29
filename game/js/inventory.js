@@ -4,13 +4,12 @@
 // character's right hand. Buy flow: money → inventory.
 // Save/load integrated via snapshot/applyState in main.js.
 import * as THREE from 'three';
+import { ITEM_BY_ID } from './items.js';
 
 // ---------------------------------------------------------------- constants
 var HOTBAR_SLOTS = 9;
-var HOTBAR_Y = 10; // px above bottom
-var HOTBAR_BTN_W = 52;
-var HOTBAR_BTN_H = 52;
-var HOTBAR_GAP = 4;
+var HOTBAR_Y = 8; // px above safe area
+var HOTBAR_GAP = 3;
 
 var ITEM_EMOJI = {
   gravel: '⬜', asphalt: '⬛', brick: '🧱', wood: '🪵', corn_seeds: '🌽',
@@ -220,29 +219,35 @@ export class Inventory {
     var self = this;
     var wrap = document.createElement('div');
     wrap.id = 'vt-hotbar';
-    wrap.style.cssText = 'position:fixed;left:50%;bottom:' + HOTBAR_Y + 'px;' +
-      'transform:translateX(-50%);display:none;z-index:42;' +
+    wrap.style.cssText = 'position:fixed;left:50%;bottom:calc(' + HOTBAR_Y + 'px + env(safe-area-inset-bottom));' +
+      'transform:translateX(-50%);display:none;z-index:42;max-width:calc(100vw - 8px);overflow-x:auto;' +
       '-webkit-flex-direction:row;flex-direction:row;' +
-      'gap:' + HOTBAR_GAP + 'px;padding:6px;' +
-      'background:rgba(255,251,232,.92);border:3px solid #2f4d1f;border-radius:14px;' +
-      '-webkit-user-select:none;user-select:none;box-shadow:0 3px 0 rgba(0,0,0,.25);';
+      'gap:' + HOTBAR_GAP + 'px;padding:5px;' +
+      'background:rgba(14,20,16,.9);border:2px solid #94b65e;border-radius:8px;' +
+      '-webkit-user-select:none;user-select:none;box-shadow:3px 3px 0 rgba(0,0,0,.5);';
 
     for (var i = 0; i < HOTBAR_SLOTS; i++) {
       (function (slotIdx) {
         var btn = document.createElement('button');
         btn.style.cssText = 'appearance:none;-webkit-appearance:none;' +
-          'width:' + HOTBAR_BTN_W + 'px;height:' + HOTBAR_BTN_H + 'px;' +
-          'position:relative;' +
-          'border:3px solid #2f4d1f;border-radius:10px;' +
-          'background:#fffbe8;color:#233018;font-size:22px;' +
+          'width:clamp(30px,calc((100vw - 50px)/9),52px);height:clamp(44px,8vw,52px);' +
+          'flex:0 0 auto;position:relative;' +
+          'border:2px solid #68735d;border-radius:6px;' +
+          'background:#283329;color:#f7f6e9;font-size:clamp(16px,4.5vw,22px);' +
           'cursor:pointer;touch-action:manipulation;' +
           '-webkit-tap-highlight-color:transparent;' +
           '-webkit-user-select:none;user-select:none;';
         btn.setAttribute('data-slot', slotIdx);
+        btn.setAttribute('aria-label', 'Hotbar slot ' + (slotIdx + 1));
 
         var icon = document.createElement('span');
         icon.className = 'hotbar-icon';
         icon.style.cssText = 'display:block;line-height:1;';
+
+        var key = document.createElement('span');
+        key.className = 'hotbar-key';
+        key.textContent = slotIdx + 1;
+        key.style.cssText = 'position:absolute;left:3px;top:1px;font:700 9px/1 system-ui,sans-serif;color:#d8e4ca;';
 
         var qty = document.createElement('span');
         qty.className = 'hotbar-qty';
@@ -250,6 +255,7 @@ export class Inventory {
           'font-size:11px;font-weight:700;';
 
         btn.appendChild(icon);
+        btn.appendChild(key);
         btn.appendChild(qty);
 
         // Tap to select
@@ -285,18 +291,22 @@ export class Inventory {
         icon.textContent = slot.emoji || '?';
         qty.textContent = slot.qty > 1 ? slot.qty : '';
         btn.style.display = 'block';
+        btn.title = (ITEM_BY_ID[slot.itemId] ? ITEM_BY_ID[slot.itemId].name : slot.itemId) + ' × ' + slot.qty + ' · slot ' + (i + 1);
       } else {
         icon.textContent = '';
         qty.textContent = '';
         btn.style.display = 'block';
+        btn.title = 'Empty slot ' + (i + 1);
       }
       // Highlight selected
       if (i === this._selectedSlot) {
-        btn.style.borderColor = '#ffe066';
-        btn.style.background = '#ffe066';
+        btn.style.borderColor = '#ffe36b';
+        btn.style.background = '#4a5b2d';
+        btn.style.transform = 'translateY(-3px)';
       } else {
-        btn.style.borderColor = '#2f4d1f';
-        btn.style.background = '#fffbe8';
+        btn.style.borderColor = '#68735d';
+        btn.style.background = '#283329';
+        btn.style.transform = 'none';
       }
     }
   }
