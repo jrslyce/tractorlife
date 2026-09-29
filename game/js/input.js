@@ -56,20 +56,19 @@ var CSS = [
   '#vt-joy-knob { position: absolute; left: 50%; top: 50%; width: 58px; height: 58px;',
   '  margin: -29px 0 0 -29px; border-radius: 50%; background: rgba(255,255,255,.8);',
   '  border: 2px solid rgba(0,0,0,.15); }',
-  '#vt-buttons { position: fixed; right: 14px; z-index: 41; display: -webkit-flex;',
+  '#vt-buttons { position: fixed; right: 12px; z-index: 41; display: -webkit-flex;',
   '  display: flex; -webkit-flex-direction: column; flex-direction: column;',
-  '  bottom: 18px; bottom: calc(18px + env(safe-area-inset-bottom)); }',
+  '  bottom: 14px; bottom: calc(14px + env(safe-area-inset-bottom)); gap:7px; }',
   '#vt-buttons button { -webkit-appearance: none; appearance: none; display: block;',
-  '  min-width: 76px; min-height: 76px; padding: 8px 10px; margin-top: 12px;',
-  '  border-radius: 18px; border: 3px solid #2f4d1f; background: #fffbe8; color: #233018;',
-  '  font: 600 15px/1.15 system-ui, -apple-system, sans-serif; text-align: center;',
+  '  min-width: 58px; min-height: 58px; padding: 5px 7px; margin:0;',
+  '  border-radius: 9px; border: 2px solid #b6d77a; background: rgba(21,31,23,.94); color: #f7f6e9;',
+  '  font: 700 12px/1.1 system-ui, -apple-system, sans-serif; text-align: center;',
   '  cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent;',
-  '  -webkit-user-select: none; user-select: none; box-shadow: 0 3px 0 rgba(0,0,0,.25); }',
-  '#vt-buttons button:first-child { margin-top: 0; }',
-  '#vt-buttons button.vt-active { background: #ffe066; transform: translateY(2px);',
-  '  box-shadow: 0 1px 0 rgba(0,0,0,.25); }',
-  '#vt-buttons .vt-ico { display: block; font-size: 30px; line-height: 1.1; }',
-  '#vt-buttons .vt-lbl { display: block; font-size: 14px; margin-top: 2px; }',
+  '  -webkit-user-select: none; user-select: none; box-shadow: 0 3px 0 #0c130d; }',
+  '#vt-buttons button.vt-active { background: #ffe36b; color:#233018; transform: translateY(2px);',
+  '  box-shadow: 0 1px 0 #0c130d; }',
+  '#vt-buttons .vt-ico { display: block; font-size: 23px; line-height: 1.1; }',
+  '#vt-buttons .vt-lbl { display: block; font-size: 10px; margin-top: 2px; }',
   '#vt-buttons.vt-driving { left:50%; right:auto; top:calc(8px + env(safe-area-inset-top)); bottom:auto;',
   '  transform:translateX(-50%); flex-direction:row; gap:6px; }',
   '#vt-buttons.vt-driving button { min-width:56px; min-height:56px; width:62px; padding:4px;',
@@ -91,13 +90,12 @@ var CSS = [
   '.vt-pedal.vt-active { transform:translateY(3px); box-shadow:0 1px 0 rgba(0,0,0,.3); }',
 
   // --- short viewports ---------------------------------------------------
-  // Below 780px tall the 6-button column (6 x 76 + 5 x 12 + 18 = 516px) would
-  // reach up into the stats card, so the buttons shrink to 64px targets.
+  // Keep action buttons compact on tablet and short landscape viewports.
   '@media (max-height: 780px) {',
-  '  #vt-buttons button { min-width: 64px; min-height: 64px; padding: 6px 8px;',
-  '    margin-top: 8px; border-radius: 14px; font-size: 13px; }',
-  '  #vt-buttons .vt-ico { font-size: 25px; }',
-  '  #vt-buttons .vt-lbl { font-size: 12px; margin-top: 1px; }',
+  '  #vt-buttons button { min-width: 52px; min-height: 52px; padding: 4px 6px;',
+  '    border-radius: 9px; font-size: 12px; }',
+  '  #vt-buttons .vt-ico { font-size: 21px; }',
+  '  #vt-buttons .vt-lbl { font-size: 9px; margin-top: 1px; }',
   '}',
   // Very short (landscape phone): one row docked to the bottom-right, so the
   // whole pad stays on screen and clear of the stats card and the hint card.
@@ -108,8 +106,13 @@ var CSS = [
   '    -webkit-flex-wrap: wrap; flex-wrap: wrap;',
   '    -webkit-justify-content: flex-end; justify-content: flex-end;',
   '    -webkit-align-items: flex-end; align-items: flex-end; }',
-  '  #vt-buttons button { margin-top: 0; margin-left: 8px; }',
-  '  #vt-buttons button:first-child { margin-left: 0; }',
+  '  #vt-buttons { gap:5px; }',
+  '  #vt-buttons button { margin:0; }',
+  '}',
+  '@media (max-width:640px) {',
+  '  #vt-buttons.vt-driving { max-width:calc(100vw - 16px); flex-wrap:wrap; justify-content:center; gap:4px; }',
+  '  #vt-buttons.vt-driving button { min-width:44px; min-height:48px; width:48px; }',
+  '  #vt-buttons.vt-driving .vt-ico { font-size:19px; } #vt-buttons.vt-driving .vt-lbl { font-size:8px; }',
   '}'
 ].join('\n');
 

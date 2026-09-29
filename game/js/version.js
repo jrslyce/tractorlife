@@ -1,7 +1,7 @@
 // game/js/version.js — the game's version number, shown on the login screen
 // and as a small badge in-game. Bump GAME_VERSION with each release
 // (1.0 -> 1.1 for new features, 1.0.1 for fixes) and keep package.json in step.
-export const GAME_VERSION = '1.16.0';
+export const GAME_VERSION = '1.17.0';
 
 function showVersion() {
   var label = 'v' + GAME_VERSION;

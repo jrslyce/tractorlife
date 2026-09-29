@@ -233,24 +233,24 @@ export class Wagon extends CargoHold {
 // one on the wagon to unload it back into the hotbar.
 const PANEL_CSS = [
   '#wagon-panel { position: fixed; inset: 0; z-index: 70; display: none;',
-  '  align-items: center; justify-content: center; background: rgba(20,32,14,.55);',
+  '  align-items: center; justify-content: center; background: rgba(5,12,8,.76);',
   '  font-family: system-ui, -apple-system, sans-serif; }',
-  '#wagon-panel .wp-card { background: #fffbe8; border: 4px solid #2f4d1f; border-radius: 18px;',
-  '  padding: 16px 18px; max-width: min(92vw, 560px); box-sizing: border-box; color: #233018;',
-  '  box-shadow: 0 6px 0 rgba(0,0,0,.25); }',
+  '#wagon-panel .wp-card { background: #1b281f; border: 3px solid #a9ca72; border-radius: 10px;',
+  '  padding: 16px 18px; max-width: min(92vw, 560px); box-sizing: border-box; color: #f4f4e7;',
+  '  box-shadow: 6px 6px 0 rgba(0,0,0,.45); }',
   '#wagon-panel h2 { margin: 0 0 4px; font-size: 24px; }',
-  '#wagon-panel p { margin: 0 0 10px; font-size: 14px; color: #4a5a3a; }',
-  '#wagon-panel h3 { margin: 12px 0 6px; font-size: 16px; }',
+  '#wagon-panel p { margin: 0 0 10px; font-size: 14px; color: #b9e27e; }',
+  '#wagon-panel h3 { margin: 12px 0 6px; font-size: 14px; color:#b9e27e; text-transform:uppercase; }',
   '#wagon-panel .wp-grid { display: flex; flex-wrap: wrap; gap: 6px; }',
   '#wagon-panel .wp-slot { position: relative; width: 52px; height: 52px; border: 3px solid #2f4d1f;',
-  '  border-radius: 10px; background: #fff; font-size: 24px; cursor: pointer;',
+  '  border-radius: 6px; border-color:#a9ca72; background: #283329; color:#f7f6e9; font-size: 24px; cursor: pointer;',
   '  touch-action: manipulation; -webkit-appearance: none; appearance: none; padding: 0; }',
   '#wagon-panel .wp-slot[disabled] { opacity: .35; cursor: default; }',
   '#wagon-panel .wp-qty { position: absolute; right: 2px; bottom: 1px; font-size: 11px; font-weight: 700; }',
-  '#wagon-panel .wp-msg { min-height: 20px; margin-top: 10px; font-weight: 600; color: #7a3b1c; }',
+  '#wagon-panel .wp-msg { min-height: 20px; margin-top: 10px; font-weight: 600; color: #ffe36b; }',
   '#wagon-panel .wp-close { margin-top: 12px; min-height: 48px; width: 100%; font-size: 18px; font-weight: 700;',
-  '  border: none; border-radius: 12px; background: #ffe066; color: #2f4d1f; cursor: pointer;',
-  '  box-shadow: 0 3px 0 #b8901a; }'
+  '  border: 2px solid #b6d77a; border-radius: 6px; background: #ffe36b; color: #233018; cursor: pointer;',
+  '  box-shadow: 0 3px 0 #98ad4b; }'
 ].join('\n');
 
 export class WagonPanel {
