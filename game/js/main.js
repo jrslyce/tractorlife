@@ -12,6 +12,9 @@ import { buildTruck } from './vehicle.js';
 import { Character } from './character.js';
 import { World, WORLD_MIN_X, WORLD_MAX_X, SHOP_X, SHOP_Z } from './world.js';
 import { FARM_SPACING } from './farm.js';
+import { buildEnvironment } from './environment.js';
+import { Climate } from './climate.js';
+import { FarmSystems } from './farm-systems.js';
 import { Shop } from './shop.js';
 import { ShopUI } from './shopui.js';
 import { Builder } from './build.js';
@@ -159,6 +162,28 @@ hayBale(57, 0.8, -13, 0.7);
 const world = new World(scene, '');
 const farms = world.getFarms();
 const farmFields = farms.map(function (farm) { return farm.getFields(); });
+const environment = buildEnvironment(scene, {
+  minX: WORLD_MIN_X, maxX: WORLD_MAX_X, minZ: WORLD_MIN_Z, maxZ: WORLD_MAX_Z
+});
+const climate = new Climate({ seed: 0x41f29a7 });
+let climateState = climate.getState();
+let farmPrompt = null;
+function handleFarmEvent(event) {
+  if (event.type === 'vehicle-breakdown') {
+    showToast('🔧 ' + event.vehicleType + ' trouble: ' + event.breakdown.type.replaceAll('_', ' ') + ' — get out and press G nearby to repair.');
+  } else if (event.type === 'animal-escaped') {
+    showToast('🐄 An animal escaped! Find it by the farm and press G to herd it back.');
+  } else if (event.type === 'crop-nibbled') {
+    showToast('🐿️ Wildlife nibbled some orchard fruit. A healthy woodland attracts visitors.');
+  } else if (event.type === 'contract-completed') {
+    showToast('📬 Farm request completed — collect your reward!');
+  }
+}
+let farmSystems = new FarmSystems({
+  scene: scene, THREE: THREE, farmSlot: world.getAssignedSlot(),
+  onEvent: handleFarmEvent
+});
+for (const machine of MACHINES) farmSystems.setVehicleCondition(machine);
 const inventory = new Inventory();
 inventory.install(document.body);
 window.vtInventory = inventory;
@@ -421,6 +446,8 @@ let shopNearShown = false;
 let wagonNearShown = false;
 // '' | 'plant' | 'spray': the attached implement has no supplies loaded
 let outOfSupply = '';
+let seasonBlocked = false;
+let winterBlockedToast = false;
 
 let theta = 0; // vehicle rotation.y; forward = (cos θ, 0, −sin θ)
 let speed = 0;
@@ -638,9 +665,39 @@ function showToast(text) {
 
 let money = 0;
 let lastSig = '';
+const FARM_RESOURCE_ITEMS = {
+  wood: 'wood', stone: 'stone', metal: 'metal', feed: 'animal_feed', water: 'water_jug', fuel: 'fuel_can',
+  spareTire: 'spare_tire', repairKit: 'repair_kit', cleanup_kit: 'cleanup_kit',
+  sapling: 'sapling', toolUse: 'tool_use', firewood: 'firewood', fruit: 'fruit',
+  fish: 'fish', animal_produce: 'animal_produce', produce: 'animal_produce'
+};
+function getFarmResourceBag() {
+  const bag = {};
+  Object.keys(FARM_RESOURCE_ITEMS).forEach(function (key) {
+    bag[key] = inventory.getCount(FARM_RESOURCE_ITEMS[key]);
+  });
+  return bag;
+}
+function applyFarmResourceBag(before, after) {
+  Object.keys(FARM_RESOURCE_ITEMS).forEach(function (key) {
+    const itemId = FARM_RESOURCE_ITEMS[key];
+    const delta = (Number(after[key]) || 0) - (Number(before[key]) || 0);
+    if (delta < 0) inventory.consumeItem(itemId, -delta);
+    else if (delta > 0 && !inventory.buy(itemId, delta).ok) {
+      // Full hotbars still receive the value of gathered/cared-for goods.
+      const values = { firewood: 3, fruit: 6, fish: 8, animal_produce: 5 };
+      money += delta * (values[key] || 1);
+      showToast('🎒 Hotbar full — converted the extra ' + key + ' into farm earnings.');
+    }
+  });
+  inventory.updateDOM();
+}
 window.vtPurchaseItem = function (item, qty, balance) {
   if (!item || !Number.isInteger(qty) || qty < 1 || money < item.price * qty) return { ok: false, error: 'Not enough money.' };
   const units = qty * packSize(item);
+  if (['animal_feed', 'water_jug', 'fuel_can', 'spare_tire', 'repair_kit', 'cleanup_kit', 'sapling', 'stone', 'metal', 'tool_use'].indexOf(item.id) !== -1) {
+    return inventory.buy(item.id, units);
+  }
   // Wagon parked at the shop: purchases go straight onto it for the trip home.
   if (wagonAtShop()) {
     const loaded = wagon.add(item.id, units);
@@ -662,12 +719,16 @@ window.vtPurchaseItem = function (item, qty, balance) {
 const shopUI = new ShopUI({
   getMoney: function () { return money; },
   getProduce: function () {
-    const goods = [
+  const goods = [
       ['harvest_pumpkin', 'Pumpkins', '🎃', 18],
       ['harvest_peas', 'Peas', '🟢', 2],
       ['harvest_corn', 'Corn', '🌽', 7],
       ['harvest_wheat', 'Wheat', '🌾', 4],
-      ['harvest_sunflower', 'Sunflower heads', '🌻', 10]
+      ['harvest_sunflower', 'Sunflower heads', '🌻', 10],
+      ['firewood', 'Firewood', '🪵', 3],
+      ['fruit', 'Orchard fruit', '🍎', 6],
+      ['fish', 'River fish', '🐟', 8],
+      ['animal_produce', 'Farm produce', '🥚', 5]
     ];
     return goods.filter(function (g) { return inventory.getCount(g[0]) > 0; }).map(function (g) {
       return { id: g[0], name: g[1], emoji: g[2], value: g[3], qty: inventory.getCount(g[0]) };
@@ -732,6 +793,9 @@ function farmLabel(slot) {
 
 function updateHUD() {
   const s = ownFarmStats();
+  climateState = climate.getState();
+  const farmStatus = farmSystems.getStatus();
+  const breakdowns = Object.keys(farmStatus.vehicles).filter(function (type) { return !!farmStatus.vehicles[type].breakdown; });
   const types = attachmentTypes();
   const type = currentTool >= 0 ? types[currentTool] : null;
   const info = type ? TOOL_INFO[type] : null;
@@ -745,7 +809,13 @@ function updateHUD() {
   // rebuild only when something actually changed
   const sig = vehicleType + '|' + money + '|' + currentTool + '|' + currentColor + '|' +
     s.tilled + '|' + s.planted + '|' + s.sprayed + '|' + s.harvested + '|' +
-    mode + '|' + buildMode + '|' + farmSlot + '|' + label + '|' + nearName + '|' + outOfSupply + '|' +
+    climateState.day + '|' + climateState.season + '|' + climateState.weather + '|' +
+    (farmPrompt ? farmPrompt.action + ':' + farmPrompt.target : '') + '|' +
+    farmStatus.livestock.day + '|' + farmStatus.livestock.escaped.length + '|' +
+    farmStatus.livestock.careNeeds.length + '|' + farmStatus.requests.length + '|' +
+    breakdowns.join(',') + '|' +
+    Math.round(farmStatus.water.riverLevel * 10) + '|' + Math.round(farmStatus.water.pollution * 10) + '|' +
+    mode + '|' + buildMode + '|' + farmSlot + '|' + label + '|' + nearName + '|' + outOfSupply + '|' + seasonBlocked + '|' +
     wagon.hitched + '|' + wagonNearShown + '|' + (shopNearShown && (wagonAtShop() || truckAtShop()));
   if (sig === lastSig) return;
   lastSig = sig;
@@ -764,6 +834,14 @@ function updateHUD() {
   hudLeft.innerHTML = left;
 
   hudRight.innerHTML =
+    '<div>📅 <b>Day ' + climateState.day + ' · ' + climateState.season + '</b></div>' +
+    '<div>🌤️ <b>' + climateState.weather + '</b></div>' +
+    '<div>🌳 Trees <b>' + farmStatus.woodland.trees.length + '</b></div>' +
+    '<div>🐄 Animals <b>' + farmStatus.livestock.animals.length + '</b></div>' +
+    '<div>🌊 River <b>' + Math.round(farmStatus.water.riverLevel * 100) + '%</b></div>' +
+    '<div>📬 Requests <b>' + farmStatus.requests.length + '</b></div>' +
+    '<div>🔧 Repairs <b>' + breakdowns.length + '</b></div>' +
+    '<div>🐟 Fish <b>' + Math.round(farmStatus.water.fishPopulation) + '</b></div>' +
     '<div>🟫 Soil <b>' + s.tilled + '</b></div>' +
     '<div>🌱 Crops <b>' + s.planted + '</b></div>' +
     '<div>🫧 Fed <b>' + s.sprayed + '</b></div>' +
@@ -780,8 +858,8 @@ function updateHUD() {
       : 'Walk up to a vehicle and press E (mobile: Enter). Tap ready pumpkins or peas nearby to pick them by hand. Visit the shop to sell your harvest.';
   } else if (vehicleType === 'truck') {
     hint = wagon.hitched
-      ? '🛒 Wagon hitched — park it by the shop and anything you buy loads onto it · F unhitches'
-      : 'Back up to the wagon’s red hitch and press F (Tool) to hitch it';
+      ? '🛒 Wagon hitched — park by the shop to load purchases · tap Unhitch (top) or press F'
+      : 'Back up to the wagon’s red hitch, then tap Hitch (top) or press F';
   } else if (vehicleType === 'combine') {
     if (currentTool < 0) hint = 'Press F or Tool to fit a corn or soybean head';
     else if (s.harvested === 0) hint = 'Drive the ' + info.name + ' across golden, ready crops to harvest';
@@ -804,6 +882,8 @@ function updateHUD() {
     hint = 'The planter is empty — buy seeds at the 🏪 Shop (follow the arrow at the top)';
   } else if (outOfSupply === 'spray') {
     hint = 'The sprayer is empty — buy Crop Spray at the 🏪 Shop (follow the arrow at the top)';
+  } else if (seasonBlocked) {
+    hint = '❄️ The ground is resting for winter — plant again when spring arrives.';
   }
   if (wagonNearShown) {
     const hold = reachableHold();
@@ -818,6 +898,9 @@ function updateHUD() {
   }
   if (wagonAtGrainBin() && hasSaleableWagonCargo()) {
     hint = '🌾 Grain depot: press Y or tap Sell Crops to unload the wagon and collect payment.';
+  }
+  if (farmPrompt && mode === 'walking' && !shopUI.isOpen()) {
+    hint = 'G / Interact · ' + farmPrompt.label + (farmPrompt.kind === 'crossing' ? ' (cross the river here)' : '');
   }
   hudHint.textContent = hint;
 }
@@ -897,7 +980,10 @@ function stepPhysics(dt) {
   // the truck is the fast road machine for hauling the wagon to the shop
   const maxForward = vehicleType === 'combine' ? 5.5 : (vehicleType === 'truck' ? TRUCK_MAX_FWD : MAX_FWD);
   const maxReverse = vehicleType === 'combine' ? 2.5 : MAX_REV;
-  const target = drive > 0 ? drive * maxForward : drive * maxReverse;
+  const condition = farmSystems.getVehicleCondition(vehicleType);
+  const conditionState = condition ? condition.getState() : null;
+  const machineLimit = conditionState ? conditionState.speedMultiplier : 1;
+  const target = drive > 0 ? drive * maxForward * machineLimit : drive * maxReverse * machineLimit;
   const stopping = input.brake || drive === 0;
   const rate = stopping ? BRAKE_RATE : ACCEL_RATE;
   const diff = target - speed;
@@ -918,10 +1004,17 @@ function stepPhysics(dt) {
   }
 
   const cs = Math.cos(theta), sn = Math.sin(theta);
-  vehicle.position.x += cs * speed * dt;
-  vehicle.position.z += -sn * speed * dt;
-  vehicle.position.x = clampX(vehicle.position.x);
-  vehicle.position.z = clampZ(vehicle.position.z);
+  const previous = { x: vehicle.position.x, z: vehicle.position.z };
+  const next = {
+    x: clampX(vehicle.position.x + cs * speed * dt),
+    z: clampZ(vehicle.position.z - sn * speed * dt)
+  };
+  if (farmSystems.isMovementBlocked(previous, next, vehicleType, farmSystems.water.riverLevel)) {
+    speed = 0;
+  } else {
+    vehicle.position.x = next.x;
+    vehicle.position.z = next.z;
+  }
 
   // Wheel radii are in model units and scaled with the active machine.
   const scale = VEHICLE_SCALES[vehicleType];
@@ -948,8 +1041,12 @@ function stepCharacter(dt) {
     // drive along the facing
     const mv = input.charDrive * CHAR_SPEED;
     const p = character.group.position;
-    p.x = clampX(p.x + Math.sin(a) * mv * dt);
-    p.z = clampZ(p.z + Math.cos(a) * mv * dt);
+    const previous = { x: p.x, z: p.z };
+    const next = { x: clampX(p.x + Math.sin(a) * mv * dt), z: clampZ(p.z + Math.cos(a) * mv * dt) };
+    if (!farmSystems.isMovementBlocked(previous, next, 'foot', farmSystems.water.riverLevel)) {
+      p.x = next.x;
+      p.z = next.z;
+    }
 
     // one-shot jump from Space or the mobile Jump button
     if (input.charJump) tryJump();
@@ -1044,7 +1141,10 @@ function enterVehicle(target) {
 }
 
 function exitVehicle() {
-  if (Math.abs(speed) >= 0.5) return; // must be stopped
+  if (Math.abs(speed) >= 0.5) {
+    showToast('🛑 Release GAS and hold BRAKE until stopped, then tap EXIT.');
+    return; // must be stopped
+  }
   const cs = Math.cos(theta);
   const sn = Math.sin(theta);
   // Step-out candidates around the hull, nearest first: right-hand
@@ -1122,10 +1222,18 @@ function hasSupplyFor(effect) {
   return true;
 }
 
+function canPlantCrop(cropType, season) {
+  const crop = cropType === 'generic' ? 'wheat' : cropType;
+  const seasons = { corn: ['summer', 'spring'], wheat: ['spring', 'autumn'], sunflower: ['summer', 'spring'], pumpkin: ['summer', 'spring'], peas: ['spring', 'autumn'] };
+  return !seasons[crop] || seasons[crop].indexOf(season) !== -1;
+}
+
 let cropTickElapsed = 0;
+let floodStressElapsed = [0, 0, 0, 0];
 function stepFieldWork(dt) {
   const toolEffect = mode === 'driving' && toolGroup ? toolGroup.userData.effect : '';
   outOfSupply = hasSupplyFor(toolEffect) ? '' : toolEffect;
+  seasonBlocked = false;
   // work only counts while driving, and only over fields on your own farm
   if (mode === 'driving' && toolGroup && Math.abs(speed) > 0.4) {
     const mountKey = toolGroup.userData.mount === 'front' ? 'front' : 'rear';
@@ -1158,9 +1266,16 @@ function stepFieldWork(dt) {
         supplySlot = inventory.findSlot(function (id) { return id === 'crop_spray'; });
       }
       const needsSupply = effect === 'plant' || effect === 'spray';
+      if (effect === 'plant' && !canPlantCrop(cropType, climateState.season)) {
+        seasonBlocked = true;
+        if (!winterBlockedToast) {
+          showToast('🌱 ' + cropType + ' is out of season. Try again in spring or summer.');
+          winterBlockedToast = true;
+        }
+      } else winterBlockedToast = false;
       if (needsSupply && supplySlot >= 0) supplyLimit = inventory.getSlot(supplySlot).qty;
       if (effect === 'harvest') supplyLimit = Math.max(0, COMBINE_BIN_CAPACITY - combineBinCount());
-      if (!needsSupply || supplySlot >= 0) {
+      if ((!needsSupply || supplySlot >= 0) && !seasonBlocked) {
         if (effect !== 'harvest' || supplyLimit > 0) {
         for (let i = 0; i < farmFields.length; i++) {
           if (farmFields[i].isInside(tmpLocal.x, tmpLocal.z)) {
@@ -1187,8 +1302,35 @@ function stepFieldWork(dt) {
   if (cropTickElapsed >= 0.25) {
     const cropDt = Math.min(cropTickElapsed, 1);
     cropTickElapsed = 0;
+    const ownedSlot = world.getAssignedSlot();
+    const waterFields = farmSystems.water.fields;
     for (let i = 0; i < farmFields.length; i++) {
-      for (let j = 0; j < farmFields[i].length; j++) farmFields[i][j].update(cropDt);
+      for (let j = 0; j < farmFields[i].length; j++) {
+        let growthRate = 1;
+        const seasonalRate = { spring: 1, summer: 1.1, autumn: 0.85, winter: 0.3 }[climateState.season] || 1;
+        growthRate *= seasonalRate;
+        if (i === ownedSlot && waterFields[j]) {
+          const waterField = waterFields[j];
+          if (climateState.weather === 'drought' && waterField.water < 0.3) growthRate = 0.35;
+          if (waterField.flooded) {
+            growthRate = 0.15;
+            floodStressElapsed[j] += cropDt;
+            if (floodStressElapsed[j] >= 12) {
+              const damaged = farmFields[i][j].damageCrops(1);
+              floodStressElapsed[j] %= 12;
+              if (damaged) showToast('🌊 Floodwater ruined a crop tile. Reinforce the riverbank or wait for the level to fall.');
+            }
+          } else if (climateState.weather === 'frost') {
+            floodStressElapsed[j] += cropDt;
+            if (floodStressElapsed[j] >= 24) {
+              const damaged = farmFields[i][j].damageCrops(1);
+              floodStressElapsed[j] %= 24;
+              if (damaged) showToast('❄️ Frost damaged a crop. Wait for milder weather or plant in season.');
+            }
+          } else floodStressElapsed[j] = 0;
+        }
+        farmFields[i][j].update(cropDt, { growthRate: growthRate });
+      }
     }
   }
 }
@@ -1220,6 +1362,77 @@ function unloadCombineIntoWagon() {
   updateHUD();
 }
 
+function applyRequestRewards(result) {
+  if (!result || !result.success) return;
+  money += Number(result.money) || 0;
+  const resources = result.resources || {};
+  Object.keys(resources).forEach(function (key) {
+    const itemId = FARM_RESOURCE_ITEMS[key] || key;
+    const qty = Math.floor(Number(resources[key]) || 0);
+    if (qty > 0 && !inventory.buy(itemId, qty).ok) money += qty;
+  });
+  if (result.results && result.results.length) {
+    const names = result.results.map(function (entry) { return entry.request.crop || entry.request.type; }).join(', ');
+    showToast('📬 Contract complete! Earned $' + result.money + (names ? ' · ' + names : ''));
+  }
+  lastSig = '';
+  updateHUD();
+}
+
+function requestDeliveryInventory() {
+  function cargoCount(hold, itemId) {
+    return hold.cargo.reduce(function (total, stack) { return total + (stack && stack.itemId === itemId ? stack.qty : 0); }, 0);
+  }
+  return {
+    getCount: function (itemId) {
+      return inventory.getCount(itemId) + cargoCount(wagon, itemId) + cargoCount(truckBed, itemId);
+    },
+    consumeItem: function (itemId, quantity) {
+      let remaining = quantity;
+      const fromInventory = Math.min(remaining, inventory.getCount(itemId));
+      if (fromInventory) { inventory.consumeItem(itemId, fromInventory); remaining -= fromInventory; }
+      for (const hold of [wagon, truckBed]) {
+        for (let i = 0; i < hold.cargo.length && remaining > 0; i++) {
+          const stack = hold.cargo[i];
+          if (!stack || stack.itemId !== itemId) continue;
+          const take = Math.min(remaining, stack.qty);
+          stack.qty -= take; remaining -= take;
+          if (stack.qty <= 0) hold.cargo[i] = null;
+        }
+      }
+      return quantity - remaining;
+    }
+  };
+}
+
+function interactWithFarm() {
+  if (mode !== 'walking' || buildMode || shopUI.isOpen()) return;
+  const position = { x: character.group.position.x, z: character.group.position.z };
+  if (shop.isNear(position.x, position.z)) {
+    const delivery = farmSystems.completeDeliveries(requestDeliveryInventory());
+    if (delivery.success) { applyRequestRewards(delivery); return; }
+    const requests = farmSystems.getRequests();
+    if (requests.length) {
+      showToast('📬 Farm requests: ' + requests.map(function (r) {
+        return r.type === 'deliver' ? r.quantity + ' ' + r.crop : r.type.replaceAll('-', ' ');
+      }).join(' · ') + '.');
+    } else showToast('📬 No open contracts today. Check back tomorrow.');
+    return;
+  }
+  const before = getFarmResourceBag();
+  const bag = Object.assign({}, before);
+  const result = farmSystems.interact(position, 'foot', bag);
+  if (result && result.success) {
+    applyFarmResourceBag(before, bag);
+    money += Number(result.rewards && result.rewards.money) || 0;
+    showToast(result.message || 'Farm task complete.');
+  } else {
+    showToast(result && result.message ? result.message : 'Nothing to interact with nearby.');
+  }
+  lastSig = '';
+  updateHUD();
+}
+
 // ---------------------------------------------------------------- actions
 function drainActions() {
   let a;
@@ -1228,6 +1441,8 @@ function drainActions() {
       handleEnterExit();
     } else if (a === 'sellGrain') {
       sellWagonCrops();
+    } else if (a === 'farmInteract') {
+      interactWithFarm();
     } else if (a === 'toggleBuildMode' && mode === 'walking') {
       setBuildMode(!buildMode);
     } else if (a === 'jump') {
@@ -1235,12 +1450,14 @@ function drainActions() {
     } else if (a === 'toggleTool' && mode === 'driving') {
       if (vehicleType === 'truck') {
         toggleHitch();
-      } else if (currentTool >= 0) {
-        detachTool();
       } else {
         const types = attachmentTypes();
-        const selected = toolSelections[vehicleType];
-        if (types.length) attachTool(selected >= 0 ? selected : (vehicleType === 'combine' ? 0 : 0));
+        if (types.length) {
+          const next = currentTool < 0
+            ? (toolSelections[vehicleType] >= 0 ? toolSelections[vehicleType] : 0)
+            : (currentTool + 1) % types.length;
+          attachTool(next);
+        }
       }
     } else if (a === 'cycleTool' && mode === 'driving' && vehicleType === 'truck') {
       toggleHitch(); // the truck's only "tool" is the wagon hitch
@@ -1449,6 +1666,8 @@ function snapshot() {
     wagon: wagon.serialize(),
     combineBin: combineBin,
     truckBed: truckBed.serializeCargo(),
+    climate: climate.serialize(),
+    farmSystems: farmSystems.serialize(),
     appliedGiftIds: appliedGiftIds.slice(-100),
   };
 }
@@ -1457,6 +1676,13 @@ function snapshot() {
 // array of 4 Field serialisations, no `world` key, always driving).
 function applyState(s) {
   if (!s || typeof s !== 'object') return false;
+  if (s.climate) {
+    try { climate.restore(s.climate); } catch (err) { /* ignore invalid legacy climate state */ }
+    climateState = climate.getState();
+  }
+  if (s.farmSystems && s.farmSystems.farmSlot === world.getAssignedSlot()) {
+    farmSystems.restore(s.farmSystems);
+  }
   if (s.inventory && typeof s.inventory === 'object') inventory.restore(s.inventory);
   combineBin = {};
   if (s.combineBin && typeof s.combineBin === 'object') {
@@ -1944,6 +2170,10 @@ function setupLogin() {
     }
     const slot = world.getAssignedSlot();
 
+    farmSystems.dispose();
+    farmSystems = new FarmSystems({ scene: scene, THREE: THREE, farmSlot: slot, onEvent: handleFarmEvent });
+    for (const machine of MACHINES) farmSystems.setVehicleCondition(machine);
+
     resetToSpawn();
     money = 0;
     wagon.restoreCargo([]); // a fresh login never inherits the last player's cargo
@@ -2055,6 +2285,25 @@ renderer.setAnimationLoop(function () {
 
   input.update(dt);
   drainActions();
+  climateState = climate.update(dt);
+  const usageByVehicle = {};
+  for (const machine of MACHINES) {
+    const machineObject = vehicles[machine];
+    farmSystems.setVehiclePosition(machine, machineObject.position);
+    const condition = farmSystems.getVehicleCondition(machine);
+    const flat = !!(condition && condition.getState().breakdown && condition.getState().breakdown.type === 'flat_tire');
+    const wheels = machineObject.userData.wheels || [];
+    for (let wi = 0; wi < wheels.length; wi++) wheels[wi].pivot.scale.y = flat ? 0.72 : 1;
+    const activeMachine = mode === 'driving' && vehicleType === machine;
+    usageByVehicle[machine] = {
+      driving: activeMachine ? Math.min(1, Math.abs(speed) / (machine === 'truck' ? TRUCK_MAX_FWD : machine === 'combine' ? 5.5 : MAX_FWD)) : 0,
+      work: activeMachine && toolGroup ? 1 : 0,
+      roughness: 1,
+      heat: activeMachine && Math.abs(speed) > 0.1 ? 1.1 : 1
+    };
+  }
+  if (window.VT_LOCKED === false) farmSystems.update(dt, climateState, usageByVehicle);
+  environment.update(dt, Object.assign({}, climateState, { riverLevel: farmSystems.water.riverLevel }));
   stepPhysics(dt);
   stepWagon();
   stepCharacter(dt);
@@ -2068,13 +2317,22 @@ renderer.setAnimationLoop(function () {
     input.setEnterVisible(wantEnter);
   }
   input.setToolControl(mode === 'driving' && (!!vehicle.userData.mounts || vehicleType === 'truck'),
-    mode === 'driving' && (vehicleType === 'truck' ? wagon.hitched : currentTool >= 0));
+    mode === 'driving' && (vehicleType === 'truck' ? wagon.hitched : currentTool >= 0),
+    vehicleType === 'truck' ? (wagon.hitched ? 'Unhitch' : 'Hitch') : (currentTool >= 0 ? 'Next tool' : 'Attach'),
+    vehicleType === 'truck');
   input.setUnloadVisible(mode === 'driving' && vehicleType === 'combine' && Object.keys(combineBin).length > 0);
   input.setSellGrainVisible(wagonAtGrainBin() && hasSaleableWagonCargo() &&
     (mode === 'driving' || reachableHold() === wagon));
 
   // M1: shop proximity check — show "Talk to shopkeeper" when near
   const shopNear = shop.isNear(character.group.position.x, character.group.position.z);
+  farmPrompt = mode === 'walking' && !buildMode
+    ? farmSystems.getPrompt({ x: character.group.position.x, z: character.group.position.z }, 'foot')
+    : null;
+  if (!farmPrompt && mode === 'walking' && shopNear) {
+    farmPrompt = { kind: 'market', action: 'check requests', label: 'check farm requests' };
+  }
+  input.setInteractVisible(!!farmPrompt && mode === 'walking' && !shopUI.isOpen());
   if (mode === 'walking' && shopNear && !shopNearShown) {
     input.setShopNear(true);
     shopNearShown = true;

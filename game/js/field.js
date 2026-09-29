@@ -223,15 +223,17 @@ export class Field {
   // ---------- growth timing ----------
   // PLANTED --(5s)--> GROWING --(spray applied)--> SPRAYED --(6s)--> READY
   // Unsrayed GROWING tiles never become READY: the kid must drive back and spray.
-  update(dt) {
+  update(dt, conditions = {}) {
     if (!(dt > 0) || this._timedCount === 0) return;
+    const growthRate = Number.isFinite(conditions.growthRate) ? Math.max(0, conditions.growthRate) : 1;
+    if (growthRate === 0) return;
     const { PLANTED, GROWING, SPRAYED } = TileState;
     const states = this._states;
     const timers = this._timers;
     for (let i = 0; i < states.length; i++) {
       const s = states[i];
       if (s === PLANTED) {
-        timers[i] += dt;
+        timers[i] += dt * growthRate;
         var type = this._cropTypes[i] || 'generic';
         var growTime = GROW_SECONDS[type] || GROW_SPROUT_S;
         if (this._fertilized[i]) growTime *= 0.6;
@@ -242,7 +244,7 @@ export class Field {
           this._refresh(i);
         }
       } else if (s === SPRAYED) {
-        timers[i] += dt;
+        timers[i] += dt * growthRate;
         var ripenTime = RIPEN_SECONDS[this._cropTypes[i]] || RIPEN_S;
         if (this._fertilized[i]) ripenTime *= 0.6;
         if (timers[i] >= ripenTime) {
@@ -389,6 +391,30 @@ export class Field {
     if (this._fertilized[index]) return false;
     this._fertilized[index] = 1;
     return true;
+  }
+
+  // Flooding can ruin a small, deterministic sample of growing tiles. The
+  // cursor keeps repeated damage calls allocation-free and avoids random saves.
+  damageCrops(amount = 1) {
+    let remaining = Math.max(0, Math.floor(Number(amount) || 0));
+    if (!remaining) return 0;
+    if (!Number.isInteger(this._damageCursor)) this._damageCursor = 0;
+    let damaged = 0, scanned = 0;
+    while (remaining > 0 && scanned < this.count) {
+      const i = this._damageCursor % this.count;
+      this._damageCursor = (this._damageCursor + 1) % this.count;
+      scanned++;
+      const state = this._states[i];
+      if (state !== TileState.PLANTED && state !== TileState.GROWING && state !== TileState.SPRAYED && state !== TileState.READY) continue;
+      if (state === TileState.PLANTED || state === TileState.SPRAYED) this._timedCount = Math.max(0, this._timedCount - 1);
+      this._states[i] = TileState.TILLED;
+      this._timers[i] = 0;
+      this._fertilized[i] = 0;
+      this._refresh(i);
+      damaged++;
+      remaining--;
+    }
+    return damaged;
   }
 
   // ---------- persistence ----------

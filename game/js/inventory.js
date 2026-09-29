@@ -17,7 +17,10 @@ var ITEM_EMOJI = {
   fertilizer: '🪴', crop_spray: '🧴', paint: '🎨', lamp_light: '💡', hay_bale: '🟨', scarecrow: '🧑‍🌾',
   pumpkin_pile: '🎃', corn_shocks: '🌽', string_lights: '✨', mailbox: '📮',
   roof_shingles: '🏠', fence_kit: '🪵', window_glass: '🪟', door: '🚪',
-  harvest_corn: '🌽', harvest_wheat: '🌾', harvest_sunflower: '🌻', harvest_pumpkin: '🎃', harvest_peas: '🟢'
+  harvest_corn: '🌽', harvest_wheat: '🌾', harvest_sunflower: '🌻', harvest_pumpkin: '🎃', harvest_peas: '🟢',
+  animal_feed: '🌾', water_jug: '💧', fuel_can: '⛽', spare_tire: '🛞', repair_kit: '🧰',
+  cleanup_kit: '🧹', sapling: '🌱', stone: '🪨', metal: '⚙️', tool_use: '🪓', firewood: '🪵',
+  fruit: '🍎', fish: '🐟', animal_produce: '🥚'
 };
 var ITEM_COLORS = {
   gravel: '#85827a', asphalt: '#333536', brick: '#9a4f3f', wood: '#81552f',
@@ -27,7 +30,10 @@ var ITEM_COLORS = {
   scarecrow: '#86593b', pumpkin_pile: '#e87925', corn_shocks: '#c69f32',
   string_lights: '#f2cc58', mailbox: '#b94738', roof_shingles: '#8c4638',
   fence_kit: '#9a8058', window_glass: '#8bd2e8', door: '#754a2b',
-  harvest_corn: '#d6b33d', harvest_wheat: '#c6a544', harvest_sunflower: '#e4bd32', harvest_pumpkin: '#e87925', harvest_peas: '#6f9a43'
+  harvest_corn: '#d6b33d', harvest_wheat: '#c6a544', harvest_sunflower: '#e4bd32', harvest_pumpkin: '#e87925', harvest_peas: '#6f9a43',
+  animal_feed: '#c6a544', water_jug: '#4d9ad8', fuel_can: '#bd6737', spare_tire: '#343632', repair_kit: '#7a6851',
+  cleanup_kit: '#6f9b77', sapling: '#5da64f', stone: '#777a78', metal: '#8d9a9c', tool_use: '#8b6a39', firewood: '#81552f',
+  fruit: '#cf4f3c', fish: '#6faabd', animal_produce: '#eadcb8'
 };
 
 // ---------------------------------------------------------------- Item class
