@@ -28,7 +28,8 @@ var ACTIONS = {
   KeyT: 'talkShop', // M1: talk to shopkeeper
   KeyL: 'openWagon', // load / unload the wagon or truck bed
   KeyU: 'unloadCombine',
-  KeyB: 'toggleBuildMode'
+  KeyB: 'toggleBuildMode',
+  KeyY: 'sellGrain'
 };
 
 var BUTTONS = [
@@ -41,7 +42,8 @@ var BUTTONS = [
   { action: 'talkShop',   emoji: '\u{1F3EA}', label: 'Shop' },   // M1: talk to shopkeeper
   { action: 'openWagon',  emoji: '\u{1F6D2}', label: 'Cargo' },
   { action: 'unloadCombine', emoji: '🌾', label: 'Unload' },
-  { action: 'toggleBuildMode', emoji: '🧱', label: 'Build' }
+  { action: 'toggleBuildMode', emoji: '🧱', label: 'Build' },
+  { action: 'sellGrain', emoji: '🌾', label: 'Sell crops' }
 ];
 
 var CSS = [
@@ -177,6 +179,7 @@ export class Input {
     this._toolAvailable = false;
     this._toolAttached = false;
     this._unloadAvailable = false;
+    this._sellGrainVisible = false;
     this._charDrive = 0;
     this._charTurn = 0;
     this._charJump = false;
@@ -251,6 +254,7 @@ export class Input {
     this._updateContextButtons();
   }
   setUnloadVisible(visible) { this._unloadAvailable = !!visible; this._updateContextButtons(); }
+  setSellGrainVisible(visible) { this._sellGrainVisible = !!visible; this._updateContextButtons(); }
 
   _setButtonLabel(action, emoji, label) {
     var b = this._btnByAction && this._btnByAction[action];
@@ -269,6 +273,7 @@ export class Input {
     this._setButtonVisible('openWagon', !this._drivingMode && this._wagonNear);
     this._setButtonVisible('toggleTool', this._drivingMode && this._toolAvailable);
     this._setButtonVisible('unloadCombine', this._drivingMode && this._unloadAvailable);
+    this._setButtonVisible('sellGrain', this._sellGrainVisible);
     this._setButtonVisible('cycleMachine', this._drivingMode);
     this._setButtonVisible('cycleColor', !this._drivingMode);
     this._setButtonVisible('detach', false);
