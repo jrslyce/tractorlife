@@ -617,9 +617,10 @@ hudStyle.textContent = `
   display:grid; grid-template-columns:repeat(2,minmax(74px,auto)); gap:3px 10px;
   font-size:12px; line-height:1.35; text-align:left; max-width:48%; }
 #hud-top-right b { color:#ffe36b; font-variant-numeric:tabular-nums; }
-#hud-hint { position:absolute; left:50%; bottom:calc(80px + env(safe-area-inset-bottom));
-  transform:translateX(-50%); width:max-content; max-width:min(620px,calc(100vw - 28px));
-  font-size:13px; font-weight:700; text-align:center; color:#fffbe8; padding:7px 12px; }
+#hud #hud-hint { position:absolute; left:max(12px,env(safe-area-inset-left)); bottom:calc(16px + env(safe-area-inset-bottom));
+  width:max-content; max-width:min(360px,calc(100vw - 24px));
+  font-size:11px; line-height:1.3; font-weight:700; text-align:left; color:#fffbe8; padding:6px 9px; }
+body.vt-driving #hud #hud-hint { bottom:calc(clamp(126px,22vw,176px) + 40px + env(safe-area-inset-bottom)); }
 #build-reticle { display:none; position:absolute; left:50%; top:50%; width:18px; height:18px;
   transform:translate(-50%,-50%); filter:drop-shadow(1px 1px 1px #101710); }
 #build-reticle:before,#build-reticle:after { content:""; position:absolute; background:#fffbe8; border:1px solid #19241b; }
@@ -630,8 +631,10 @@ body.vt-build-mode #build-reticle { display:block; }
 .leg { white-space: nowrap; }
 @media(max-width:640px){#hud-top-left{min-width:0;max-width:43%;font-size:11px;padding:6px 8px}
   #hud-top-left b{font-size:16px}#hud-top-right{max-width:48%;grid-template-columns:repeat(2,minmax(52px,auto));font-size:10px;padding:6px 8px}
-  #hud-hint{bottom:calc(78px + env(safe-area-inset-bottom));font-size:11px;padding:6px 9px}}
-@media(max-height:520px){#hud-hint{bottom:calc(64px + env(safe-area-inset-bottom));max-width:52vw}}
+  #hud #hud-hint{max-width:min(280px,calc(100vw - 24px));font-size:10px;padding:5px 8px}
+  body.vt-driving #hud #hud-hint{bottom:calc(clamp(126px,25vw,150px) + 30px + env(safe-area-inset-bottom))}}
+@media(max-height:520px){#hud #hud-hint{max-width:min(320px,calc(42vw - 12px));bottom:calc(14px + env(safe-area-inset-bottom))}
+  body.vt-driving #hud #hud-hint{bottom:calc(220px + env(safe-area-inset-bottom))}}
 `;
 document.head.appendChild(hudStyle);
 
@@ -854,30 +857,30 @@ function updateHUD() {
   let hint;
   if (mode === 'walking') {
     hint = buildMode
-      ? 'BUILD MODE · Select wood or a pumpkin on your hotbar. Aim at a surface and tap to place; stack blocks upward. Press B / Exit Build to leave.'
-      : 'Walk up to a vehicle and press E (mobile: Enter). Tap ready pumpkins or peas nearby to pick them by hand. Visit the shop to sell your harvest.';
+      ? 'BUILD MODE · Select wood or a pumpkin on your hotbar, aim, then tap to place. Tap Exit Build to leave.'
+      : 'Walk with the left stick. Tap Enter by a vehicle, Interact near farm tasks, or Shop to trade.';
   } else if (vehicleType === 'truck') {
     hint = wagon.hitched
-      ? '🛒 Wagon hitched — park by the shop to load purchases · tap Unhitch (top) or press F'
-      : 'Back up to the wagon’s red hitch, then tap Hitch (top) or press F';
+      ? '🛒 Wagon hitched — park by the shop to load purchases · tap Unhitch'
+      : 'Select R · REVERSE, hold GAS back to the wagon’s red hitch, then tap Hitch';
   } else if (vehicleType === 'combine') {
-    if (currentTool < 0) hint = 'Press F or Tool to fit a corn or soybean head';
+    if (currentTool < 0) hint = 'Tap Attach to fit a corn or soybean head';
     else if (s.harvested === 0) hint = 'Drive the ' + info.name + ' across golden, ready crops to harvest';
-    else hint = 'Harvest ready crops with the ' + info.name + ' — press F to switch heads';
-    hint += ' · U / Unload beside wagon · M or Machine switches vehicles';
-    if (combineBinCount() >= COMBINE_BIN_CAPACITY) hint = 'Combine bin full — park beside the wagon and press U / Unload at the side auger.';
+    else hint = 'Harvest with the ' + info.name + ' · tap Next tool to switch heads';
+    hint += ' · tap Machine to switch vehicles';
+    if (combineBinCount() >= COMBINE_BIN_CAPACITY) hint = 'Combine bin full — park beside the wagon and tap Unload at the side auger.';
   } else if (s.tilled === 0) {
-    hint = 'Use Tool or press F to attach the PLOW — drive into any field';
+    hint = 'Tap Attach to fit the PLOW — drive into any field';
   } else if (s.planted === 0) {
-    hint = 'Now the PLANTER — drive over tilled soil';
+    hint = 'Tap Next tool for the PLANTER — drive over tilled soil';
   } else if (s.sprayed === 0 || s.sprayed < s.planted) {
-    hint = 'Crops are green — attach the SPRAYER';
+    hint = 'Crops are green — tap Next tool to attach the SPRAYER';
   } else if (s.harvested === 0) {
-    hint = 'Golden crops! Attach the HARVESTER to collect them for cash';
+    hint = 'Golden crops! Tap Next tool for the HARVESTER to collect them';
   } else {
     hint = 'Great farming! Keep going 💰';
   }
-  if (mode === 'driving' && vehicleType === 'tractor') hint += ' · M or Machine switches vehicles';
+  if (mode === 'driving' && vehicleType === 'tractor') hint += ' · tap Machine to switch vehicles';
   if (outOfSupply === 'plant') {
     hint = 'The planter is empty — buy seeds at the 🏪 Shop (follow the arrow at the top)';
   } else if (outOfSupply === 'spray') {
@@ -888,19 +891,19 @@ function updateHUD() {
   if (wagonNearShown) {
     const hold = reachableHold();
     hint = hold === wagon
-      ? 'Tap the wagon (or press L) to load or unload supplies'
-      : 'Tap the truck bed (or press L) to load or unload supplies · E hops in';
+      ? 'Tap the wagon to load or unload supplies'
+      : 'Tap the truck bed to load or unload supplies · tap Enter to drive';
   }
   if (mode === 'walking' && shop.isNear(character.group.position.x, character.group.position.z)) {
     hint = wagonAtShop() || truckAtShop()
-      ? 'Press E or tap Shop — purchases load onto your ' + (wagonAtShop() ? 'wagon' : 'truck')
-      : 'Press E or tap Shop — talk to the shopkeeper';
+      ? 'Tap Shop — purchases load onto your ' + (wagonAtShop() ? 'wagon' : 'truck')
+      : 'Tap Shop to trade with the shopkeeper';
   }
   if (wagonAtGrainBin() && hasSaleableWagonCargo()) {
-    hint = '🌾 Grain depot: press Y or tap Sell Crops to unload the wagon and collect payment.';
+    hint = '🌾 Grain depot: tap Sell crops to unload the wagon and collect payment.';
   }
   if (farmPrompt && mode === 'walking' && !shopUI.isOpen()) {
-    hint = 'G / Interact · ' + farmPrompt.label + (farmPrompt.kind === 'crossing' ? ' (cross the river here)' : '');
+    hint = 'Tap Interact · ' + farmPrompt.label + (farmPrompt.kind === 'crossing' ? ' (cross the river here)' : '');
   }
   hudHint.textContent = hint;
 }
@@ -1141,10 +1144,9 @@ function enterVehicle(target) {
 }
 
 function exitVehicle() {
-  if (Math.abs(speed) >= 0.5) {
-    showToast('🛑 Release GAS and hold BRAKE until stopped, then tap EXIT.');
-    return; // must be stopped
-  }
+  // A direct stop makes EXIT dependable on touch screens: players should
+  // never be trapped because they tapped the control before fully braking.
+  speed = 0;
   const cs = Math.cos(theta);
   const sn = Math.sin(theta);
   // Step-out candidates around the hull, nearest first: right-hand

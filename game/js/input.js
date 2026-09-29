@@ -254,7 +254,9 @@ export class Input {
     this._drivingMode = driving;
     if (this._btnWrap) this._btnWrap.classList.toggle('vt-driving', this._drivingMode);
     if (document.body) document.body.classList.toggle('vt-driving', this._drivingMode);
-    if (this._vehicleControls) this._vehicleControls.style.display = hasTouch && this._drivingMode ? 'block' : 'none';
+    // Use one driving control layout for every machine and browser. Pointer
+    // input works with touch or mouse, while the keyboard remains supported.
+    if (this._vehicleControls) this._vehicleControls.style.display = this._drivingMode ? 'block' : 'none';
     if (this._drivingMode) {
       this._joyDrive = 0;
       this._joyTurn = 0;
@@ -303,7 +305,7 @@ export class Input {
     this._setButtonVisible('sellGrain', this._sellGrainVisible);
     this._setButtonVisible('farmInteract', this._farmInteractVisible);
     this._setButtonVisible('cycleMachine', this._drivingMode);
-    this._setButtonVisible('cycleColor', !this._drivingMode);
+    this._setButtonVisible('cycleColor', !this._truckMode);
     this._setButtonVisible('detach', this._drivingMode && this._toolAttached && !this._truckMode);
     this._setButtonVisible('jump', !this._drivingMode);
     this._setButtonVisible('toggleBuildMode', !this._drivingMode);
