@@ -250,18 +250,21 @@ export class Input {
 
   setDrivingMode(driving) {
     driving = !!driving;
-    if (this._drivingMode === driving) return;
+    var changed = this._drivingMode !== driving;
     this._drivingMode = driving;
     if (this._btnWrap) this._btnWrap.classList.toggle('vt-driving', this._drivingMode);
     if (document.body) document.body.classList.toggle('vt-driving', this._drivingMode);
     // Use one driving control layout for every machine and browser. Pointer
     // input works with touch or mouse, while the keyboard remains supported.
-    if (this._vehicleControls) this._vehicleControls.style.display = this._drivingMode ? 'block' : 'none';
-    if (this._drivingMode) {
+    if (this._vehicleControls) {
+      this._vehicleControls.style.display = this._drivingMode ? 'block' : 'none';
+      this._vehicleControls.style.visibility = this._drivingMode ? 'visible' : 'hidden';
+    }
+    if (changed && this._drivingMode) {
       this._joyDrive = 0;
       this._joyTurn = 0;
       if (this._joy) this._joy.style.display = 'none';
-    } else {
+    } else if (changed) {
       this._clearVehicleControls();
     }
     this._setButtonLabel('enterVehicle', this._drivingMode ? '🚪' : '🚜', this._drivingMode ? 'Exit' : 'Enter');

@@ -1,7 +1,7 @@
 {
   "name": "tractorlife",
   "private": true,
-  "version": "1.18.1",
+  "version": "1.18.2",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",

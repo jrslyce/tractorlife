@@ -2287,6 +2287,10 @@ renderer.setAnimationLoop(function () {
 
   input.update(dt);
   drainActions();
+  // Keep the driving overlay synchronized with the authoritative mode. This
+  // also recovers its visibility if a browser/UI transition temporarily hides
+  // the controls while changing between tractor, combine, and truck.
+  input.setDrivingMode(mode === 'driving');
   climateState = climate.update(dt);
   const usageByVehicle = {};
   for (const machine of MACHINES) {
