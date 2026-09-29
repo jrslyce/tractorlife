@@ -25,17 +25,27 @@ var ACTIONS = {
   KeyM: 'cycleMachine',
   KeyC: 'cycleColor',
   KeyQ: 'detach',
-  KeyT: 'talkShop' // M1: talk to shopkeeper
+  KeyT: 'talkShop', // M1: talk to shopkeeper
+  KeyL: 'openWagon', // load / unload the wagon or truck bed
+  KeyU: 'unloadCombine',
+  KeyB: 'toggleBuildMode',
+  KeyY: 'sellGrain',
+  KeyG: 'farmInteract'
 };
 
 var BUTTONS = [
   { action: 'cycleMachine', emoji: '\u{1F69C}', label: 'Machine' }, // tractor / combine
-  { action: 'cycleTool',  emoji: '\u{1F69C}', label: 'Tool' },   // tractor
+  { action: 'toggleTool', emoji: '🔧', label: 'Attach' },
   { action: 'cycleColor', emoji: '\u{1F3A8}', label: 'Color' },  // palette
   { action: 'detach',     emoji: '\u{1F50C}', label: 'Detach' }, // plug
   { action: 'jump',       emoji: '\u{1F9BF}', label: 'Jump' },   // person jumping
   { action: 'enterVehicle', emoji: '\u{1F697}', label: 'Enter' }, // hop in/out
-  { action: 'talkShop',   emoji: '\u{1F3EA}', label: 'Shop' }    // M1: talk to shopkeeper
+  { action: 'talkShop',   emoji: '\u{1F3EA}', label: 'Shop' },   // M1: talk to shopkeeper
+  { action: 'openWagon',  emoji: '\u{1F6D2}', label: 'Cargo' },
+  { action: 'unloadCombine', emoji: '🌾', label: 'Unload' },
+  { action: 'toggleBuildMode', emoji: '🧱', label: 'Build' },
+  { action: 'sellGrain', emoji: '🌾', label: 'Sell crops' },
+  { action: 'farmInteract', emoji: '✋', label: 'Interact' }
 ];
 
 var CSS = [
@@ -48,29 +58,59 @@ var CSS = [
   '#vt-joy-knob { position: absolute; left: 50%; top: 50%; width: 58px; height: 58px;',
   '  margin: -29px 0 0 -29px; border-radius: 50%; background: rgba(255,255,255,.8);',
   '  border: 2px solid rgba(0,0,0,.15); }',
-  '#vt-buttons { position: fixed; right: 14px; z-index: 41; display: -webkit-flex;',
+  '#vt-buttons { position: fixed; right: 12px; z-index: 41; display: -webkit-flex;',
   '  display: flex; -webkit-flex-direction: column; flex-direction: column;',
-  '  bottom: 18px; bottom: calc(18px + env(safe-area-inset-bottom)); }',
+  '  bottom: 14px; bottom: calc(14px + env(safe-area-inset-bottom)); gap:7px; }',
   '#vt-buttons button { -webkit-appearance: none; appearance: none; display: block;',
-  '  min-width: 76px; min-height: 76px; padding: 8px 10px; margin-top: 12px;',
-  '  border-radius: 18px; border: 3px solid #2f4d1f; background: #fffbe8; color: #233018;',
-  '  font: 600 15px/1.15 system-ui, -apple-system, sans-serif; text-align: center;',
+  '  min-width: 58px; min-height: 58px; padding: 5px 7px; margin:0;',
+  '  border-radius: 9px; border: 2px solid #b6d77a; background: rgba(21,31,23,.94); color: #f7f6e9;',
+  '  font: 700 12px/1.1 system-ui, -apple-system, sans-serif; text-align: center;',
   '  cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent;',
-  '  -webkit-user-select: none; user-select: none; box-shadow: 0 3px 0 rgba(0,0,0,.25); }',
-  '#vt-buttons button:first-child { margin-top: 0; }',
-  '#vt-buttons button.vt-active { background: #ffe066; transform: translateY(2px);',
-  '  box-shadow: 0 1px 0 rgba(0,0,0,.25); }',
-  '#vt-buttons .vt-ico { display: block; font-size: 30px; line-height: 1.1; }',
-  '#vt-buttons .vt-lbl { display: block; font-size: 14px; margin-top: 2px; }',
+  '  -webkit-user-select: none; user-select: none; box-shadow: 0 3px 0 #0c130d; }',
+  '#vt-buttons button.vt-active { background: #ffe36b; color:#233018; transform: translateY(2px);',
+  '  box-shadow: 0 1px 0 #0c130d; }',
+  '#vt-buttons .vt-ico { display: block; font-size: 23px; line-height: 1.1; }',
+  '#vt-buttons .vt-lbl { display: block; font-size: 10px; margin-top: 2px; }',
+  '#vt-buttons.vt-driving { left:50%; right:auto; top:calc(8px + env(safe-area-inset-top)); bottom:auto;',
+  '  transform:translateX(-50%); flex-direction:row; gap:6px; }',
+  '#vt-buttons.vt-driving button { min-width:56px; min-height:56px; width:62px; padding:4px;',
+  '  margin:0; border-radius:14px; font-size:12px; }',
+  '#vt-buttons.vt-driving .vt-ico { font-size:22px; } #vt-buttons.vt-driving .vt-lbl { font-size:10px; }',
+  '#vt-vehicle-controls { position:fixed; inset:0; z-index:40; display:none; pointer-events:none;',
+  '  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);',
+  '  box-sizing:border-box; touch-action:none; }',
+  '#vt-steering-wheel { position:absolute; left:max(22px,calc(22px + env(safe-area-inset-left)));',
+  '  bottom:max(26px,calc(26px + env(safe-area-inset-bottom))); width:clamp(126px,22vw,176px); aspect-ratio:1;',
+  '  border:11px solid #493d2a; border-radius:50%; box-sizing:border-box; pointer-events:auto; touch-action:none;',
+  '  background:radial-gradient(circle,#776746 0 13%,#332a1d 14% 21%,transparent 22%),conic-gradient(#d8c392,#6f5d3e,#d8c392,#6f5d3e,#d8c392);',
+  '  box-shadow:0 4px 0 rgba(0,0,0,.4),inset 0 0 0 4px #e4d6b6; transition:transform 70ms linear; }',
+  '#vt-steering-wheel:before,#vt-steering-wheel:after { content:""; position:absolute; left:50%; top:50%;',
+  '  width:7px; height:45%; border-radius:4px; background:#493d2a; transform:translate(-50%,-100%); transform-origin:50% 100%; }',
+  '#vt-steering-wheel:after { transform:translate(-50%,0) rotate(90deg); transform-origin:50% 0; }',
+  '#vt-pedals { position:absolute; right:max(18px,calc(18px + env(safe-area-inset-right)));',
+  '  bottom:max(24px,calc(24px + env(safe-area-inset-bottom))); display:flex; align-items:flex-end; gap:12px; pointer-events:auto; }',
+  '.vt-pedal { width:clamp(68px,10vw,90px); height:clamp(96px,18vh,140px); border:3px solid #29441d;',
+  '  border-radius:16px; color:#203017; background:#fffbe8; box-shadow:0 4px 0 rgba(0,0,0,.32);',
+  '  font:800 14px system-ui,sans-serif; touch-action:none; } #vt-gas { height:clamp(112px,22vh,166px); background:#e7ce72; }',
+  '.vt-pedal.vt-active { transform:translateY(3px); box-shadow:0 1px 0 rgba(0,0,0,.3); }',
+  '#vt-exit-vehicle { position:absolute; right:max(18px,calc(18px + env(safe-area-inset-right)));',
+  '  bottom:calc(max(24px,env(safe-area-inset-bottom)) + clamp(180px,29vh,230px));',
+  '  min-width:92px; min-height:52px; padding:8px 14px; border:2px solid #f3d98a; border-radius:14px;',
+  '  color:#fff8e5; background:#70483b; box-shadow:0 4px 0 rgba(0,0,0,.35); font:900 14px system-ui,sans-serif;',
+  '  pointer-events:auto; touch-action:manipulation; } #vt-exit-vehicle:active { transform:translateY(3px); box-shadow:0 1px 0 rgba(0,0,0,.35); }',
+  '#vt-reverse { position:absolute; right:calc(max(18px,env(safe-area-inset-right)) + clamp(108px,14vw,132px));',
+  '  bottom:calc(max(24px,env(safe-area-inset-bottom)) + clamp(180px,29vh,230px));',
+  '  min-width:92px; min-height:52px; padding:8px 10px; border:2px solid #d7e4c3; border-radius:14px;',
+  '  color:#f4f7eb; background:#394638; box-shadow:0 4px 0 rgba(0,0,0,.35); font:900 13px system-ui,sans-serif;',
+  '  pointer-events:auto; touch-action:manipulation; } #vt-reverse.vt-active { color:#17220f; background:#b8d78a; transform:translateY(3px); box-shadow:0 1px 0 rgba(0,0,0,.35); }',
 
   // --- short viewports ---------------------------------------------------
-  // Below 780px tall the 6-button column (6 x 76 + 5 x 12 + 18 = 516px) would
-  // reach up into the stats card, so the buttons shrink to 64px targets.
+  // Keep action buttons compact on tablet and short landscape viewports.
   '@media (max-height: 780px) {',
-  '  #vt-buttons button { min-width: 64px; min-height: 64px; padding: 6px 8px;',
-  '    margin-top: 8px; border-radius: 14px; font-size: 13px; }',
-  '  #vt-buttons .vt-ico { font-size: 25px; }',
-  '  #vt-buttons .vt-lbl { font-size: 12px; margin-top: 1px; }',
+  '  #vt-buttons button { min-width: 52px; min-height: 52px; padding: 4px 6px;',
+  '    border-radius: 9px; font-size: 12px; }',
+  '  #vt-buttons .vt-ico { font-size: 21px; }',
+  '  #vt-buttons .vt-lbl { font-size: 9px; margin-top: 1px; }',
   '}',
   // Very short (landscape phone): one row docked to the bottom-right, so the
   // whole pad stays on screen and clear of the stats card and the hint card.
@@ -81,8 +121,18 @@ var CSS = [
   '    -webkit-flex-wrap: wrap; flex-wrap: wrap;',
   '    -webkit-justify-content: flex-end; justify-content: flex-end;',
   '    -webkit-align-items: flex-end; align-items: flex-end; }',
-  '  #vt-buttons button { margin-top: 0; margin-left: 8px; }',
-  '  #vt-buttons button:first-child { margin-left: 0; }',
+  '  #vt-buttons { gap:5px; }',
+  '  #vt-buttons button { margin:0; }',
+  '}',
+  '@media (max-width:640px) {',
+  '  #vt-buttons.vt-driving { max-width:calc(100vw - 16px); flex-wrap:wrap; justify-content:center; gap:4px; }',
+  '  #vt-buttons.vt-driving button { min-width:44px; min-height:48px; width:48px; }',
+  '  #vt-buttons.vt-driving .vt-ico { font-size:19px; } #vt-buttons.vt-driving .vt-lbl { font-size:8px; }',
+  '  #vt-steering-wheel { width:clamp(112px,25vw,150px); bottom:max(18px,calc(18px + env(safe-area-inset-bottom))); }',
+  '  #vt-pedals { gap:8px; bottom:max(18px,calc(18px + env(safe-area-inset-bottom))); }',
+  '  .vt-pedal { width:clamp(62px,12vw,78px); height:clamp(86px,20vh,118px); } #vt-gas { height:clamp(104px,23vh,142px); }',
+  '  #vt-exit-vehicle,#vt-reverse { bottom:calc(max(18px,env(safe-area-inset-bottom)) + clamp(158px,27vh,192px)); }',
+  '  #vt-reverse { right:calc(max(18px,env(safe-area-inset-right)) + clamp(96px,25vw,112px)); min-width:82px; }',
   '}'
 ].join('\n');
 
@@ -141,6 +191,20 @@ export class Input {
     this._drive = 0;
     this._turn = 0;
     this._brake = false;
+    this._pedalDrive = 0;
+    this._pedalBrake = false;
+    this._reverseMode = false;
+    this._wheelTurn = 0;
+    this._drivingMode = false;
+    this._buildMode = false;
+    this._enterNear = false;
+    this._shopNear = false;
+    this._wagonNear = false;
+    this._toolAvailable = false;
+    this._toolAttached = false;
+    this._unloadAvailable = false;
+    this._sellGrainVisible = false;
+    this._farmInteractVisible = false;
     this._charDrive = 0;
     this._charTurn = 0;
     this._charJump = false;
@@ -159,13 +223,14 @@ export class Input {
     this._installGestures();
     this._installJoystick();
     this._installButtons();
+    this._installVehicleControls();
   }
 
   // ---- public API -------------------------------------------------------
 
   get drive() { return this._drive; }   // -1..1  forward positive
   get turn() { return this._turn; }     // -1..1  right positive
-  get brake() { return this._brake; }
+  get brake() { return this._brake || this._pedalBrake; }
   get keyActions() { return this._pending.slice(); }
 
   // character movement getters
@@ -183,21 +248,83 @@ export class Input {
   setWalkingMode(walking) { this._walkingMode = walking; }
   isWalkingMode() { return this._walkingMode; }
 
+  setDrivingMode(driving) {
+    driving = !!driving;
+    var changed = this._drivingMode !== driving;
+    this._drivingMode = driving;
+    if (this._btnWrap) this._btnWrap.classList.toggle('vt-driving', this._drivingMode);
+    if (document.body) document.body.classList.toggle('vt-driving', this._drivingMode);
+    // Use one driving control layout for every machine and browser. Pointer
+    // input works with touch or mouse, while the keyboard remains supported.
+    if (this._vehicleControls) {
+      this._vehicleControls.style.display = this._drivingMode ? 'block' : 'none';
+      this._vehicleControls.style.visibility = this._drivingMode ? 'visible' : 'hidden';
+    }
+    if (changed && this._drivingMode) {
+      this._joyDrive = 0;
+      this._joyTurn = 0;
+      if (this._joy) this._joy.style.display = 'none';
+    } else if (changed) {
+      this._clearVehicleControls();
+    }
+    this._setButtonLabel('enterVehicle', this._drivingMode ? '🚪' : '🚜', this._drivingMode ? 'Exit' : 'Enter');
+    this._updateContextButtons();
+  }
+
+  setEnterVisible(visible) { this._enterNear = !!visible; this._updateContextButtons(); }
+  setBuildMode(active) {
+    this._buildMode = !!active;
+    this._setButtonLabel('toggleBuildMode', '🧱', this._buildMode ? 'Exit Build' : 'Build');
+    this._setButtonVisible('toggleBuildMode', !this._drivingMode);
+  }
+  setToolControl(available, attached, contextLabel, isTruck) {
+    this._toolAvailable = !!available;
+    this._toolAttached = !!attached;
+    this._truckMode = !!isTruck;
+    this._setButtonLabel('toggleTool', '🔧', contextLabel || (this._toolAttached ? 'Detach' : 'Attach'));
+    this._updateContextButtons();
+  }
+  setUnloadVisible(visible) { this._unloadAvailable = !!visible; this._updateContextButtons(); }
+  setSellGrainVisible(visible) { this._sellGrainVisible = !!visible; this._updateContextButtons(); }
+  setInteractVisible(visible) { this._farmInteractVisible = !!visible; this._updateContextButtons(); }
+
+  _setButtonLabel(action, emoji, label) {
+    var b = this._btnByAction && this._btnByAction[action];
+    if (!b) return;
+    var ico = b.querySelector('.vt-ico'), lbl = b.querySelector('.vt-lbl');
+    if (ico) ico.textContent = emoji;
+    if (lbl) lbl.textContent = label;
+  }
+  _setButtonVisible(action, visible) {
+    var b = this._btnByAction && this._btnByAction[action];
+    if (b) b.style.display = visible ? 'block' : 'none';
+  }
+  _updateContextButtons() {
+    this._setButtonVisible('enterVehicle', !this._drivingMode && this._enterNear);
+    this._setButtonVisible('talkShop', !this._drivingMode && this._shopNear);
+    this._setButtonVisible('openWagon', !this._drivingMode && this._wagonNear);
+    this._setButtonVisible('toggleTool', this._drivingMode && this._toolAvailable);
+    this._setButtonVisible('unloadCombine', this._drivingMode && this._unloadAvailable);
+    this._setButtonVisible('sellGrain', this._sellGrainVisible);
+    this._setButtonVisible('farmInteract', this._farmInteractVisible);
+    this._setButtonVisible('cycleMachine', this._drivingMode);
+    this._setButtonVisible('cycleColor', !this._truckMode);
+    this._setButtonVisible('detach', this._drivingMode && this._toolAttached && !this._truckMode);
+    this._setButtonVisible('jump', !this._drivingMode);
+    this._setButtonVisible('toggleBuildMode', !this._drivingMode);
+  }
+
   // caller consumes the one-shot jump flag, then clears it
   clearJump() { this._charJump = false; }
 
-  // show/hide the enter/exit vehicle button (mobile entry prompt)
-  setEnterVisible(visible) {
-    var b = this._btnByAction ? this._btnByAction['enterVehicle'] : null;
-    if (!b) return;
-    b.style.display = visible ? 'block' : 'none';
-  }
-
   // M1: show/hide the shop talk prompt (mobile Enter button repurposed)
   setShopNear(visible) {
-    var b = this._btnByAction ? this._btnByAction['talkShop'] : null;
-    if (!b) return;
-    b.style.display = visible ? 'block' : 'none';
+    this._shopNear = !!visible; this._updateContextButtons();
+  }
+
+  // show/hide the Wagon button (only while standing next to the wagon)
+  setWagonNear(visible) {
+    this._wagonNear = !!visible; this._updateContextButtons();
   }
 
   update(dt) {
@@ -212,8 +339,8 @@ export class Input {
       this._charTurn = approach(this._charTurn, tt, dt);
     } else {
       // vehicle driving mode
-      var vtd = clamp(this._keyDrive + this._joyDrive, -1, 1);
-      var vtt = clamp(this._keyTurn + this._joyTurn, -1, 1);
+      var vtd = clamp(this._keyDrive + (this._drivingMode ? this._pedalDrive : this._joyDrive), -1, 1);
+      var vtt = clamp(this._keyTurn + (this._drivingMode ? this._wheelTurn : this._joyTurn), -1, 1);
       this._drive = approach(this._drive, vtd, dt);
       this._turn = approach(this._turn, vtt, dt);
     }
@@ -230,7 +357,8 @@ export class Input {
     if (this._style && this._style.parentNode) this._style.parentNode.removeChild(this._style);
     if (this._btnWrap && this._btnWrap.parentNode) this._btnWrap.parentNode.removeChild(this._btnWrap);
     if (this._joy && this._joy.parentNode) this._joy.parentNode.removeChild(this._joy);
-    this._style = null; this._btnWrap = null; this._joy = null; this._knob = null;
+    if (this._vehicleControls && this._vehicleControls.parentNode) this._vehicleControls.parentNode.removeChild(this._vehicleControls);
+    this._style = null; this._btnWrap = null; this._joy = null; this._knob = null; this._vehicleControls = null;
     this._held = {};
     this._pending.length = 0;
     this._keyDrive = this._keyTurn = this._joyDrive = this._joyTurn = 0;
@@ -278,7 +406,8 @@ export class Input {
       }
       var action = ACTIONS[code];
       if (action && !e.repeat) self._pending.push(action);
-      if (action || code === 'Space' || code.indexOf('Arrow') === 0) {
+      if (/^Digit[1-9]$/.test(code) && !e.repeat) self._pending.push('hotbar:' + (Number(code.slice(5)) - 1));
+      if (action || /^Digit[1-9]$/.test(code) || code === 'Space' || code.indexOf('Arrow') === 0) {
         if (e.cancelable) e.preventDefault();
       }
     };
@@ -302,10 +431,14 @@ export class Input {
       self._syncKeyAxes();
       self._brake = false;
       self._charJump = false;
+      self._clearVehicleControls();
     };
     this._listen(this._target, 'keydown', this._onKeyDown, false);
     this._listen(this._target, 'keyup', this._onKeyUp, false);
     this._listen(this._target, 'blur', this._onBlur, false);
+    this._listen(document, 'visibilitychange', function () {
+      if (document.hidden) self._clearVehicleControls();
+    }, false);
   }
 
   _syncKeyAxes() {
@@ -490,5 +623,117 @@ export class Input {
       })(BUTTONS[i]);
     }
     document.body.appendChild(this._btnWrap);
+    this._updateContextButtons();
+  }
+
+  _clearVehicleControls() {
+    this._pedalDrive = 0;
+    this._pedalBrake = false;
+    this._reverseMode = false;
+    this._wheelTurn = 0;
+    if (this._activeWheelPointer !== undefined) this._activeWheelPointer = null;
+    if (this._wheel) this._wheel.style.transform = 'rotate(0deg)';
+    if (this._gas) this._gas.classList.remove('vt-active');
+    if (this._brakePedal) this._brakePedal.classList.remove('vt-active');
+    if (this._reverse) {
+      this._reverse.classList.remove('vt-active');
+      this._reverse.setAttribute('aria-pressed', 'false');
+    }
+  }
+
+  _installVehicleControls() {
+    var self = this;
+    var wrap = document.createElement('div');
+    wrap.id = 'vt-vehicle-controls';
+    var wheel = document.createElement('div');
+    wheel.id = 'vt-steering-wheel';
+    wheel.setAttribute('role', 'slider');
+    wheel.setAttribute('aria-label', 'Steering wheel. Drag left or right to steer.');
+    wheel.setAttribute('aria-valuemin', '-100');
+    wheel.setAttribute('aria-valuemax', '100');
+    var pedals = document.createElement('div');
+    pedals.id = 'vt-pedals';
+    var brake = document.createElement('button');
+    brake.type = 'button'; brake.id = 'vt-brake'; brake.className = 'vt-pedal'; brake.textContent = 'BRAKE';
+    var gas = document.createElement('button');
+    gas.type = 'button'; gas.id = 'vt-gas'; gas.className = 'vt-pedal'; gas.textContent = 'GAS';
+    var exit = document.createElement('button');
+    exit.type = 'button'; exit.id = 'vt-exit-vehicle'; exit.textContent = '↗ EXIT';
+    var reverse = document.createElement('button');
+    reverse.type = 'button'; reverse.id = 'vt-reverse'; reverse.textContent = 'R · REVERSE';
+    reverse.setAttribute('aria-label', 'Toggle reverse gear');
+    reverse.setAttribute('aria-pressed', 'false');
+    pedals.appendChild(brake); pedals.appendChild(gas);
+    wrap.appendChild(wheel); wrap.appendChild(pedals); wrap.appendChild(exit); wrap.appendChild(reverse);
+    var exitVehicle = function (e) {
+      if (e && e.cancelable) e.preventDefault();
+      if (locked()) return;
+      self._pending.push('enterVehicle');
+    };
+    this._listen(exit, 'click', exitVehicle, false);
+    document.body.appendChild(wrap);
+    this._vehicleControls = wrap; this._wheel = wheel; this._gas = gas; this._brakePedal = brake; this._exitVehicle = exit; this._reverse = reverse;
+    this._listen(reverse, 'click', function (e) {
+      if (e && e.cancelable) e.preventDefault();
+      if (locked()) return;
+      self._reverseMode = !self._reverseMode;
+      reverse.classList.toggle('vt-active', self._reverseMode);
+      reverse.setAttribute('aria-pressed', self._reverseMode ? 'true' : 'false');
+      if (self._pedalDrive !== 0) self._pedalDrive = self._reverseMode ? -1 : 1;
+    }, false);
+
+    var lastWheelAngle = null;
+    var wheelMove = function (e) {
+      if (self._activeWheelPointer !== e.pointerId) return;
+      var rect = wheel.getBoundingClientRect();
+      var dx = e.clientX - (rect.left + rect.width / 2);
+      var dy = e.clientY - (rect.top + rect.height / 2);
+      if (Math.hypot(dx, dy) < rect.width * 0.18) return;
+      var angle = Math.atan2(dy, dx);
+      if (lastWheelAngle !== null) {
+        var delta = angle - lastWheelAngle;
+        while (delta > Math.PI) delta -= Math.PI * 2;
+        while (delta < -Math.PI) delta += Math.PI * 2;
+        self._wheelTurn = clamp(self._wheelTurn + delta / 2.35, -1, 1);
+      }
+      lastWheelAngle = angle;
+      wheel.setAttribute('aria-valuenow', String(Math.round(self._wheelTurn * 100)));
+      wheel.style.transform = 'rotate(' + (self._wheelTurn * 145) + 'deg)';
+      if (e.cancelable) e.preventDefault();
+    };
+    var wheelEnd = function (e) {
+      if (self._activeWheelPointer !== e.pointerId) return;
+      self._activeWheelPointer = null; lastWheelAngle = null; self._wheelTurn = 0; wheel.style.transform = 'rotate(0deg)';
+      wheel.setAttribute('aria-valuenow', '0');
+    };
+    this._listen(wheel, 'pointerdown', function (e) {
+      if (locked()) return;
+      self._activeWheelPointer = e.pointerId;
+      self._wheelTurn = 0; lastWheelAngle = null;
+      if (wheel.setPointerCapture) wheel.setPointerCapture(e.pointerId);
+      wheelMove(e);
+    }, false);
+    this._listen(wheel, 'pointermove', wheelMove, false);
+    this._listen(wheel, 'pointerup', wheelEnd, false);
+    this._listen(wheel, 'pointercancel', wheelEnd, false);
+    this._listen(wheel, 'lostpointercapture', wheelEnd, false);
+
+    var pedal = function (el, kind, down) {
+      if (locked()) return;
+      if (kind === 'gas') self._pedalDrive = down ? (self._reverseMode ? -1 : 1) : 0;
+      else self._pedalBrake = down;
+      el.classList.toggle('vt-active', down);
+    };
+    [[gas, 'gas'], [brake, 'brake']].forEach(function (pair) {
+      var el = pair[0], kind = pair[1];
+      self._listen(el, 'pointerdown', function (e) {
+        if (el.setPointerCapture) el.setPointerCapture(e.pointerId);
+        pedal(el, kind, true); if (e.cancelable) e.preventDefault();
+      }, false);
+      var release = function () { pedal(el, kind, false); };
+      self._listen(el, 'pointerup', release, false);
+      self._listen(el, 'pointercancel', release, false);
+      self._listen(el, 'lostpointercapture', release, false);
+    });
   }
 }

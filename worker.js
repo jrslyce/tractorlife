@@ -9,6 +9,17 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // How long a farmer stays on the /api/farmers list after their last login.
 const FARMER_RECENT_MS = 30 * 24 * 60 * 60 * 1000;
 const encoder = new TextEncoder();
+// Mirrors game/js/items.js: price per purchase, and `pack` units per purchase.
+const GIFT_ITEMS = {
+  asphalt: { price: 4, emoji: "⬛" }, gravel: { price: 2, emoji: "◽" }, brick: { price: 6, emoji: "🧱" },
+  wood: { price: 12, emoji: "🪵" }, roof_shingles: { price: 90, emoji: "🏠" }, fence_kit: { price: 80, emoji: "🚧" },
+  window_glass: { price: 65, emoji: "🪟" }, door: { price: 70, emoji: "🚪" }, lamp_light: { price: 55, emoji: "💡" },
+  string_lights: { price: 95, emoji: "✨" }, fertilizer: { price: 25, emoji: "🪴", pack: 10 },
+  crop_spray: { price: 20, emoji: "🧴", pack: 200 }, corn_seeds: { price: 15, emoji: "🌽", pack: 100 },
+  wheat_seeds: { price: 10, emoji: "🌾", pack: 100 }, pumpkin_seeds: { price: 25, emoji: "🎃", pack: 100 },
+  sunflower_seeds: { price: 18, emoji: "🌻", pack: 100 }, pea_seeds: { price: 8, emoji: "🟢", pack: 100 }, paint: { price: 30, emoji: "🎨" }, hay_bale: { price: 28, emoji: "🟨" },
+  scarecrow: { price: 60, emoji: "🧑‍🌾" }, pumpkin_pile: { price: 75, emoji: "🎃" }, corn_shocks: { price: 48, emoji: "🌽" }, mailbox: { price: 42, emoji: "📮" },
+};
 
 function json(data, status, headers) {
   const responseHeaders = new Headers(headers || {});
@@ -166,6 +177,106 @@ export class GameSaves {
   async fetch(request) {
     const url = new URL(request.url);
 
+    if (request.method === "POST" && url.pathname === "/gift-debit") {
+      let body = {};
+      try { body = await request.json(); } catch (err) { return json({ ok: false, error: "bad request" }, 400); }
+      const item = body && GIFT_ITEMS[body.itemId];
+      const qty = body && body.qty;
+      const requestId = body && body.requestId;
+      if (!item || !Number.isInteger(qty) || qty < 1 || qty > 20 ||
+          typeof requestId !== "string" || !/^[A-Za-z0-9_-]{8,80}$/.test(requestId) || !normalizeEmail(body.to)) {
+        return json({ ok: false, error: "invalid gift" }, 400);
+      }
+      const transactionKey = "gift-txn:" + requestId;
+      const existing = await this.ctx.storage.get(transactionKey);
+      const transfer = { requestId: requestId, to: body.to, itemId: body.itemId, qty: qty, total: item.price * qty };
+      if (existing) {
+        if (existing.to !== transfer.to || existing.itemId !== transfer.itemId || existing.qty !== transfer.qty) {
+          return json({ ok: false, error: "request id conflict" }, 409);
+        }
+        if (existing.status === "refunded") return json({ ok: false, error: "gift was refunded" }, 409);
+        return json({ ok: true, status: existing.status, total: existing.total });
+      }
+      const raw = await this.ctx.storage.get("state");
+      let state;
+      try { state = raw ? JSON.parse(raw) : null; } catch (err) { state = null; }
+      if (!isPlainObject(state) || typeof state.money !== "number" || !Number.isFinite(state.money)) {
+        return json({ ok: false, error: "no saved balance" }, 409);
+      }
+      if (state.money < transfer.total) return json({ ok: false, error: "not enough money" }, 409);
+      state.money = Math.max(0, Math.floor(state.money - transfer.total));
+      await this.ctx.storage.put({
+        state: JSON.stringify(state),
+        [transactionKey]: Object.assign({}, transfer, { status: "debited", from: body.from || "" })
+      });
+      return json({ ok: true, status: "debited", total: transfer.total });
+    }
+
+    if (request.method === "POST" && url.pathname === "/gift-credit") {
+      let body = {};
+      try { body = await request.json(); } catch (err) { return json({ ok: false, error: "bad request" }, 400); }
+      const item = body && GIFT_ITEMS[body.itemId];
+      if (!item || !Number.isInteger(body.qty) || body.qty < 1 || body.qty > 20 ||
+          typeof body.requestId !== "string" || !/^[A-Za-z0-9_-]{8,80}$/.test(body.requestId) || !normalizeEmail(body.from)) {
+        return json({ ok: false, error: "invalid gift" }, 400);
+      }
+      const receivedKey = "gift-received:" + body.requestId;
+      const existing = await this.ctx.storage.get(receivedKey);
+      if (existing) return json({ ok: true, duplicate: true });
+      const raw = await this.ctx.storage.get("state");
+      let state;
+      try { state = raw ? JSON.parse(raw) : null; } catch (err) { state = null; }
+      if (!isPlainObject(state)) state = { v: 3, money: 0 };
+      if (!isPlainObject(state.inventory) || !Array.isArray(state.inventory.slots)) {
+        state.inventory = { v: 1, selectedSlot: -1, slots: new Array(9).fill(null) };
+      }
+      const slots = state.inventory.slots;
+      let target = -1;
+      for (let i = 0; i < slots.length; i++) {
+        if (slots[i] && slots[i].itemId === body.itemId) { target = i; break; }
+      }
+      if (target < 0) {
+        for (let i = 0; i < slots.length; i++) if (!slots[i]) { target = i; break; }
+      }
+      if (target < 0) return json({ ok: false, error: "recipient inventory is full" }, 409);
+      const units = body.qty * (item.pack || 1);
+      if (slots[target] && (Number(slots[target].qty) || 0) + units > 9999) return json({ ok: false, error: "recipient stack is full" }, 409);
+      if (slots[target]) slots[target].qty = Math.max(0, Number(slots[target].qty) || 0) + units;
+      else slots[target] = { itemId: body.itemId, qty: units, emoji: item.emoji };
+      const inbox = Array.isArray(state.giftInbox) ? state.giftInbox.slice(-19) : [];
+      inbox.push({ requestId: body.requestId, from: body.from, itemId: body.itemId, qty: body.qty, at: Date.now() });
+      state.giftInbox = inbox;
+      const appliedGiftIds = Array.isArray(state.appliedGiftIds) ? state.appliedGiftIds.slice(-99) : [];
+      if (appliedGiftIds.indexOf(body.requestId) === -1) appliedGiftIds.push(body.requestId);
+      state.appliedGiftIds = appliedGiftIds;
+      await this.ctx.storage.put({ state: JSON.stringify(state), [receivedKey]: true });
+      return json({ ok: true });
+    }
+
+    if (request.method === "POST" && (url.pathname === "/gift-complete" || url.pathname === "/gift-refund")) {
+      let body = {};
+      try { body = await request.json(); } catch (err) { return json({ ok: false, error: "bad request" }, 400); }
+      const requestId = body && body.requestId;
+      if (typeof requestId !== "string" || !/^[A-Za-z0-9_-]{8,80}$/.test(requestId)) return json({ ok: false, error: "invalid request id" }, 400);
+      const key = "gift-txn:" + requestId;
+      const transaction = await this.ctx.storage.get(key);
+      if (!transaction) return json({ ok: false, error: "gift not found" }, 404);
+      if (url.pathname === "/gift-refund" && transaction.status === "debited") {
+        const raw = await this.ctx.storage.get("state");
+        let state;
+        try { state = raw ? JSON.parse(raw) : null; } catch (err) { state = null; }
+        if (isPlainObject(state)) {
+          state.money = Math.max(0, Number(state.money) || 0) + transaction.total;
+          transaction.status = "refunded";
+          await this.ctx.storage.put({ state: JSON.stringify(state), [key]: transaction });
+        }
+      } else if (url.pathname === "/gift-complete") {
+        transaction.status = "complete";
+        await this.ctx.storage.put(key, transaction);
+      }
+      return json({ ok: true, status: transaction.status });
+    }
+
     if (request.method === "POST" && url.pathname === "/save") {
       let body = {};
       try {
@@ -175,6 +286,19 @@ export class GameSaves {
       }
       if (!isPlainObject(body)) body = {};
       const state = body.state === undefined ? null : body.state;
+      const oldRaw = await this.ctx.storage.get("state");
+      let oldState = null;
+      try { oldState = oldRaw ? JSON.parse(oldRaw) : null; } catch (err) { oldState = null; }
+      if (isPlainObject(state) && isPlainObject(oldState) && Array.isArray(oldState.giftInbox)) {
+        const inbox = Array.isArray(state.giftInbox) ? state.giftInbox.slice() : [];
+        const ids = {};
+        for (let i = 0; i < inbox.length; i++) if (inbox[i] && inbox[i].requestId) ids[inbox[i].requestId] = true;
+        for (let i = 0; i < oldState.giftInbox.length; i++) {
+          const gift = oldState.giftInbox[i];
+          if (gift && gift.requestId && !ids[gift.requestId]) inbox.push(gift);
+        }
+        state.giftInbox = inbox.slice(-20);
+      }
       const raw = JSON.stringify(state);
       await this.ctx.storage.put("state", raw);
       return json({ ok: true });
@@ -236,15 +360,20 @@ export class FarmerList {
 }
 
 // Farm footprints, matching game/js/farm.js: each farm spans x
-// slot*140 + (-6 .. 105.5) and z -54.5 .. 27.5. Returns -1 on public land.
+// slot*180 + (-6 .. 149.5) (pads, fields, build yard) and z -54.5 .. 27.5.
+// Returns -1 on public land.
+const FARM_SPACING = 180;
 const FARM_MIN_X = -6;
-const FARM_MAX_X = 105.5;
+const FARM_MAX_X = 149.5;
+// World X extent, matching WORLD_MIN_X / WORLD_MAX_X in game/js/world.js.
+const WORLD_MIN_X = -10;
+const WORLD_MAX_X = 9 * FARM_SPACING + 160;
 const FARM_MIN_Z = -54.5;
 const FARM_MAX_Z = 27.5;
 function farmSlotAt(x, z) {
   if (z < FARM_MIN_Z || z > FARM_MAX_Z) return -1;
   for (let slot = 0; slot < 10; slot++) {
-    if (x >= slot * 140 + FARM_MIN_X && x <= slot * 140 + FARM_MAX_X) return slot;
+    if (x >= slot * FARM_SPACING + FARM_MIN_X && x <= slot * FARM_SPACING + FARM_MAX_X) return slot;
   }
   return -1;
 }
@@ -261,7 +390,9 @@ export class SharedWorld {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/read") {
       const roads = await this.ctx.storage.get("roads") || {};
-      const entries = Object.keys(roads).map((key) => roads[key]);
+      // Tiles laid before the farms were widened can now sit inside a farm.
+      const entries = Object.keys(roads).map((key) => roads[key])
+        .filter((tile) => farmSlotAt(tile.x, tile.z) < 0);
       return json({ ok: true, roads: entries, stamp: await this.ctx.storage.get("stamp") || 0 });
     }
     if (request.method === "POST" && url.pathname === "/place") {
@@ -274,7 +405,7 @@ export class SharedWorld {
       }
       if (!isPlainObject(body) || !["asphalt", "gravel", "brick"].includes(body.id) ||
           !Number.isSafeInteger(body.x) || !Number.isSafeInteger(body.z) ||
-          body.x < -10 || body.x > 1385 || body.z < -78 || body.z > 80) {
+          body.x < WORLD_MIN_X || body.x > WORLD_MAX_X || body.z < -78 || body.z > 80) {
         return json({ ok: false, error: "invalid tile" }, 400);
       }
       // Reject tiles inside any farm bounds; only public land can be shared road.
@@ -302,6 +433,17 @@ export class RealtimeRoom {
 
   async fetch(request) {
     const url = new URL(request.url);
+    if (request.method === "POST" && url.pathname === "/broadcast") {
+      let body;
+      try { body = await request.json(); } catch (err) { return json({ ok: false }, 400); }
+      if (!isPlainObject(body) || body.type !== "gift" || !normalizeEmail(body.from) || !normalizeEmail(body.to) ||
+          !GIFT_ITEMS[body.itemId] || !Number.isInteger(body.qty) || body.qty < 1 || body.qty > 20 ||
+          typeof body.requestId !== "string" || !/^[A-Za-z0-9_-]{8,80}$/.test(body.requestId)) {
+        return json({ ok: false }, 400);
+      }
+      this._broadcast({ type: "gift", from: body.from, to: body.to, itemId: body.itemId, qty: body.qty, requestId: body.requestId }, null);
+      return json({ ok: true });
+    }
     if (url.pathname !== "/connect" || request.headers.get("upgrade") !== "websocket") {
       return json({ ok: false, error: "websocket upgrade required" }, 426);
     }
@@ -334,7 +476,7 @@ export class RealtimeRoom {
     if (msg.type === "pose") {
       const pose = msg.pose;
       if (!isPlainObject(pose) || !Number.isFinite(pose.x) || !Number.isFinite(pose.z) ||
-          !Number.isFinite(pose.theta) || pose.x < -10 || pose.x > 1385 || pose.z < -78 || pose.z > 80 ||
+          !Number.isFinite(pose.theta) || pose.x < WORLD_MIN_X || pose.x > WORLD_MAX_X || pose.z < -78 || pose.z > 80 ||
           !["walking", "driving"].includes(pose.mode) ||
           (pose.machine !== null && !["tractor", "combine", "truck"].includes(pose.machine))) return;
       this._broadcast({ type: "pose", email: attachment.email, pose: {
@@ -346,13 +488,17 @@ export class RealtimeRoom {
     if (msg.type === "build") {
       const entry = msg.entry;
       const roads = ["asphalt", "gravel", "brick"];
-      if (!isPlainObject(entry) || !["asphalt", "gravel", "brick", "wood", "roof_shingles", "fence_kit", "window_glass", "door", "lamp_light", "hay_bale", "scarecrow", "pumpkin_pile", "corn_shocks", "string_lights", "mailbox"].includes(entry.id) ||
+      if (!isPlainObject(entry) || !["asphalt", "gravel", "brick", "wood", "roof_shingles", "fence_kit", "window_glass", "door", "lamp_light", "hay_bale", "scarecrow", "pumpkin_pile", "corn_shocks", "string_lights", "mailbox", "harvest_pumpkin"].includes(entry.id) ||
           !Number.isSafeInteger(entry.x) || !Number.isSafeInteger(entry.z) ||
-          entry.x < -10 || entry.x > 1385 || entry.z < -78 || entry.z > 80) return;
+          (entry.y !== undefined && (!Number.isSafeInteger(entry.y) || entry.y < 0 || entry.y > 64)) ||
+          entry.x < WORLD_MIN_X || entry.x > WORLD_MAX_X || entry.z < -78 || entry.z > 80) return;
       // Roads go on public land; everything else only on the sender's farm.
       const slot = farmSlotAt(entry.x, entry.z);
       if (roads.includes(entry.id) ? slot >= 0 : slot !== assignFarmSlot(attachment.email)) return;
-      this._broadcast({ type: "build", email: attachment.email, entry: { id: entry.id, x: entry.x, z: entry.z } }, socket);
+       this._broadcast({ type: "build", email: attachment.email, entry: {
+         id: entry.id, x: entry.x, y: entry.y || 0, z: entry.z,
+         color: typeof entry.color === "string" && /^#[0-9a-fA-F]{6}$/.test(entry.color) ? entry.color : undefined
+       } }, socket);
     }
   }
 
@@ -561,6 +707,70 @@ export default {
       const world = env.SHARED_WORLD.get(env.SHARED_WORLD.idFromName("shared-world"));
       const target = "https://shared-world/" + (request.method === "GET" ? "read" : "place");
       return world.fetch(new Request(target, request));
+    }
+
+    if (url.pathname === "/api/gift") {
+      if (request.method !== "POST") return json({ ok: false, error: "method not allowed" }, 405);
+      const session = await readSession(request, env);
+      if (!session) return json({ ok: false, error: "unauthorized" }, 401);
+      let body;
+      try { body = await readJsonBody(request); }
+      catch (err) { return json({ ok: false, error: "bad request" }, 400); }
+      if (!isPlainObject(body)) return json({ ok: false, error: "bad request" }, 400);
+      const to = normalizeEmail(body.to);
+      if (!to || to === session.email || !GIFT_ITEMS[body.itemId] || !Number.isInteger(body.qty) || body.qty < 1 || body.qty > 20) {
+        return json({ ok: false, error: "invalid gift" }, 400);
+      }
+      // Only gift to accounts present in the recent farmer roster.
+      let listed = false;
+      try {
+        const listRes = await env.FARMERS.get(env.FARMERS.idFromName("farmers")).fetch("https://farmers/list");
+        const list = await listRes.json();
+        const farmers = list && Array.isArray(list.farmers) ? list.farmers : [];
+        for (let i = 0; i < farmers.length; i++) {
+          if (normalizeEmail(farmers[i].email) === to) { listed = true; break; }
+        }
+      } catch (err) { listed = false; }
+      if (!listed) return json({ ok: false, error: "farmer not found" }, 404);
+
+      const requestId = crypto.randomUUID();
+      const sender = env.SAVES.get(env.SAVES.idFromName(session.email));
+      const receiver = env.SAVES.get(env.SAVES.idFromName(to));
+      const debitResponse = await sender.fetch("https://saves/gift-debit", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ requestId: requestId, from: session.email, to: to, itemId: body.itemId, qty: body.qty })
+      });
+      const debit = await debitResponse.json();
+      if (!debitResponse.ok || !debit.ok) return json({ ok: false, error: debit.error || "gift could not be paid" }, debitResponse.status || 409);
+
+      let creditResponse = null;
+      let credit = null;
+      try {
+        creditResponse = await receiver.fetch("https://saves/gift-credit", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ requestId: requestId, from: session.email, itemId: body.itemId, qty: body.qty })
+        });
+        credit = await creditResponse.json();
+      } catch (err) { credit = { ok: false, error: "gift delivery failed" }; }
+      if (!creditResponse || !creditResponse.ok || !credit || !credit.ok) {
+        try {
+          await sender.fetch("https://saves/gift-refund", {
+            method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ requestId: requestId })
+          });
+        } catch (err) { /* the debit record remains recoverable for inspection */ }
+        return json({ ok: false, error: credit && credit.error ? credit.error + "; payment refunded" : "gift delivery failed" }, creditResponse ? creditResponse.status || 409 : 502);
+      }
+      await sender.fetch("https://saves/gift-complete", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ requestId: requestId })
+      });
+      try {
+        const room = env.REALTIME.get(env.REALTIME.idFromName("map-room"));
+        await room.fetch("https://realtime/broadcast", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ type: "gift", from: session.email, to: to, itemId: body.itemId, qty: body.qty, requestId: requestId })
+        });
+      } catch (err) { /* offline delivery is already in the recipient save */ }
+      return json({ ok: true, requestId: requestId, total: GIFT_ITEMS[body.itemId].price * body.qty });
     }
 
     if (url.pathname === "/api/realtime") {

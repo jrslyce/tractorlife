@@ -1,6 +1,7 @@
 // game/js/net.js — login gate + autosave for Tractor Farm.
 // Cookie-backed auth (email + code) with an offline localStorage fallback.
 // Written conservatively (no optional chaining) for older iPad Safari.
+import { ITEM_BY_ID } from './items.js';
 
 const EMAIL_KEY = 'vt-email';
 const LEGACY_CODE_KEY = 'vt-code';
@@ -279,6 +280,22 @@ export function placeSharedRoad(tile) {
   }, function () { queueSharedRoad(cleanTile); return null; }).catch(function () {
     queueSharedRoad(cleanTile);
     return null;
+  });
+}
+
+export function sendGift(to, itemId, qty) {
+  const recipient = normEmail(to);
+  const amount = Math.floor(Number(qty));
+  if (!recipient || !ITEM_BY_ID[itemId] || !Number.isInteger(amount) || amount < 1 || amount > 20) {
+    return Promise.resolve({ ok: false, error: 'Invalid gift details.' });
+  }
+  return post('/api/gift', { to: recipient, itemId: itemId, qty: amount }, WORLD_TIMEOUT_MS).then(function (res) {
+    return res.json().then(function (data) {
+      if (!res.ok || !data || data.ok !== true) return { ok: false, error: data && data.error ? data.error : 'Gift could not be sent.' };
+      return data;
+    }, function () { return { ok: false, error: 'Gift could not be sent.' }; });
+  }, function () { return { ok: false, error: 'Gift could not be sent.' }; }).catch(function () {
+    return { ok: false, error: 'Gift could not be sent.' };
   });
 }
 

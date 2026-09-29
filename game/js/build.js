@@ -6,7 +6,7 @@ import { ITEM_BY_ID } from './items.js';
 
 var ROAD_IDS = { asphalt: true, gravel: true, brick: true };
 var BLOCK_IDS = { wood: true, roof_shingles: true, fence_kit: true, window_glass: true, door: true };
-var DECOR_IDS = { lamp_light: true, hay_bale: true, scarecrow: true, pumpkin_pile: true, corn_shocks: true, string_lights: true, mailbox: true };
+var DECOR_IDS = { lamp_light: true, hay_bale: true, scarecrow: true, pumpkin_pile: true, corn_shocks: true, string_lights: true, mailbox: true, harvest_pumpkin: true };
 var COLORS = {
   asphalt: '#333536', gravel: '#85827a', brick: '#9a4f3f', wood: '#81552f',
   roof_shingles: '#8c4638', fence_kit: '#9a8058', window_glass: '#8bd2e8', door: '#754a2b',
@@ -14,7 +14,7 @@ var COLORS = {
   corn_shocks: '#c69f32', string_lights: '#f2cc58', mailbox: '#b94738'
 };
 
-function cellKey(x, z) { return x + ',' + z; }
+function voxelKey(x, y, z) { return x + ',' + y + ',' + z; }
 
 export class Builder {
   constructor(options) {
@@ -25,6 +25,7 @@ export class Builder {
     this.inventory = options.inventory;
     this.getAssignedSlot = options.getAssignedSlot;
     this.getWalking = options.getWalking;
+    this.getBuildMode = options.getBuildMode || function () { return false; };
     this.onPlaced = options.onPlaced || function () {};
     this.raycaster = new THREE.Raycaster();
     this.pointer = new THREE.Vector2();
@@ -58,12 +59,35 @@ export class Builder {
     if (!rect.width || !rect.height) return false;
     this.pointer.set(((e.clientX - rect.left) / rect.width) * 2 - 1,
       -((e.clientY - rect.top) / rect.height) * 2 + 1);
+    if (this.getBuildMode()) this.pointer.set(0, 0);
     this.raycaster.setFromCamera(this.pointer, this.camera);
+    if (this.getBuildMode()) return true;
     return this.raycaster.ray.intersectPlane(this.ground, this._target) !== null;
   }
 
   _cellPosition() {
-    return { x: Math.floor(this._target.x + 0.5), z: Math.floor(this._target.z + 0.5) };
+    return { x: Math.floor(this._target.x + 0.5), y: 0, z: Math.floor(this._target.z + 0.5) };
+  }
+
+  _placementCell() {
+    var p = this._cellPosition();
+    if (!this.getBuildMode()) return p;
+    var objects = Object.keys(this._occupied).map((key) => this._occupied[key]);
+    var hits = objects.length ? this.raycaster.intersectObjects(objects, false) : [];
+    if (hits.length) {
+      var hit = hits[0];
+      var normal = hit.face.normal.clone().applyMatrix3(new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld)).normalize();
+      p.x = Math.round(hit.object.position.x + normal.x);
+      p.y = Math.max(0, Math.round(hit.object.position.y - (hit.object.userData.placeHeight || 1) / 2 + normal.y));
+      p.z = Math.round(hit.object.position.z + normal.z);
+      if (p.y > 64) return null;
+      if (this.camera.position.distanceTo(hit.point) > 7) return null;
+      return p;
+    }
+    if (!this.raycaster.ray.intersectPlane(this.ground, this._target)) return null;
+    p = this._cellPosition();
+    if (Math.hypot(p.x - this.camera.position.x, p.z - this.camera.position.z) > 12) return null;
+    return p;
   }
 
   _canPlace(item, x, z) {
@@ -93,7 +117,9 @@ export class Builder {
     var geometry;
     var height = 1;
     var color = COLORS[item.id] || '#b49a63';
-    if (ROAD_IDS[item.id]) {
+    if (item.id === 'harvest_pumpkin') {
+      geometry = new THREE.SphereGeometry(0.42, 10, 8); height = 0.84; color = '#e87925';
+    } else if (ROAD_IDS[item.id]) {
       geometry = new THREE.BoxGeometry(1, 0.08, 1);
     } else if (item.id === 'lamp_light') {
       geometry = new THREE.BoxGeometry(0.25, 2.4, 0.25); height = 2.4;
@@ -114,6 +140,7 @@ export class Builder {
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.userData.itemId = item.id;
+    mesh.userData.placeHeight = height;
     if (item.id === 'lamp_light') {
       var lamp = new THREE.PointLight('#ffe6a0', 0.6, 12);
       lamp.position.y = 2.2;
@@ -144,9 +171,10 @@ export class Builder {
       return;
     }
     this._ensureGhost(item);
-    var p = this._cellPosition();
+    var p = this._placementCell();
+    if (!p) { if (this._ghost) this._ghost.visible = false; return; }
     var allowed = this._canPlace(item, p.x, p.z);
-    this._ghost.position.set(p.x, this._ghost.geometry.parameters.height / 2 + 0.04, p.z);
+    this._ghost.position.set(p.x, p.y + (this._ghost.userData.placeHeight || 1) / 2 + 0.04, p.z);
     this._ghost.visible = true;
     this._ghost.material.color.set(allowed ? COLORS[item.id] || '#b49a63' : '#d24a43');
   }
@@ -156,9 +184,10 @@ export class Builder {
     var item = this._item();
     if (!item || !(ROAD_IDS[item.id] || BLOCK_IDS[item.id] || DECOR_IDS[item.id] || /^(corn|wheat|pumpkin|sunflower|pea)_seeds$/.test(item.id) || item.id === 'fertilizer')) return;
     if (!this._rayFromEvent(e)) return;
-    var p = this._cellPosition();
+    var p = this._placementCell();
+    if (!p) return;
     if (!this._canPlace(item, p.x, p.z)) return;
-    var key = cellKey(p.x, p.z);
+    var key = voxelKey(p.x, p.y, p.z);
     if (this._occupied[key]) return;
     var selected = this.inventory.getSelectedItem();
     if (!selected || selected.itemId !== item.id || selected.qty < 1) return;
@@ -177,11 +206,12 @@ export class Builder {
       return;
     }
     var mesh = this._makeMesh(item);
+    mesh.position.y = p.y + mesh.userData.placeHeight / 2;
     mesh.position.x = p.x;
     mesh.position.z = p.z;
     this.scene.add(mesh);
     this._occupied[key] = mesh;
-    var entry = { id: item.id, x: p.x, z: p.z, color: COLORS[item.id] || '#b49a63' };
+    var entry = { id: item.id, x: p.x, y: p.y, z: p.z, color: COLORS[item.id] || '#b49a63' };
     this._placed.push(entry);
     this.inventory.useOne();
     this.inventory.updateDOM();
@@ -194,7 +224,7 @@ export class Builder {
   }
 
   paintAt(x, z) {
-    var key = cellKey(Math.round(x), Math.round(z));
+    var key = voxelKey(Math.round(x), 0, Math.round(z));
     var mesh = this._occupied[key];
     if (!mesh || !this.inventory.getSelectedItem() || this.inventory.getSelectedItem().itemId !== 'paint') return false;
     var color = this.cyclePaint();
@@ -216,15 +246,17 @@ export class Builder {
       var entry = entries[i];
       var item = entry && ITEM_BY_ID[entry.id];
       if (!item || !isFinite(entry.x) || !isFinite(entry.z)) continue;
-      var p = { x: Math.round(entry.x), z: Math.round(entry.z) };
-      if ((!allowForeign && !this._canPlace(item, p.x, p.z)) || this._occupied[cellKey(p.x, p.z)]) continue;
+      var p = { x: Math.round(entry.x), y: Math.max(0, Math.round(entry.y || 0)), z: Math.round(entry.z) };
+      var key = voxelKey(p.x, p.y, p.z);
+      if ((!allowForeign && !this._canPlace(item, p.x, p.z)) || this._occupied[key]) continue;
       var mesh = this._makeMesh(item);
+      mesh.position.y = p.y + mesh.userData.placeHeight / 2;
       mesh.position.x = p.x;
       mesh.position.z = p.z;
       if (entry.color && mesh.material.color) mesh.material.color.set(entry.color);
       this.scene.add(mesh);
-      this._occupied[cellKey(p.x, p.z)] = mesh;
-      this._placed.push({ id: item.id, x: p.x, z: p.z, color: entry.color || COLORS[item.id], remote: !!allowForeign });
+      this._occupied[key] = mesh;
+      this._placed.push({ id: item.id, x: p.x, y: p.y, z: p.z, color: entry.color || COLORS[item.id], remote: !!allowForeign });
     }
     return true;
   }

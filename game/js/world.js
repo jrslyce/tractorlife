@@ -1,17 +1,19 @@
 // game/js/world.js — multi-farm world management with distance culling.
 // ES module, Three.js (importmap 0.160.0). Imports Farm from './farm.js'.
 import * as THREE from 'three';
-import { Farm } from './farm.js';
+import { Farm, FARM_SPACING, NUM_FARMS } from './farm.js';
 
 // ---------------------------------------------------------------- constants
-var NUM_FARMS = 10;
-var FARM_SPACING = 140; // X distance between farm centers
 var CULL_DISTANCE = 440; // past fog far (430) so culled farms are fogged out
 
-// Shop area: south of the farms, across the E-W road
-var SHOP_CENTER_X = 680; // between farms 5 and 6 (slot 4 and 5)
-var SHOP_CENTER_Z = 55;  // south of the road strip (z ~40)
-var SHOP_TRIGGER_RADIUS = 4;
+// World extent along X: farm 0's west fence to the last farm's east fence.
+export const WORLD_MIN_X = -10;
+export const WORLD_MAX_X = (NUM_FARMS - 1) * FARM_SPACING + 160;
+
+// Shop: south of the E-W road, in the middle of the map so every farm can
+// reach it. (x, z) is the building's north-west corner; see shop.js.
+export const SHOP_X = Math.round(((NUM_FARMS - 1) * FARM_SPACING + 150) / 2) - 6;
+export const SHOP_Z = 55;
 
 // ---------------------------------------------------------------- World class
 export class World {
@@ -19,6 +21,8 @@ export class World {
     this._farms = [];
     this._playerEmail = playerEmail || '';
     this._assignedSlot = -1;
+    this._lastCullX = NaN;
+    this._lastCullZ = NaN;
 
     // Assign this player to a farm slot based on email hash
     this._assignFarmSlot();
@@ -85,6 +89,11 @@ export class World {
   // nearest edge (not its spawn point), and the threshold sits beyond the
   // fog's far distance so a culled farm is already invisible anyway.
   updateCulling(playerX, playerZ) {
+    const dx = playerX - this._lastCullX;
+    const dz = playerZ - this._lastCullZ;
+    if (dx * dx + dz * dz < 64) return; // no need to recull until moved 8 units
+    this._lastCullX = playerX;
+    this._lastCullZ = playerZ;
     var cullSq = CULL_DISTANCE * CULL_DISTANCE;
     for (var i = 0; i < this._farms.length; i++) {
       var farm = this._farms[i];

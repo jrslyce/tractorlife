@@ -4,6 +4,11 @@ import * as THREE from 'three';
 import { Field } from './field.js';
 
 // ---------------------------------------------------------------- constants
+// Farms sit FARM_SPACING apart along X. Each one is the west pad strip, the
+// four fields, then an empty YARD_WIDTH strip on the east side for building.
+export const FARM_SPACING = 180;
+export const NUM_FARMS = 10;
+const YARD_WIDTH = 44; // east build yard (local x 105.5..149.5)
 const FIELD_ORIGIN_X = 8;
 const FIELD_ORIGIN_Z = -54;
 const FIELD_COLS = 44;
@@ -47,14 +52,14 @@ function col(hex) {
 export class Farm {
   constructor(scene, farmSlot) {
     this._farmSlot = farmSlot;
-    this._offsetX = farmSlot * 140;
+    this._offsetX = farmSlot * FARM_SPACING;
     this._offsetZ = 0;
 
     // field boundaries (world-space): union of the four field rects, extended
-    // west to the pad margin, so the whole fenced farm (fields + pads +
-    // spawn lane) counts as "inside" for ownership checks. Roads are the gap
-    // between one farm's east edge (offset + 105.5) and the next farm's west
-    // fence (offset + 134) — ~28 units of tarmac.
+    // west to the pad margin and east by the build yard, so the whole fenced
+    // farm (pads + fields + yard) counts as "inside" for ownership checks.
+    // Roads are the gap between one farm's east fence (offset + 149.5) and
+    // the next farm's west fence (offset + 174) — ~24 units of tarmac.
     var minX = Infinity;
     var maxX = -Infinity;
     var minZ = Infinity;
@@ -73,6 +78,8 @@ export class Farm {
     // widen the union west so the fence encloses both pads (x -6..6 local)
     var westMarginX = this._offsetX + FIELD_ORIGIN_X - WEST_MARGIN;
     if (westMarginX < minX) minX = westMarginX;
+    this._yardMinX = maxX;
+    maxX += YARD_WIDTH;
     this._minX = minX;
     this._maxX = maxX;
     this._minZ = minZ;
@@ -274,6 +281,19 @@ export class Farm {
 
     this._cullables.push(houseMesh);
     this._cullables.push(barnMesh);
+
+    // Build yard: packed-dirt strip east of the fields, kept empty so
+    // players have room for barns, fences and decorations.
+    var yardMesh = new THREE.Mesh(padGeo, new THREE.MeshStandardMaterial({
+      color: '#a8b872', roughness: 1, metalness: 0
+    }));
+    var yardW = this._maxX - this._yardMinX;
+    var yardD = this._maxZ - this._minZ;
+    yardMesh.position.set(this._yardMinX + yardW / 2, 0.02, this._minZ + yardD / 2);
+    yardMesh.scale.set(yardW - 1, 0.8, yardD - 1);
+    yardMesh.receiveShadow = true;
+    scene.add(yardMesh);
+    this._cullables.push(yardMesh);
   }
 
   // ---------- culling ----------
