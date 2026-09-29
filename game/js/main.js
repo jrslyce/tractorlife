@@ -219,7 +219,9 @@ const wagon = new Wagon(scene);
 const TRUCK_HITCH = new THREE.Vector3(-11, 0, 0); // truck model space
 const hitchWorld = new THREE.Vector3();
 const shopDoor = new THREE.Vector3(SHOP_X + 6, 0, SHOP_Z - 2);
+const grainBinPoint = shop.getGrainBinPosition();
 const WAGON_SHOP_RANGE = 30; // park the wagon this close to the shop door to load purchases
+const WAGON_GRAIN_RANGE = 15;
 const truckBed = new CargoHold(TRUCK_BED_SLOTS, 'Truck Bed', '🚚');
 const wagonPanel = new WagonPanel(wagon, inventory, function () { lastSig = ''; });
 const TRUCK_SHOP_RANGE = 30;
@@ -236,6 +238,33 @@ function wagonAtShop() {
 
 function truckAtShop() {
   return Math.hypot(truck.position.x - shopDoor.x, truck.position.z - shopDoor.z) <= TRUCK_SHOP_RANGE;
+}
+
+function wagonAtGrainBin() {
+  return wagon.distanceTo(grainBinPoint.x, grainBinPoint.z) <= WAGON_GRAIN_RANGE;
+}
+
+function hasSaleableWagonCargo() {
+  return wagon.hasAny(function (id) { return /^harvest_(corn|wheat|sunflower|pumpkin|peas)$/.test(id); });
+}
+
+function sellWagonCrops() {
+  if (!wagonAtGrainBin()) { showToast('Drive the loaded wagon onto the grain-bin drop-off apron first.'); return false; }
+  const values = { harvest_corn: 7, harvest_wheat: 4, harvest_sunflower: 10, harvest_pumpkin: 18, harvest_peas: 2 };
+  let totalQty = 0, totalValue = 0;
+  for (let i = 0; i < wagon.cargo.length; i++) {
+    const stack = wagon.cargo[i];
+    if (!stack || !values[stack.itemId]) continue;
+    totalQty += stack.qty;
+    totalValue += stack.qty * values[stack.itemId];
+    wagon.cargo[i] = null;
+  }
+  if (!totalQty) { showToast('The wagon has no crops to sell.'); return false; }
+  money += totalValue;
+  lastSig = '';
+  showToast('🌾 Grain delivered: sold ' + totalQty + ' crop units for $' + totalValue + '!');
+  updateHUD();
+  return true;
 }
 
 // The cargo hold the walking player can reach right now (wagon first).
@@ -790,6 +819,9 @@ function updateHUD() {
       ? 'Press E or tap Shop — purchases load onto your ' + (wagonAtShop() ? 'wagon' : 'truck')
       : 'Press E or tap Shop — talk to the shopkeeper';
   }
+  if (wagonAtGrainBin() && hasSaleableWagonCargo()) {
+    hint = '🌾 Grain depot: press Y or tap Sell Crops to unload the wagon and collect payment.';
+  }
   hudHint.textContent = hint;
 }
 
@@ -1197,6 +1229,8 @@ function drainActions() {
   while ((a = input.takeAction()) !== null) {
     if (a === 'enterVehicle') {
       handleEnterExit();
+    } else if (a === 'sellGrain') {
+      sellWagonCrops();
     } else if (a === 'toggleBuildMode' && mode === 'walking') {
       setBuildMode(!buildMode);
     } else if (a === 'jump') {
@@ -1632,9 +1666,6 @@ function startFarmerPolling() {
 // projecting a world anchor (the farm's spawn point raised to y = 6) through
 // the camera. Text is rewritten only by refreshFarmLabels() — i.e. when the
 // farmer list (or our own assigned slot) changes — never per frame.
-const LABEL_CULL_DIST = 440; // matches world culling (440) so they vanish together
-const LABEL_CULL_SQ = LABEL_CULL_DIST * LABEL_CULL_DIST;
-
 const labelLayer = document.createElement('div');
 labelLayer.id = 'farm-labels';
 document.body.appendChild(labelLayer);
@@ -1679,14 +1710,13 @@ function updateFarmLabels() {
   const h = innerHeight;
   for (let i = 0; i < farmLabels.length; i++) {
     const L = farmLabels[i];
-    let show = !farms[i]._culled;
+    let show = mode === 'driving' && !farms[i]._culled;
     L.ndc = '';
-    L.reason = show ? '' : 'culled';
+    L.reason = mode !== 'driving' ? 'not-driving' : (show ? '' : 'culled');
     if (show) {
-      const dx = camera.position.x - L.ax;
-      const dy = camera.position.y - L.ay;
-      const dz = camera.position.z - L.az;
-      if (dx * dx + dy * dy + dz * dz > LABEL_CULL_SQ) { show = false; L.reason = 'far'; }
+      const dx = vehicle.position.x - L.ax;
+      const dz = vehicle.position.z - L.az;
+      if (dx * dx + dz * dz > 72 * 72) { show = false; L.reason = 'not-driving-by'; }
     }
     if (show) {
       _labelPt.set(L.ax, L.ay, L.az).applyMatrix4(_labelView);
@@ -2042,6 +2072,8 @@ renderer.setAnimationLoop(function () {
   input.setToolControl(mode === 'driving' && (!!vehicle.userData.mounts || vehicleType === 'truck'),
     mode === 'driving' && (vehicleType === 'truck' ? wagon.hitched : currentTool >= 0));
   input.setUnloadVisible(mode === 'driving' && vehicleType === 'combine' && Object.keys(combineBin).length > 0);
+  input.setSellGrainVisible(wagonAtGrainBin() && hasSaleableWagonCargo() &&
+    (mode === 'driving' || reachableHold() === wagon));
 
   // M1: shop proximity check — show "Talk to shopkeeper" when near
   const shopNear = shop.isNear(character.group.position.x, character.group.position.z);
