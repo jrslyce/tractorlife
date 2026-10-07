@@ -459,11 +459,19 @@ export class Input {
     this._listen(this._target, 'gestureend', stop, { passive: false });
 
     // block pull-to-refresh / scrolling (page never scrolls anyway)
-    this._onTouchMove = function (e) { if (e.cancelable) e.preventDefault(); };
+    this._onTouchMove = function (e) {
+      // Modal lists need native one-finger scrolling; only the game surface
+      // should suppress page gestures.
+      if (e.target && e.target.closest && e.target.closest('#shop-overlay')) return;
+      if (e.cancelable) e.preventDefault();
+    };
     this._listen(document, 'touchmove', this._onTouchMove, { passive: false });
 
     // block double-tap zoom unless tapping a control
     this._onTouchStartZoom = function (e) {
+      if (e.target && e.target.closest && e.target.closest('#shop-overlay')) {
+        self._lastTapT = 0; return;
+      }
       if (e.touches && e.touches.length > 1) { stop(e); return; }
       if (isInteractive(e.target)) { self._lastTapT = 0; return; }
       var now = Date.now();
@@ -496,6 +504,7 @@ export class Input {
 
     this._onJoyStart = function (e) {
       if (locked()) return;                             // login gate
+      if (e.target && e.target.closest && e.target.closest('#shop-overlay')) return;
       if (self._joyId !== null) return;                 // one finger on the stick
       if (isInteractive(e.target)) return;              // buttons manage themselves
       var ct = e.changedTouches ? e.changedTouches[0] : null;
@@ -638,6 +647,8 @@ export class Input {
     if (this._reverse) {
       this._reverse.classList.remove('vt-active');
       this._reverse.setAttribute('aria-pressed', 'false');
+      this._reverse.setAttribute('aria-label', 'Switch to reverse gear');
+      this._reverse.textContent = 'R · REVERSE';
     }
   }
 
@@ -661,7 +672,7 @@ export class Input {
     exit.type = 'button'; exit.id = 'vt-exit-vehicle'; exit.textContent = '↗ EXIT';
     var reverse = document.createElement('button');
     reverse.type = 'button'; reverse.id = 'vt-reverse'; reverse.textContent = 'R · REVERSE';
-    reverse.setAttribute('aria-label', 'Toggle reverse gear');
+    reverse.setAttribute('aria-label', 'Switch to reverse gear');
     reverse.setAttribute('aria-pressed', 'false');
     pedals.appendChild(brake); pedals.appendChild(gas);
     wrap.appendChild(wheel); wrap.appendChild(pedals); wrap.appendChild(exit); wrap.appendChild(reverse);
@@ -673,13 +684,27 @@ export class Input {
     this._listen(exit, 'click', exitVehicle, false);
     document.body.appendChild(wrap);
     this._vehicleControls = wrap; this._wheel = wheel; this._gas = gas; this._brakePedal = brake; this._exitVehicle = exit; this._reverse = reverse;
-    this._listen(reverse, 'click', function (e) {
+    var toggleReverse = function (e) {
       if (e && e.cancelable) e.preventDefault();
       if (locked()) return;
       self._reverseMode = !self._reverseMode;
       reverse.classList.toggle('vt-active', self._reverseMode);
       reverse.setAttribute('aria-pressed', self._reverseMode ? 'true' : 'false');
+      reverse.setAttribute('aria-label', self._reverseMode ? 'Switch to forward gear' : 'Switch to reverse gear');
+      reverse.textContent = self._reverseMode ? 'D · FORWARD' : 'R · REVERSE';
       if (self._pedalDrive !== 0) self._pedalDrive = self._reverseMode ? -1 : 1;
+    };
+    // Touch press must not depend on a click: the document's gesture handling
+    // can cancel a click when a finger moves slightly before lifting.
+    this._listen(reverse, 'pointerdown', function (e) {
+      if (e.pointerType === 'touch' || e.pointerType === 'pen') {
+        self._lastReverseTouch = Date.now();
+        toggleReverse(e);
+      }
+    }, false);
+    this._listen(reverse, 'click', function (e) {
+      if (e.detail !== 0 && Date.now() - self._lastReverseTouch < BTN_GUARD) return;
+      toggleReverse(e);
     }, false);
 
     var lastWheelAngle = null;
