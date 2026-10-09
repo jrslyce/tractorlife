@@ -30,7 +30,6 @@ const RIPEN_SECONDS = { generic: 6, peas: 4, wheat: 5, corn: 7, sunflower: 8, pu
 // --- tuning ---
 const GROW_SPROUT_S = 5; // PLANTED -> GROWING
 const RIPEN_S = 6; // SPRAYED -> READY (only reachable after spray)
-const HARVEST_MONEY = 10; // per READY tile harvested
 const TILE_H = 0.16; // tile box height (flat voxel slab)
 const BLOCKS = 4; // crop overlay voxels per tile (InstancedMesh slots)
 const EPS = 1e-4; // bar-edge tolerance so grid-aligned bars hit exactly one row
@@ -276,7 +275,7 @@ export class Field {
     const { PLANTED, TILLED, GROWING, SPRAYED, READY } = TileState;
 
     for (let i = 0; i < this.count; i++) {
-      if (maxAffected > 0 && out.affected >= maxAffected) break;
+      if (Number.isFinite(maxAffected) && out.affected >= Math.max(0, maxAffected)) break;
       const dx = this._tx[i] - worldX;
       const dz = this._tz[i] - worldZ;
       const along = dx * cos + dz * sin; // heading axis (bar depth)
@@ -303,11 +302,11 @@ export class Field {
       if (next === TILLED) this._tally.tilled++;
       else if (next === PLANTED) this._tally.planted++;
       else if (next === SPRAYED) this._tally.sprayed++;
-      else if (next === HARVEST_MONEY_STATE) {
+      else if (next === TileState.HARVESTED) {
         this._tally.harvested++;
-        out.money += CROP_VALUES[this._cropTypes[i]] || HARVEST_MONEY;
+        // Legacy/default crops are grain too; payment happens at the store.
         const produceId = {
-          corn: 'harvest_corn', wheat: 'harvest_wheat', sunflower: 'harvest_sunflower',
+          generic: 'harvest_grain', corn: 'harvest_corn', wheat: 'harvest_wheat', sunflower: 'harvest_sunflower',
           pumpkin: 'harvest_pumpkin', peas: 'harvest_peas'
         }[this._cropTypes[i]];
         if (produceId) {
@@ -518,8 +517,6 @@ export class Field {
     if (this._cropMesh.instanceColor) this._cropMesh.instanceColor.needsUpdate = true;
   }
 }
-
-const HARVEST_MONEY_STATE = TileState.HARVESTED;
 
 // Legal transition per effect; returns target state, or null to skip the tile.
 const EFFECTS = {
