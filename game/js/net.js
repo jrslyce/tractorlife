@@ -338,7 +338,7 @@ function flushSharedRoadQueue() {
   return chain.then(function () { saveRoadQueue(remaining); });
 }
 
-function tickSave(getSession, getState) {
+export function tickSave(getSession, getState) {
   let session;
   try {
     session = getSession();

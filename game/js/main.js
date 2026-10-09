@@ -22,10 +22,12 @@ import { RealtimeClient } from './realtime.js';
 import { ITEM_BY_ID, packSize } from './items.js';
 import { Inventory } from './inventory.js';
 import { Wagon, WagonPanel, CargoHold, TRUCK_BED_SLOTS } from './wagon.js';
+import { GRAIN_VALUES, quoteGrain, acceptGrainSale, transferBinToWagon } from './grain-commerce.js';
+import { GrainSaleUI } from './grain-sale-ui.js';
 import { PerformanceBudget } from './performance.js';
 import { steeringYawDelta } from './vehicle-physics.js';
 import { TOOL_ORDER, COMBINE_HEAD_ORDER, buildTool, buildCombineHead } from './equipment.js';
-import { login, restoreRememberedSession, rememberedEmail, hasRememberedEmail, forgetRememberedCredentials, startAutosave, fetchFarmers, fetchFarmState, fetchSharedWorld, placeSharedRoad, sendGift } from './net.js';
+import { login, restoreRememberedSession, rememberedEmail, hasRememberedEmail, forgetRememberedCredentials, startAutosave, tickSave, fetchFarmers, fetchFarmState, fetchSharedWorld, placeSharedRoad, sendGift } from './net.js';
 
 // per-vehicle scale; wheel roll radius and tool width read from this table
 const VEHICLE_SCALES = { tractor: 0.5, combine: 0.5, truck: 0.5 };
@@ -270,26 +272,41 @@ function wagonAtGrainBin() {
 }
 
 function hasSaleableWagonCargo() {
-  return wagon.hasAny(function (id) { return /^harvest_(corn|wheat|sunflower|pumpkin|peas)$/.test(id); });
+  return wagon.hasAny(function (id) { return Object.prototype.hasOwnProperty.call(GRAIN_VALUES, id); });
 }
+
+const grainSaleUI = new GrainSaleUI({
+  getMoney: function () { return money; },
+  onAccept: function (quote) {
+    const result = acceptGrainSale(wagon, quote, ITEM_BY_ID, wagonAtGrainBin());
+    if (!result.ok) return result;
+    money += result.value;
+    tickSave(function () { return session; }, snapshot);
+    lastSig = '';
+    showToast('🌾 Sold ' + result.quantity + ' crop units — $' + result.value + ' added to your account.');
+    updateHUD();
+    return result;
+  }
+});
+let grainOfferSeen = '';
 
 function sellWagonCrops() {
   if (!wagonAtGrainBin()) { showToast('Drive the loaded wagon onto the grain-bin drop-off apron first.'); return false; }
-  const values = { harvest_corn: 7, harvest_wheat: 4, harvest_sunflower: 10, harvest_pumpkin: 18, harvest_peas: 2 };
-  let totalQty = 0, totalValue = 0;
-  for (let i = 0; i < wagon.cargo.length; i++) {
-    const stack = wagon.cargo[i];
-    if (!stack || !values[stack.itemId]) continue;
-    totalQty += stack.qty;
-    totalValue += stack.qty * values[stack.itemId];
-    wagon.cargo[i] = null;
-  }
-  if (!totalQty) { showToast('The wagon has no crops to sell.'); return false; }
-  money += totalValue;
-  lastSig = '';
-  showToast('🌾 Grain delivered: sold ' + totalQty + ' crop units for $' + totalValue + '!');
-  updateHUD();
+  const quote = quoteGrain(wagon.cargo, ITEM_BY_ID);
+  if (!quote.quantity) { showToast('The wagon has no crops to sell.'); return false; }
+  speed = 0;
+  grainOfferSeen = quote.signature;
+  grainSaleUI.open(quote);
   return true;
+}
+
+function checkGrainDelivery() {
+  if (!wagonAtGrainBin()) { grainOfferSeen = ''; return; }
+  if (window.VT_LOCKED !== false || !hasSaleableWagonCargo()) return;
+  // Only the player actually hauling/reaching this wagon should get an offer.
+  if (!(mode === 'driving' && vehicleType === 'truck' && wagon.hitched) && reachableHold() !== wagon) return;
+  const quote = quoteGrain(wagon.cargo, ITEM_BY_ID);
+  if (quote.signature !== grainOfferSeen) sellWagonCrops();
 }
 
 // The cargo hold the walking player can reach right now (wagon first).
@@ -723,6 +740,7 @@ const shopUI = new ShopUI({
   getMoney: function () { return money; },
   getProduce: function () {
   const goods = [
+      ['harvest_grain', 'Grain', '🌾', GRAIN_VALUES.harvest_grain],
       ['harvest_pumpkin', 'Pumpkins', '🎃', 18],
       ['harvest_peas', 'Peas', '🟢', 2],
       ['harvest_corn', 'Corn', '🌽', 7],
@@ -979,6 +997,7 @@ const lookAt = new THREE.Vector3();
 
 function stepPhysics(dt) {
   if (mode !== 'driving') return;
+  if (grainSaleUI.isOpen()) { speed = 0; return; }
   const drive = input.drive;
   // the truck is the fast road machine for hauling the wagon to the shop
   const maxForward = vehicleType === 'combine' ? 5.5 : (vehicleType === 'truck' ? TRUCK_MAX_FWD : MAX_FWD);
@@ -1237,7 +1256,7 @@ function stepFieldWork(dt) {
   outOfSupply = hasSupplyFor(toolEffect) ? '' : toolEffect;
   seasonBlocked = false;
   // work only counts while driving, and only over fields on your own farm
-  if (mode === 'driving' && toolGroup && Math.abs(speed) > 0.4) {
+  if (window.VT_LOCKED === false && mode === 'driving' && toolGroup && Math.abs(speed) > 0.4) {
     const mountKey = toolGroup.userData.mount === 'front' ? 'front' : 'rear';
     const mount = vehicle.userData.mounts[mountKey];
     const offset = typeof toolGroup.userData.workOffset === 'number'
@@ -1282,9 +1301,9 @@ function stepFieldWork(dt) {
         for (let i = 0; i < farmFields.length; i++) {
           if (farmFields[i].isInside(tmpLocal.x, tmpLocal.z)) {
             const res = farmFields[i].applyEffect(
-              tmpLocal.x, tmpLocal.z, width, effect, -theta, cropType, supplyLimit
+              tmpLocal.x, tmpLocal.z, width, effect, -theta, cropType,
+              needsSupply || effect === 'harvest' ? supplyLimit : undefined
             );
-            if (res.money) money += res.money;
             if (needsSupply && res.affected > 0) inventory.useFromSlot(supplySlot, res.affected);
             if (res.produce) {
               Object.keys(res.produce).forEach(function (id) {
@@ -1339,6 +1358,7 @@ function stepFieldWork(dt) {
 
 function unloadCombineIntoWagon() {
   if (mode !== 'driving' || vehicleType !== 'combine') return;
+  vehicle.updateMatrixWorld();
   const auger = vehicle.localToWorld(new THREE.Vector3(-1.5, 0, 3.5));
   if (wagon.distanceTo(auger.x, auger.z) > 5) {
     showToast('Move the wagon beside the combine’s side auger to unload.');
@@ -1346,19 +1366,8 @@ function unloadCombineIntoWagon() {
   }
   const total = combineBinCount();
   if (!total) { showToast('The combine bin is empty.'); return; }
-  const missingSlots = Object.keys(combineBin).filter(function (id) {
-    return !wagon.cargo.some(function (stack) { return stack && stack.itemId === id; });
-  }).length;
-  const freeSlots = wagon.cargo.filter(function (stack) { return !stack; }).length;
-  if (missingSlots > freeSlots) { showToast('The wagon has no room for this harvest.'); return; }
-  for (const id of Object.keys(combineBin)) {
-    const result = wagon.add(id, combineBin[id]);
-    if (!result.ok) {
-      showToast(result.error || 'The wagon is full.');
-      return;
-    }
-  }
-  combineBin = {};
+  const result = transferBinToWagon(combineBin, wagon);
+  if (!result.ok) { showToast(result.error || 'The wagon is full.'); return; }
   showToast('🌾 Unloaded ' + total + ' units from the side auger into the wagon.');
   lastSig = '';
   updateHUD();
@@ -1689,7 +1698,7 @@ function applyState(s) {
   combineBin = {};
   if (s.combineBin && typeof s.combineBin === 'object') {
     Object.keys(s.combineBin).forEach(function (id) {
-      if (/^harvest_(corn|wheat|sunflower)$/.test(id) && Number.isFinite(s.combineBin[id])) {
+      if (/^harvest_(grain|corn|wheat|sunflower)$/.test(id) && Number.isFinite(s.combineBin[id])) {
         combineBin[id] = Math.max(0, Math.min(COMBINE_BIN_CAPACITY, Math.floor(s.combineBin[id])));
       }
     });
@@ -2312,6 +2321,7 @@ renderer.setAnimationLoop(function () {
   environment.update(dt, Object.assign({}, climateState, { riverLevel: farmSystems.water.riverLevel }));
   stepPhysics(dt);
   stepWagon();
+  checkGrainDelivery();
   stepCharacter(dt);
   stepFieldWork(dt);
   maybeFetchForeignState();

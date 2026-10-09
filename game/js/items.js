@@ -36,6 +36,7 @@ export var ITEMS = [
   { id: 'pumpkin_pile', name: 'Pumpkin Pile', emoji: '🎃', price: 75, category: 'Autumn decor', description: 'A stack of bright fall pumpkins.' },
   { id: 'corn_shocks', name: 'Corn Shocks', emoji: '🌽', price: 48, category: 'Autumn decor', description: 'Golden bundles of dried corn.' },
   { id: 'mailbox', name: 'Mailbox', emoji: '📮', price: 42, category: 'Autumn decor', description: 'A cute mailbox for your driveway.' },
+  { id: 'harvest_grain', name: 'Harvested Grain', emoji: '🌾', price: 0, category: 'Produce', description: 'Grain harvested from legacy or mixed crops. Deliver it to the store grain depot.' },
   { id: 'harvest_corn', name: 'Harvested Corn', emoji: '🌽', price: 0, category: 'Produce', description: 'Fresh corn harvested by your combine.' },
   { id: 'harvest_wheat', name: 'Harvested Wheat', emoji: '🌾', price: 0, category: 'Produce', description: 'Fresh wheat harvested by your combine.' },
   { id: 'harvest_sunflower', name: 'Sunflower Heads', emoji: '🌻', price: 0, category: 'Produce', description: 'Sunflower heads harvested by your combine.' },

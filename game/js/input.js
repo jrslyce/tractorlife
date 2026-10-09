@@ -328,6 +328,16 @@ export class Input {
   }
 
   update(dt) {
+    if (locked()) {
+      this._held = {};
+      this._syncKeyAxes();
+      this._clearVehicleControls();
+      this._joyDrive = this._joyTurn = 0;
+      this._drive = this._turn = this._charDrive = this._charTurn = 0;
+      this._brake = this._charJump = false;
+      this._pending.length = 0;
+      return;
+    }
     if (typeof dt !== 'number' || !(dt > 0)) dt = 0;
     if (dt > MAX_DT) dt = MAX_DT;
 
@@ -412,9 +422,7 @@ export class Input {
       }
     };
     this._onKeyUp = function (e) {
-      if (locked()) return;
-      var tgt2 = e.target;
-      if (tgt2 && (tgt2.tagName === 'INPUT' || tgt2.tagName === 'TEXTAREA')) return;
+      // Releases must be honored even if a modal acquired focus while driving.
       var code = keyName(e);
       delete self._held[code];
       self._syncKeyAxes();
@@ -462,7 +470,7 @@ export class Input {
     this._onTouchMove = function (e) {
       // Modal lists need native one-finger scrolling; only the game surface
       // should suppress page gestures.
-      if (e.target && e.target.closest && e.target.closest('#shop-overlay')) return;
+      if (e.target && e.target.closest && e.target.closest('#shop-overlay, .grain-sale-overlay')) return;
       if (e.cancelable) e.preventDefault();
     };
     this._listen(document, 'touchmove', this._onTouchMove, { passive: false });
