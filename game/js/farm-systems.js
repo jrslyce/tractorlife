@@ -144,6 +144,9 @@ export class FarmSystems {
       const action = a.escaped ? 'herd' : !a.feedToday ? 'feed' : !a.waterToday ? 'water' : '';
       if (action) out.push({ kind: a.escaped ? 'escaped-animal' : 'animal', id: a.id, x: this.originX - 4 + (a.id - 1) * 2, z: a.escaped ? -20 : -28, action });
     }
+    const breedingTarget = this.livestock.getBreedCandidate();
+    if (breedingTarget !== null) out.push({ kind: 'animal', id: breedingTarget,
+      x: this.originX - 4 + (breedingTarget - 1) * 2, z: -28, action: 'breed' });
     for (const tree of this.woodland.trees) out.push({ kind: tree.stage === 'stump' ? 'stump' : 'tree', id: tree.id, x: tree.x, z: tree.z, action: tree.stage === 'stump' ? 'clear-stump' : 'fell' });
     for (const spot of [{ x: this.originX + 55, z: 54 }, { x: this.originX + 82, z: 61 }, { x: this.originX + 110, z: 53 }]) {
       out.push({ kind: 'sapling-spot', id: spot, x: spot.x, z: spot.z, action: 'plant' });
@@ -156,6 +159,7 @@ export class FarmSystems {
     if (!this.water.channel) waterActions.push('build-channel');
     if (!this.water.pump) waterActions.push('build-pump');
     else if (this.water.pumpFuel <= 0) waterActions.push('fuel-pump');
+    if ((this.water.channel || this.water.pump) && !this.water.sprinkler) waterActions.push('build-sprinkler');
     if (this.water.bankHealth < 0.99) waterActions.push('repair-bank');
     waterActions.forEach((action, i) => out.push({ kind:'riverbank', id:action, x:bank.x + (i - (waterActions.length - 1) / 2) * 2.2, z:bank.z, action }));
     if (this.water.channel || this.water.pump) {

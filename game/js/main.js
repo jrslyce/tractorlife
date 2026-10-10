@@ -1083,14 +1083,17 @@ function updateHUD() {
   hudRight.innerHTML =
     '<div>📅 <b>Day ' + climateState.day + ' · ' + climateState.season + '</b></div>' +
     '<div>🌤️ <b>' + climateState.weather + '</b></div>' +
+    '<div>🔭 Tomorrow <b>' + climate.getForecast(1)[0].weather + '</b></div>' +
     '<div>🌳 Trees <b>' + farmStatus.woodland.trees.length + '</b></div>' +
     '<div>🐄 Animals <b>' + farmStatus.livestock.animals.length + '</b></div>' +
     '<div>🌊 River <b>' + Math.round(farmStatus.water.riverLevel * 100) + '%</b></div>' +
+    (farmStatus.water.sprinkler ? '<div>💧 Sprinklers <b>on</b></div>' : '') +
     '<div>📬 Requests <b>' + farmStatus.requests.length + '</b></div>' +
     '<div>🔧 Repairs <b>' + breakdowns.length + '</b></div>' +
     '<div>🐟 Fish <b>' + Math.round(farmStatus.water.fishPopulation) + '</b></div>' +
     '<div>🟫 Soil <b>' + s.tilled + '</b></div>' +
     '<div>🌱 Crops <b>' + s.planted + '</b></div>' +
+    '<div>🪴 Soil fertility <b>' + s.fertility + '%</b></div>' +
     '<div>🫧 Treated <b>' + s.sprayed + '</b></div>' +
     (s.weeds || s.bugs ? '<div>🌿 Weeds <b>' + s.weeds + '</b> · 🪰 Bugs <b>' + s.bugs + '</b></div>' : '') +
     '<div>🌾 Picked <b>' + s.harvested + '</b></div>' +
@@ -1584,6 +1587,7 @@ function stepFieldWork(dt) {
         if (i === ownedSlot && waterFields[j]) {
           const waterField = waterFields[j];
           if (climateState.weather === 'drought' && waterField.water < 0.3) growthRate = 0.35;
+          else if (farmSystems.water.sprinkler && waterField.water >= 0.7) growthRate *= 1.12;
           if (waterField.flooded) {
             growthRate = 0.15;
             floodStressElapsed[j] += cropDt;

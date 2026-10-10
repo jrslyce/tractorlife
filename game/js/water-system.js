@@ -5,6 +5,7 @@ const DEFAULTS = {
   evaporationPerSecond: 0.00008, rainRechargePerSecond: 0.00015,
   channelCost: { wood: 3 }, pumpCost: { wood: 5, metal: 2 },
   channelWaterPerSecond: 0.025, pumpWaterPerSecond: 0.06, pumpFuelPerSecond: 0.01,
+  sprinklerCost: { wood: 4, metal: 2 }, sprinklerWaterPerSecond: 0.025,
   irrigationCost: { water: 1 }, irrigationBoost: 0.25,
   floodLevel: 0.72, floodDamagePerSecond: 0.025,
   erosionLevel: 0.62, erosionPerSecond: 0.008,
@@ -30,6 +31,7 @@ export class WaterSystem {
     this.fields = fields.map((f, i) => ({ id: f.id ?? i, elevation: number(f.elevation), health: clamp(number(f.health, 1), 0, 1), water: clamp(number(f.water), 0, 1), boost: Math.max(0, number(f.boost)), flooded: !!f.flooded }));
     this.channel = false;
     this.pump = false;
+    this.sprinkler = false;
     this.pumpFuel = 0;
     this.events = [];
   }
@@ -56,6 +58,10 @@ export class WaterSystem {
     }
     const delivered = (supply + (pumping ? this.config.pumpWaterPerSecond : 0)) * dt;
     if (delivered > 0) this.fields.forEach(f => { f.water = clamp(f.water + delivered, 0, 1); });
+    if (this.sprinkler && (this.channel || pumping)) {
+      const sprinklerWater = this.config.sprinklerWaterPerSecond * dt;
+      this.fields.forEach(f => { f.water = clamp(f.water + sprinklerWater, 0, 1); });
+    }
     this.fields.forEach(f => {
       f.flooded = this.riverLevel >= this.config.floodLevel && f.elevation <= this.riverLevel;
       if (f.flooded) {
@@ -77,6 +83,11 @@ export class WaterSystem {
     let costs = {}, rewards = {}, event = action;
     if (action === 'build-channel') { if (this.channel) return fail('already-built'); costs = this.config.channelCost; }
     else if (action === 'build-pump') { if (this.pump) return fail('already-built'); costs = this.config.pumpCost; }
+    else if (action === 'build-sprinkler') {
+      if (this.sprinkler) return fail('already-built');
+      if (!this.channel && !this.pump) return fail('no-water-system');
+      costs = this.config.sprinklerCost;
+    }
     else if (action === 'fuel-pump') { if (!this.pump) return fail('pump-not-built'); costs = { fuel: number(this.config.fuelCost, 1) }; }
     else if (action === 'irrigate') {
       if (!field) return fail('field-not-found');
@@ -96,6 +107,7 @@ export class WaterSystem {
     for (const [key, amount] of Object.entries(rewards)) resources[key] = number(resources[key]) + amount;
     if (action === 'build-channel') this.channel = true;
     if (action === 'build-pump') this.pump = true;
+    if (action === 'build-sprinkler') this.sprinkler = true;
     if (action === 'fuel-pump') this.pumpFuel += number(this.config.fuelAdded, 10);
     if (action === 'irrigate') { field.water = clamp(field.water + this.config.irrigationBoost, 0, 1); field.boost += this.config.irrigationBoost; }
     if (action === 'repair-bank' || action === 'reinforce-bank') this.bankHealth = clamp(this.bankHealth + this.config.bankRepairAmount, 0, 1);
@@ -108,14 +120,14 @@ export class WaterSystem {
 
   addPollution(amount) { this.pollution = clamp(this.pollution + Math.max(0, number(amount)), 0, 1); return this.pollution; }
   getField(id) { const f = this.fields.find(x => x.id === id); return f ? copy(f) : null; }
-  getStatus() { return { time: this.time, riverLevel: this.riverLevel, pollution: this.pollution, bankHealth: this.bankHealth, fishHealth: this.fishHealth, fishPopulation: this.config.fishBase * this.fishHealth * (1 - this.pollution), channel: this.channel, pump: this.pump, pumpFuel: this.pumpFuel, fields: copy(this.fields), events: copy(this.events) }; }
+  getStatus() { return { time: this.time, riverLevel: this.riverLevel, pollution: this.pollution, bankHealth: this.bankHealth, fishHealth: this.fishHealth, fishPopulation: this.config.fishBase * this.fishHealth * (1 - this.pollution), channel: this.channel, pump: this.pump, pumpFuel: this.pumpFuel, sprinkler: this.sprinkler, fields: copy(this.fields), events: copy(this.events) }; }
   query() { return this.getStatus(); }
-  serialize() { return { version: 1, seed: this.seed, config: copy(this.config), time: this.time, riverLevel: this.riverLevel, pollution: this.pollution, bankHealth: this.bankHealth, fishHealth: this.fishHealth, fields: copy(this.fields), channel: this.channel, pump: this.pump, pumpFuel: this.pumpFuel, events: copy(this.events) }; }
+  serialize() { return { version: 1, seed: this.seed, config: copy(this.config), time: this.time, riverLevel: this.riverLevel, pollution: this.pollution, bankHealth: this.bankHealth, fishHealth: this.fishHealth, fields: copy(this.fields), channel: this.channel, pump: this.pump, pumpFuel: this.pumpFuel, sprinkler: this.sprinkler, events: copy(this.events) }; }
   restore(data) {
     if (!data || data.version !== 1 || !Array.isArray(data.fields) || !Number.isFinite(data.riverLevel)) return false;
     this.seed = Number(data.seed) >>> 0; this.config = { ...DEFAULTS, ...copy(data.config || {}), weatherLevel: { ...DEFAULTS.weatherLevel, ...((data.config || {}).weatherLevel || {}) } };
     this.time = Math.max(0, number(data.time)); this.riverLevel = clamp(data.riverLevel, this.config.minRiverLevel, this.config.maxRiverLevel);
     this.pollution = clamp(number(data.pollution), 0, 1); this.bankHealth = clamp(number(data.bankHealth, 1), 0, 1); this.fishHealth = clamp(number(data.fishHealth, 1), 0, 1);
-    this.fields = copy(data.fields); this.channel = !!data.channel; this.pump = !!data.pump; this.pumpFuel = Math.max(0, number(data.pumpFuel)); this.events = copy(data.events || []); return true;
+    this.fields = copy(data.fields); this.channel = !!data.channel; this.pump = !!data.pump; this.pumpFuel = Math.max(0, number(data.pumpFuel)); this.sprinkler = !!data.sprinkler; this.events = copy(data.events || []); return true;
   }
 }

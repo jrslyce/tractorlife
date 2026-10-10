@@ -27,6 +27,24 @@ test('channel and fueled pump irrigate fields and fuel is consumed explicitly', 
   assert.equal(resources.water, 0);
 });
 
+test('sprinkler requires a built water source, waters every field, and persists', () => {
+  const water = new WaterSystem({ fields: [{ id: 1, water: 0.2 }, { id: 2, water: 0.2 }],
+    config: { sprinklerWaterPerSecond: 0.1, evaporationPerSecond: 0 } });
+  const dryResources = { wood: 3, metal: 1 };
+  assert.equal(water.interact('build-sprinkler', dryResources).reason, 'no-water-system');
+  assert.deepEqual(dryResources, { wood: 3, metal: 1 });
+  water.channel = true;
+  const resources = { wood: 4, metal: 2 };
+  assert.equal(water.interact('build-sprinkler', resources).success, true);
+  assert.deepEqual(resources, { wood: 0, metal: 0 });
+  water.update(2, 'clear');
+  assert.ok(water.fields.every(field => field.water > 0.2));
+  const restored = new WaterSystem();
+  assert.equal(restored.restore(water.serialize()), true);
+  assert.equal(restored.getStatus().sprinkler, true);
+  assert.deepEqual(restored.getStatus().fields, water.getStatus().fields);
+});
+
 test('bank erodes in high water and repair restores health with a cost', () => {
   const water = new WaterSystem({ riverLevel: 0.9, config: { erosionPerSecond: 0.2 } });
   water.update(2, 'storm');
