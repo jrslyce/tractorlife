@@ -115,7 +115,9 @@ const groundMaterial = new THREE.MeshStandardMaterial({ color: '#5aa02c', roughn
 groundMaterial.onBeforeCompile = function (shader) {
   shader.uniforms.uTerrainCutout = terrainGroundCutout;
   shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vTerrainWorldPosition;');
-  shader.vertexShader = shader.vertexShader.replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvTerrainWorldPosition = worldPosition.xyz;');
+  // The ShaderChunk's `worldPosition` declaration is conditional in Three.js
+  // and is absent for this unlit geometry path; `transformed` is always present.
+  shader.vertexShader = shader.vertexShader.replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvTerrainWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;');
   shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vTerrainWorldPosition;\nuniform vec4 uTerrainCutout;');
   shader.fragmentShader = shader.fragmentShader.replace('#include <clipping_planes_fragment>',
     '#include <clipping_planes_fragment>\nif (uTerrainCutout.z > 0.5 && vTerrainWorldPosition.x >= uTerrainCutout.x && vTerrainWorldPosition.x <= uTerrainCutout.z && vTerrainWorldPosition.z >= uTerrainCutout.y && vTerrainWorldPosition.z <= uTerrainCutout.w) discard;');
