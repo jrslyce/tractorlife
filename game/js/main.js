@@ -3,7 +3,7 @@
 // (character.js) and three vehicles (tractor.js, combine.js, vehicle.js) with
 // a walking/driving mode state machine.
 // Imports: three (importmap 0.160.0), ./input.js, ./world.js, ./character.js,
-// ./vehicle.js, ./tractor.js, ./combine.js, ./equipment.js, ./net.js
+// ./vehicle.js, ./tractor.js, ./combine.js, ./equipment.js, ./inventory.js, ./net.js
 import * as THREE from 'three';
 import { Input } from './input.js';
 import { buildTractor, applyLivery, LIVERY_NAMES } from './tractor.js';
@@ -11,6 +11,7 @@ import { buildCombine } from './combine.js';
 import { buildTruck } from './vehicle.js';
 import { Character } from './character.js';
 import { World } from './world.js';
+import { Inventory } from './inventory.js';
 import { TOOL_ORDER, COMBINE_HEAD_ORDER, buildTool, buildCombineHead } from './equipment.js';
 import { login, restoreRememberedSession, rememberedEmail, hasRememberedEmail, forgetRememberedCredentials, startAutosave, fetchFarmers, fetchFarmState } from './net.js';
 
@@ -106,6 +107,11 @@ hayBale(57, 0.8, -13, 0.7);
 // All field work / stats / serialize / restore go through world.getFarms().
 const world = new World(scene, '');
 
+// ---------------------------------------------------------------- M3: Inventory
+// Minecraft-style hotbar with 9 slots. Items render in character's right hand.
+var inventory = new Inventory();
+inventory.install(document.body);
+
 // ---------------------------------------------------------------- vehicles
 const tractor = buildTractor('red');
 const combine = buildCombine('green');
@@ -121,6 +127,7 @@ for (let vi = 0; vi < MACHINES.length; vi++) {
 // ---------------------------------------------------------------- character
 const character = new Character();
 scene.add(character.group);
+inventory.setCharacter(character);
 
 // ---------------------------------------------------------------- input
 const input = new Input();
@@ -690,6 +697,9 @@ function drainActions() {
       cycleColor();
     } else if (a === 'cycleMachine') {
       if (mode === 'driving') switchMachine();
+    } else if (typeof a === 'string' && a.indexOf('hotbar:') === 0) {
+      inventory.selectSlot(Number(a.slice(7)));
+      inventory.updateDOM();
     }
   }
   updateHUD();
@@ -813,7 +823,7 @@ let session = null;
 
 function snapshot() {
   return {
-    v: 2,
+    v: 3,
     machine: vehicleType,
     money: Math.max(0, Math.floor(money)),
     tool: currentTool,
@@ -827,13 +837,15 @@ function snapshot() {
     cz: character.group.position.z,
     ctheta: character.group.rotation.y,
     world: world.serialize(),
+    inventory: inventory.serialize(),
   };
 }
 
-// Accepts the v2 shape ({world: …}) and the legacy v1 shape (flat `fields`
+  // Accepts the v2/v3 shape ({world: …}) and the legacy v1 shape (flat `fields`
 // array of 4 Field serialisations, no `world` key, always driving).
 function applyState(s) {
   if (!s || typeof s !== 'object') return false;
+  if (s.inventory && typeof s.inventory === 'object') inventory.restore(s.inventory);
   const legacy = s.v !== 2 && Array.isArray(s.fields);
 
   // --- machine ---
@@ -1244,6 +1256,7 @@ renderer.setAnimationLoop(function () {
   updateSun();
   updateHUD();
   updateFarmLabels();
+  inventory.setVisible(mode === 'walking' && window.VT_LOCKED === false);
   renderer.render(scene, camera);
 });
 
