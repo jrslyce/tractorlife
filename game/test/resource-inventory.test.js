@@ -80,6 +80,26 @@ test('restoring missing or empty icons derives catalog icons for collected items
   assert.equal(inventory.getSelectedItem().emoji, '🪓');
 });
 
+test('inventory restore rejects malformed stacks atomically and clears omitted legacy slots', () => {
+  const inventory = new Inventory();
+  inventory.buy('wood', 3);
+  inventory.buy('stone', 2);
+  const before = inventory.serialize();
+  for (const bad of [
+    { slots: [{ itemId: 'wood', qty: -1 }] },
+    { slots: [{ itemId: 'wood', qty: 1.5 }] },
+    { slots: [{ itemId: '__proto__', qty: 1 }] },
+    { slots: [], selectedSlot: 1.5 },
+    { slots: new Array(10).fill(null) }
+  ]) {
+    assert.equal(inventory.restore(bad), false);
+    assert.deepEqual(inventory.serialize(), before);
+  }
+  assert.equal(inventory.restore({ slots: [{ itemId: 'wood', qty: 1 }], selectedSlot: 0 }), true);
+  assert.equal(inventory.getCount('wood'), 1);
+  assert.equal(inventory.getSlot(1), null);
+});
+
 test('resource rules give exact drops and tool timing without consuming tools', () => {
   assert.deepEqual(getBreakRule('wood', null, 'tree'), {
     duration: 5, itemId: 'wood', quantity: 3, label: 'Punch tree'

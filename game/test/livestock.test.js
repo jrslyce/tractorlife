@@ -63,11 +63,21 @@ test('healthy same-species animals can breed once after daily care and offspring
   assert.equal(result.success, true);
   assert.equal(resources.feed, 0);
   assert.deepEqual(stock.animals[3], { id: 4, kind: 'cow', welfare: 0.8, fed: false, watered: false,
-    escaped: false, feedToday: false, waterToday: false });
+    escaped: false, feedToday: false, waterToday: false, bredDay: 0 });
   const restored = new Livestock();
   assert.equal(restored.restore(stock.serialize()), true);
   assert.deepEqual(restored.getStatus(), stock.getStatus());
   assert.equal(stock.interact('breed', 1, resources).success, false);
+  resources.feed = 30;
+  assert.equal(stock.interact('breed', 1, resources).reason, 'already-bred-today');
+  assert.equal(restored.interact('breed', 2, resources).reason, 'already-bred-today');
+  assert.equal(stock.getBreedCandidate(), null);
+  stock.update(stock.config.dayLength);
+  for (const id of [1, 2]) {
+    stock.interact('feed', id, resources);
+    stock.interact('water', id, { water: 1 });
+  }
+  assert.equal(stock.interact('breed', 1, resources).success, true);
 });
 
 test('breeding rejects mismatched or uncared animals and herd capacity atomically', () => {
