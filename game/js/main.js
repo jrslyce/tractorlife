@@ -426,23 +426,18 @@ renderer.domElement.addEventListener('pointerdown', function (e) {
     for (let i = 0; i < fields.length; i++) {
       if (!fields[i].isInside(groundHit.x, groundHit.z)) continue;
       const tile = fields[i].worldToTile(groundHit.x, groundHit.z);
-      if (tile && inventory.canAdd('harvest_' + (tile.cropType === 'peas' ? 'peas' : tile.cropType))) {
-        // continue into the harvest transaction below
-      } else if (tile && (tile.cropType === 'pumpkin' || tile.cropType === 'peas') && tile.state === 'ready') {
+      const crop = fields[i].harvestAt(groundHit.x, groundHit.z,
+        function (itemId, quantity) { return inventory.canAdd(itemId, quantity); });
+      if (!crop && tile && (tile.cropType === 'pumpkin' || tile.cropType === 'peas') && tile.state === 'ready') {
         e.stopImmediatePropagation();
         showToast('Your inventory is full — make room before picking.');
         return;
       }
-      const crop = fields[i].harvestAt(groundHit.x, groundHit.z);
       if (!crop) return;
-      const added = inventory.buy(crop.itemId, 1);
-      if (!added.ok) {
-        e.stopImmediatePropagation();
-        showToast('Your inventory is full — make room before picking.');
-        return;
-      }
+      inventory.buy(crop.itemId, crop.quantity || 1);
       lastSig = '';
-      showToast(crop.itemId === 'harvest_pumpkin' ? '🎃 Pumpkin picked — sell it at the shop or place it in Build mode!' : '🟢 Peas picked — sell them at the shop!');
+      showToast((crop.grade === 'premium' ? '✨ Premium harvest! Bonus crop collected. ' : '') +
+        (crop.itemId === 'harvest_pumpkin' ? '🎃 Pumpkin picked — sell it at the shop or place it in Build mode!' : '🟢 Peas picked — sell them at the shop!'));
       e.stopImmediatePropagation();
       updateHUD();
       return;
@@ -1557,7 +1552,8 @@ function stepFieldWork(dt) {
           if (farmFields[i].isInside(tmpLocal.x, tmpLocal.z)) {
             const res = farmFields[i].applyEffect(
               tmpLocal.x, tmpLocal.z, width, effect, -theta, cropType,
-              needsSupply || effect === 'harvest' ? supplyLimit : undefined
+              needsSupply || effect === 'harvest' ? supplyLimit : undefined,
+              effect === 'harvest' ? supplyLimit : undefined
             );
             if (needsSupply && res.affected > 0) inventory.useFromSlot(supplySlot, res.affected);
             if (res.produce) {

@@ -1,16 +1,19 @@
 import { readFile } from 'node:fs/promises';
 import { CropProblems } from '../../js/crop-problems.js';
+import { SOIL_START } from '../../js/soil-health.js';
 
 // Real simulation methods without a GPU or rendering allocation.
 const source = await readFile(new URL('../../js/field.js', import.meta.url), 'utf8');
 export const { Field, TileState } = await import('data:text/javascript;base64,' +
   Buffer.from(source.replace("import * as THREE from 'three';", 'const THREE = {};')
-    .replace("'./crop-problems.js'", JSON.stringify(new URL('../../js/crop-problems.js', import.meta.url).href))).toString('base64'));
+    .replaceAll("'./crop-problems.js'", JSON.stringify(new URL('../../js/crop-problems.js', import.meta.url).href))
+    .replaceAll("'./soil-health.js'", JSON.stringify(new URL('../../js/soil-health.js', import.meta.url).href))).toString('base64'));
 
 export function makeField(crop = 'wheat', state = TileState.PLANTED, count = 9, cols = 3) {
   const field = Object.create(Field.prototype);
   Object.assign(field, { count, cols, rows: Math.ceil(count / cols), tile: 1, originX: 0, originZ: 0,
     _states: new Array(count).fill(state), _cropTypes: new Array(count).fill(crop),
+    _lastCropTypes: new Array(count).fill(''), _soilFertility: new Uint8Array(count).fill(SOIL_START), _rotated: new Uint8Array(count),
     _timers: new Float32Array(count), _fertilized: new Uint8Array(count),
     _tx: Array.from({ length: count }, (_, i) => i % cols),
     _tz: Array.from({ length: count }, (_, i) => Math.floor(i / cols)),

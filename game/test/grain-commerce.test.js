@@ -8,12 +8,14 @@ import { ITEM_BY_ID } from '../js/items.js';
 const source = await readFile(new URL('../js/field.js', import.meta.url), 'utf8');
 const { Field, TileState } = await import('data:text/javascript;base64,' +
   Buffer.from(source.replace("import * as THREE from 'three';", 'const THREE = {};')
-    .replace("'./crop-problems.js'", JSON.stringify(new URL('../js/crop-problems.js', import.meta.url).href))).toString('base64'));
+    .replaceAll("'./crop-problems.js'", JSON.stringify(new URL('../js/crop-problems.js', import.meta.url).href))
+    .replaceAll("'./soil-health.js'", JSON.stringify(new URL('../js/soil-health.js', import.meta.url).href))).toString('base64'));
 function readyField(crop = 'generic', count = 4) {
   const field = Object.create(Field.prototype);
   Object.assign(field, { count, tile: 2, _tx: new Array(count).fill(0),
     _tz: Array.from({ length: count }, (_, i) => i * 2),
     _states: new Array(count).fill(TileState.READY), _cropTypes: new Array(count).fill(crop),
+    _lastCropTypes: new Array(count).fill(''), _soilFertility: new Uint8Array(count).fill(72), _rotated: new Uint8Array(count),
     _timers: new Array(count).fill(0), _fertilized: new Array(count).fill(0), _timedCount: 0,
     _tally: { harvested: 0 }, _refresh() {} });
   return field;
@@ -32,7 +34,8 @@ function hold(cargo = new Array(12).fill(null)) {
 test('legacy/default ready crops fill the bin instead of paying instant money', () => {
   const field = readyField();
   const result = field.applyEffect(0, 0, 20, 'harvest', 0, 'generic', 200);
-  assert.deepEqual(result, { affected: 4, money: 0, produce: { harvest_grain: 4 } });
+  assert.deepEqual(result, { affected: 4, money: 0, produceCount: 4,
+    produce: { harvest_grain: 4 }, quality: { premium: 0, standard: 4, low: 0 } });
   assert.equal(field.applyEffect(0, 0, 20, 'harvest', 0).affected, 0);
 });
 
