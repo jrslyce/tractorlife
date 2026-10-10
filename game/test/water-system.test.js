@@ -45,6 +45,19 @@ test('sprinkler requires a built water source, waters every field, and persists'
   assert.deepEqual(restored.getStatus().fields, water.getStatus().fields);
 });
 
+test('pump-fed sprinklers stop delivering when fuel runs out mid-update', () => {
+  const water = new WaterSystem({ fields: [{ id: 0, water: 0 }], config: {
+    evaporationPerSecond: 0, pumpFuelPerSecond: 1, pumpWaterPerSecond: 0.1, sprinklerWaterPerSecond: 0.1
+  } });
+  water.pump = water.sprinkler = true;
+  water.pumpFuel = 0.5;
+  water.update(2, 'clear');
+  assert.equal(water.pumpFuel, 0);
+  assert.equal(water.fields[0].water, 0.1);
+  water.update(2, 'clear');
+  assert.equal(water.fields[0].water, 0.1);
+});
+
 test('bank erodes in high water and repair restores health with a cost', () => {
   const water = new WaterSystem({ riverLevel: 0.9, config: { erosionPerSecond: 0.2 } });
   water.update(2, 'storm');

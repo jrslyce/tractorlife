@@ -27,7 +27,7 @@ export class FarmSystems {
       { id: 0, elevation: 0.36, water: 0.5 }, { id: 1, elevation: 0.4, water: 0.5 },
       { id: 2, elevation: 0.46, water: 0.5 }, { id: 3, elevation: 0.5, water: 0.5 }
     ] });
-    this.livestock = new Livestock({ seed, config: { initialAnimals: [{ id: 1, kind: 'cow' }, { id: 2, kind: 'chicken' }] } });
+    this.livestock = new Livestock({ seed, config: { initialAnimals: [{ id: 1, kind: 'cow' }, { id: 2, kind: 'chicken' }, { id: 3, kind: 'cow' }] } });
     // Existing rules are used for bridge durability and serialization; lane geometry is map-oriented here.
     this.crossings = new RiverCrossings({ bounds: { minX: this.originX - 90, maxX: this.originX + 90, minZ: -78, maxZ: 80 }, riverX: this.originX, config: { fordWidth: 5, bridgeWidth: 6, ferryWidth: 5 } });
     this.crossings.crossings[0].x = this.originX - 12; this.crossings.crossings[0].z = -66;
@@ -326,6 +326,14 @@ export class FarmSystems {
     if (!data || data.version !== 1) return false;
     const ok = this.woodland.restore(data.woodland) && this.water.restore(data.water) && this.livestock.restore(data.livestock) && this.crossings.restore(data.crossings) && this.requests.restore(data.requests);
     if (!ok) return false;
+    // Pre-breeding farms started with one cow and one chicken, with no way to
+    // acquire a mate. Migrate that starter herd once, preserving existing care.
+    if (data.livestock.version === 1 && this.livestock.animals.length === 2 &&
+      this.livestock.animals.some(a => a.id === 1 && a.kind === 'cow') &&
+      this.livestock.animals.some(a => a.id === 2 && a.kind === 'chicken')) {
+      this.livestock.animals.push({ id: 3, kind: 'cow', welfare: 1, fed: false, watered: false,
+        escaped: false, feedToday: false, waterToday: false, bredDay: -1 });
+    }
     this.vehicles = {}; this.vehiclePositions = data.vehiclePositions || {}; for (const [type, state] of Object.entries(data.vehicles || {})) this.setVehicleCondition(type, state);
     this._syncVisuals(true);
     this._day = Number.isFinite(data.requests?.day) ? data.requests.day : this.livestock.day; return true;

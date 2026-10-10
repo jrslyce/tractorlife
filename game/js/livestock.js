@@ -24,7 +24,7 @@ export class Livestock {
     this.animals = copy(animals ?? this.config.initialAnimals).map((a, i) => ({
       id: a.id ?? i + 1, kind: a.kind || 'cow', welfare: clamp(num(a.welfare, 1), 0, 1),
       fed: !!a.fed, watered: !!a.watered, escaped: !!a.escaped,
-      feedToday: !!a.feedToday, waterToday: !!a.waterToday
+      feedToday: !!a.feedToday, waterToday: !!a.waterToday, bredDay: num(a.bredDay, -1)
     }));
     this.events = []; this.jobs = [];
   }
@@ -78,7 +78,7 @@ export class Livestock {
     if (animalId && typeof animalId === 'object' && arguments.length < 3) { resources = animalId; animalId = undefined; }
     const fail = reason => ({ success: false, reason, costs: {}, rewards: {}, events: [] });
     const a = this.animals.find(x => x.id === animalId) || (Number.isInteger(animalId) ? this.animals[animalId] : null);
-    let costs = {}, rewards = {};
+    let costs = {}, rewards = {}, mate = null;
     if (action === 'feed' || action === 'water' || action === 'herd') {
       if (!a) return fail('animal-not-found');
       if (action === 'herd' && !a.escaped) return fail('animal-not-escaped');
@@ -86,8 +86,9 @@ export class Livestock {
       if (action === 'feed') { if (a.feedToday) return fail('already-fed'); costs = this.config.feedCost; rewards = { produce: Math.max(0, Math.floor(this.config.producePerCare * a.welfare)) }; }
       if (action === 'water') { if (a.waterToday) return fail('already-watered'); costs = this.config.waterCost; }
     } else if (action === 'breed') {
-      const mate = this.animals.find(other => other !== a && other.kind === a?.kind && !other.escaped &&
-        other.welfare >= this.config.breedWelfare && other.feedToday && other.waterToday);
+      if (a && a.bredDay === this.day) return fail('already-bred-today');
+      mate = this.animals.find(other => other !== a && other.kind === a?.kind && !other.escaped &&
+        other.bredDay !== this.day && other.welfare >= this.config.breedWelfare && other.feedToday && other.waterToday);
       if (!a || a.escaped || a.welfare < this.config.breedWelfare || !a.feedToday || !a.waterToday || !mate) return fail('breeding-needs-healthy-cared-pair');
       if (this.animals.length >= this.config.maxAnimals) return fail('herd-at-capacity');
       costs = this.config.breedCost;
@@ -105,8 +106,9 @@ export class Livestock {
     if (action === 'breed') {
       const id = this.animals.reduce((max, animal) => Math.max(max, Number(animal.id) || 0), 0) + 1;
       const kind = a.kind;
+      a.bredDay = mate.bredDay = this.day;
       this.animals.push({ id, kind, welfare: 0.8, fed: false, watered: false, escaped: false,
-        feedToday: false, waterToday: false });
+        feedToday: false, waterToday: false, bredDay: this.day });
     }
     const event = { type: action, ...(a ? { animalId: a.id } : {}), ...(action === 'breed' ? { offspringId: this.animals[this.animals.length - 1].id } : {}) };
     this.events.push(event); this._refreshJobs();
@@ -117,18 +119,18 @@ export class Livestock {
     if (this.animals.length >= this.config.maxAnimals) return null;
     for (let i = 0; i < this.animals.length; i++) {
       const animal = this.animals[i];
-      if (animal.escaped || animal.welfare < this.config.breedWelfare || !animal.feedToday || !animal.waterToday) continue;
+      if (animal.escaped || animal.bredDay === this.day || animal.welfare < this.config.breedWelfare || !animal.feedToday || !animal.waterToday) continue;
       if (this.animals.some(other => other !== animal && other.kind === animal.kind && !other.escaped &&
-          other.welfare >= this.config.breedWelfare && other.feedToday && other.waterToday)) return animal.id;
+          other.bredDay !== this.day && other.welfare >= this.config.breedWelfare && other.feedToday && other.waterToday)) return animal.id;
     }
     return null;
   }
   queryCareNeeds() { return copy(this.animals.filter(a => !a.escaped && (!a.feedToday || !a.waterToday)).map(a => ({ animalId: a.id, feed: !a.feedToday, water: !a.waterToday }))); }
   getStatus() { this._refreshJobs(); return { time: this.time, day: this.day, dayTime: this.dayTime, fenceCondition: this.fenceCondition, animals: copy(this.animals), escaped: this.queryEscaped(), careNeeds: this.queryCareNeeds(), jobs: copy(this.jobs), events: copy(this.events) }; }
   query() { return this.getStatus(); }
-  serialize() { return { version: 1, seed: this.seed, config: copy(this.config), time: this.time, day: this.day, dayTime: this.dayTime, fenceCondition: this.fenceCondition, animals: copy(this.animals), events: copy(this.events) }; }
+  serialize() { return { version: 2, seed: this.seed, config: copy(this.config), time: this.time, day: this.day, dayTime: this.dayTime, fenceCondition: this.fenceCondition, animals: copy(this.animals), events: copy(this.events) }; }
   restore(data) {
-    if (!data || data.version !== 1 || !Array.isArray(data.animals)) return false;
+    if (!data || ![1, 2].includes(data.version) || !Array.isArray(data.animals)) return false;
     const restored = new Livestock({ seed: data.seed, config: data.config, animals: data.animals, fenceCondition: data.fenceCondition });
     this.seed = restored.seed; this.config = restored.config; this.animals = restored.animals;
     this.time = Math.max(0, num(data.time)); this.day = Math.max(0, num(data.day));

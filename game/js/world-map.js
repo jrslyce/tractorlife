@@ -28,6 +28,20 @@ export class WorldMap {
     return { ...waypoint, distance: Math.hypot(dx, dz), bearing: Math.atan2(dx, dz) };
   }
 
+  project(position, bounds, width, height, padding = 15) {
+    return { x: padding + (position.x - bounds.minX) / (bounds.maxX - bounds.minX) * (width - 2 * padding),
+      y: padding + (bounds.maxZ - position.z) / (bounds.maxZ - bounds.minZ) * (height - 2 * padding) };
+  }
+
+  pick(point, bounds, width, height, visibleIds, radius = 12) {
+    const visible = new Set(visibleIds);
+    const nearest = this.locations.filter(location => visible.has(location.id)).map(location => {
+      const marker = this.project(location, bounds, width, height);
+      return { location, distance: Math.hypot(marker.x - point.x, marker.y - point.y) };
+    }).sort((a, b) => a.distance - b.distance)[0];
+    return nearest && nearest.distance <= radius ? nearest.location.id : null;
+  }
+
   serialize() { return { version: 1, waypointId: this.waypointId }; }
 
   restore(data) {

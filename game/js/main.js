@@ -24,7 +24,7 @@ import { RealtimeClient } from './realtime.js';
 import { ITEM_BY_ID, packSize } from './items.js';
 import { Inventory } from './inventory.js';
 import { Wagon, WagonPanel, CargoHold, TRUCK_BED_SLOTS } from './wagon.js';
-import { GRAIN_VALUES, quoteGrain, acceptGrainSale, transferBinToWagon } from './grain-commerce.js';
+import { GRAIN_VALUES, marketUnitPrice, quoteGrain, acceptGrainSale, transferBinToWagon } from './grain-commerce.js';
 import { GrainSaleUI } from './grain-sale-ui.js';
 import { Exploration } from './exploration.js';
 import { WorldMap } from './world-map.js';
@@ -892,6 +892,7 @@ document.head.appendChild(worldMapStyle);
 worldMapLocations.innerHTML = '<button type="button" data-waypoint="">Clear waypoint</button>' + worldMap.locations.map(location =>
   '<button type="button" data-waypoint="' + location.id + '">' + (location.type === 'cache' ? '📦' : '📍') + ' ' + location.name + '</button>').join('');
 worldMapToggle.addEventListener('click', function () {
+  if (!session || shopUI.isOpen() || wagonPanel.isOpen() || grainSaleUI.isOpen()) return;
   worldMapPanel.hidden = false;
   worldMapToggle.setAttribute('aria-expanded', 'true');
   window.VT_LOCKED = true;
@@ -915,6 +916,7 @@ worldMapLocations.addEventListener('click', function (event) {
   const button = event.target.closest('button[data-waypoint]');
   if (!button) return;
   worldMap.setWaypoint(button.dataset.waypoint || null);
+  tickSave(function () { return session; }, snapshot);
   refreshWorldMapChoices();
   lastSig = '';
   updateHUD();
@@ -941,7 +943,7 @@ function refreshGarageUpgrades() {
   garageUpgradeOptions.innerHTML = '<p>For your ' + MACHINE_NAMES[vehicleType] + ' · balance $' + money + '</p>' + options;
 }
 garageUpgradeToggle.addEventListener('click', function () {
-  if (!atGarage()) return;
+  if (!session || !atGarage() || shopUI.isOpen() || wagonPanel.isOpen() || grainSaleUI.isOpen()) return;
   refreshGarageUpgrades();
   garageUpgradePanel.hidden = false;
   garageUpgradeToggle.setAttribute('aria-expanded', 'true');
@@ -969,10 +971,7 @@ function drawWorldMap() {
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
   const w = canvas.width, h = canvas.height, pad = 15;
-  const mapPoint = (x, z) => ({
-    x: pad + (x - WORLD_MIN_X) / Math.max(1, WORLD_MAX_X - WORLD_MIN_X) * (w - 2 * pad),
-    y: pad + (WORLD_MAX_Z - z) / (WORLD_MAX_Z - WORLD_MIN_Z) * (h - 2 * pad)
-  });
+  const mapPoint = (x, z) => worldMap.project({ x, z }, mapBounds(), w, h, pad);
   ctx.clearRect(0, 0, w, h);
   ctx.fillStyle = '#a8c88b'; ctx.fillRect(0, 0, w, h);
   ctx.fillStyle = '#d2c08a'; ctx.fillRect(0, Math.round(h * 0.58), w, 12);
@@ -991,19 +990,20 @@ function drawWorldMap() {
   ctx.beginPath(); ctx.arc(player.x, player.y, 5, 0, Math.PI * 2);
   ctx.fillStyle = '#fff'; ctx.fill(); ctx.strokeStyle = '#19321e'; ctx.lineWidth = 2; ctx.stroke();
 }
+function mapBounds() {
+  return { minX: WORLD_MIN_X, maxX: WORLD_MAX_X, minZ: WORLD_MIN_Z, maxZ: WORLD_MAX_Z };
+}
 document.getElementById('world-map-canvas').addEventListener('click', function (event) {
   const rect = event.currentTarget.getBoundingClientRect();
   const canvas = event.currentTarget;
   const x = (event.clientX - rect.left) * canvas.width / rect.width;
   const y = (event.clientY - rect.top) * canvas.height / rect.height;
-  const mapX = WORLD_MIN_X + (x / canvas.width) * (WORLD_MAX_X - WORLD_MIN_X);
-  const mapZ = WORLD_MAX_Z - (y / canvas.height) * (WORLD_MAX_Z - WORLD_MIN_Z);
   const discovered = new Set(exploration.list().filter(item => item.discovered).map(item => item.id));
-  const nearest = worldMap.locations.filter(location => location.type !== 'cache' || discovered.has(location.id))
-    .map(location => ({ location, distance: Math.hypot(location.x - mapX, location.z - mapZ) }))
-    .sort((a, b) => a.distance - b.distance)[0];
-  if (nearest && nearest.distance <= 50) {
-    worldMap.setWaypoint(nearest.location.id); refreshWorldMapChoices(); lastSig = ''; updateHUD();
+  const visibleIds = worldMap.locations.filter(location => location.type !== 'cache' || discovered.has(location.id)).map(location => location.id);
+  const nearest = worldMap.pick({ x, y }, mapBounds(), canvas.width, canvas.height, visibleIds);
+  if (nearest) {
+    worldMap.setWaypoint(nearest); refreshWorldMapChoices(); lastSig = ''; updateHUD();
+    tickSave(function () { return session; }, snapshot);
   }
 });
 hudExploration.style.display = 'none';
@@ -1019,6 +1019,7 @@ toast.style.cssText = 'position:fixed;left:50%;top:18%;transform:translateX(-50%
 document.body.appendChild(toast);
 let toastTimer = null;
 let appliedGiftIds = [];
+let giftBalanceAdjustment = 0;
 function showToast(text) {
   toast.textContent = text;
   toast.style.display = 'block';
@@ -1141,10 +1142,19 @@ const shopUI = new ShopUI({
       ['animal_produce', 'Farm produce', '🥚', 5]
     ];
     return goods.filter(function (g) { return inventory.getCount(g[0]) > 0; }).map(function (g) {
-      return { id: g[0], name: g[1], emoji: g[2], value: g[3], qty: inventory.getCount(g[0]) };
+      const market = currentMarket();
+      const value = Object.prototype.hasOwnProperty.call(GRAIN_VALUES, g[0])
+        ? marketUnitPrice(g[0], market.day, market.seed) : g[3];
+      return { id: g[0], name: g[1], emoji: g[2], value: value, qty: inventory.getCount(g[0]) };
     });
   },
   onSell: function (itemId, qty, unitValue) {
+    const market = currentMarket();
+    if (Object.prototype.hasOwnProperty.call(GRAIN_VALUES, itemId) && unitValue !== marketUnitPrice(itemId, market.day, market.seed)) {
+      shopUI.refreshBalance();
+      return { ok: false, error: 'Market prices changed. Please accept the new offer.' };
+    }
+    if (inventory.getCount(itemId) < qty) return { ok: false, error: 'Your harvest changed. Please try again.' };
     const sold = inventory.consumeItem(itemId, qty);
     if (sold !== qty) return { ok: false, error: 'Your harvest changed. Please try again.' };
     money += sold * unitValue;
@@ -1165,9 +1175,14 @@ const shopUI = new ShopUI({
     return { ok: true };
   },
   onGift: function (item, qty, recipient) {
-    return sendGift(recipient, item.id, qty).then(function (result) {
+    if (!session || session.mode !== 'online') return Promise.resolve({ ok: false, error: 'Connect online to send gifts.' });
+    return tickSave(function () { return session; }, snapshot).then(function (saved) {
+      if (!saved) return { ok: false, error: 'Could not sync your balance. Please try again.' };
+      return sendGift(recipient, item.id, qty);
+    }).then(function (result) {
       if (result && result.ok) {
         money = Math.max(0, money - item.price * qty);
+        giftBalanceAdjustment -= result.total;
         lastSig = '';
         updateHUD();
         shopUI.refreshBalance();
@@ -1199,6 +1214,10 @@ function farmLabel(slot) {
   const em = slotToEmail[slot];
   if (em) return '🤝 ' + em + '’s Farm';
   return '🌳 Farm ' + (slot + 1);
+}
+
+function escapeHTML(value) {
+  return String(value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
 }
 
 function updateHUD() {
@@ -1235,7 +1254,7 @@ function updateHUD() {
   let left =
     '<div>💰 <b>$' + money + '</b></div>' +
     '<div>' + modeLine + '</div>' +
-    '<div>' + label + '</div>' +
+    '<div>' + escapeHTML(label) + '</div>' +
     '<div>' + MACHINE_LABELS[vehicleType] + '</div>' +
     '<div>' + (info ? info.emoji + ' ' + info.name : 'No attachment') + '</div>' +
     '<div>🎨 ' + (COLOR_NAMES[currentColor] || currentColor) + '</div>' +
@@ -1392,6 +1411,7 @@ const camPos = new THREE.Vector3();
 const lookAt = new THREE.Vector3();
 
 function stepPhysics(dt) {
+  if (window.VT_LOCKED !== false) { speed = 0; return; }
   if (mode !== 'driving') return;
   if (grainSaleUI.isOpen()) { speed = 0; return; }
   const drive = input.drive;
@@ -1466,6 +1486,7 @@ function terrainForPosition(x, z) {
 }
 
 function stepCharacter(dt) {
+  if (window.VT_LOCKED !== false) return;
   if (mode === 'walking') {
     // turn (rotation.y; model faces +Z, so facing = (sin a, 0, cos a))
     const a = character.group.rotation.y - input.charTurn * CHAR_TURN_RATE * dt;
@@ -2133,6 +2154,7 @@ function snapshot() {
     climate: climate.serialize(),
     farmSystems: farmSystems.serialize(),
     appliedGiftIds: appliedGiftIds.slice(-100),
+    giftBalanceAdjustment: giftBalanceAdjustment,
     exploration: exploration.serialize(),
     worldMap: worldMap.serialize(),
     achievements: achievements.serialize(),
@@ -2144,6 +2166,7 @@ function snapshot() {
 // array of 4 Field serialisations, no `world` key, always driving).
 function applyState(s) {
   if (!s || typeof s !== 'object') return false;
+  giftBalanceAdjustment = Number.isSafeInteger(s.giftBalanceAdjustment) ? s.giftBalanceAdjustment : 0;
   if (s.exploration) exploration.restore(s.exploration);
   if (s.worldMap) worldMap.restore(s.worldMap);
   if (s.achievements) achievements.restore(s.achievements);
@@ -2810,7 +2833,7 @@ renderer.setAnimationLoop(function () {
   // also recovers its visibility if a browser/UI transition temporarily hides
   // the controls while changing between tractor, combine, and truck.
   input.setDrivingMode(mode === 'driving');
-  climateState = climate.update(dt);
+  climateState = window.VT_LOCKED === false ? climate.update(dt) : climate.getState();
   const usageByVehicle = {};
   for (const machine of MACHINES) {
     const machineObject = vehicles[machine];

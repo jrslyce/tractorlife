@@ -51,15 +51,17 @@ export class WaterSystem {
       this.fields.forEach(f => { f.water = clamp(f.water - this.config.evaporationPerSecond * dt, 0, 1); });
     }
     const pumping = this.pump && this.pumpFuel > 0;
+    const pumpingSeconds = pumping ? (this.config.pumpFuelPerSecond > 0
+      ? Math.min(dt, this.pumpFuel / this.config.pumpFuelPerSecond) : dt) : 0;
     const supply = this.channel ? this.config.channelWaterPerSecond : 0;
     if (pumping) {
       const used = Math.min(this.pumpFuel, this.config.pumpFuelPerSecond * dt);
       this.pumpFuel -= used;
     }
-    const delivered = (supply + (pumping ? this.config.pumpWaterPerSecond : 0)) * dt;
+    const delivered = supply * dt + this.config.pumpWaterPerSecond * pumpingSeconds;
     if (delivered > 0) this.fields.forEach(f => { f.water = clamp(f.water + delivered, 0, 1); });
     if (this.sprinkler && (this.channel || pumping)) {
-      const sprinklerWater = this.config.sprinklerWaterPerSecond * dt;
+      const sprinklerWater = this.config.sprinklerWaterPerSecond * (this.channel ? dt : pumpingSeconds);
       this.fields.forEach(f => { f.water = clamp(f.water + sprinklerWater, 0, 1); });
     }
     this.fields.forEach(f => {

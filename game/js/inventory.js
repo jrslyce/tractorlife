@@ -358,17 +358,20 @@ export class Inventory {
   }
 
   restore(d) {
-    if (!d || !d.slots || !Array.isArray(d.slots)) return false;
-    for (var i = 0; i < this._slots.length && i < d.slots.length; i++) {
+    if (!d || !Array.isArray(d.slots) || d.slots.length > HOTBAR_SLOTS ||
+      (d.selectedSlot !== undefined && !Number.isInteger(d.selectedSlot))) return false;
+    var next = new Array(HOTBAR_SLOTS).fill(null);
+    for (var i = 0; i < d.slots.length; i++) {
       var ds = d.slots[i];
       if (ds) {
-        this._slots[i] = new InventoryItem(ds.itemId, ds.qty);
-        this._slots[i].emoji = ds.emoji || ITEM_EMOJI[ds.itemId] ||
+        if (!Object.prototype.hasOwnProperty.call(ITEM_BY_ID, ds.itemId) ||
+          !Number.isSafeInteger(ds.qty) || ds.qty <= 0) return false;
+        next[i] = new InventoryItem(ds.itemId, ds.qty);
+        next[i].emoji = ds.emoji || ITEM_EMOJI[ds.itemId] ||
           (ITEM_BY_ID[ds.itemId] && ITEM_BY_ID[ds.itemId].emoji) || '?';
-      } else {
-        this._slots[i] = null;
       }
     }
+    this._slots = next;
     if (typeof d.selectedSlot === 'number' && isFinite(d.selectedSlot)) {
       this._selectedSlot = Math.max(-1, Math.min(HOTBAR_SLOTS - 1, d.selectedSlot));
     }

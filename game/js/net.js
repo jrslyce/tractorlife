@@ -412,14 +412,16 @@ export function tickSave(getSession, getState) {
     return;
   }
   mirrorOffline(session.email, raw);
-  if (session.mode !== 'online') return;
-  if (raw === lastSent) return;
-  post('/api/save', { email: sessionEmail, state: state }, SAVE_TIMEOUT_MS)
+  if (session.mode !== 'online') return Promise.resolve(false);
+  if (raw === lastSent) return Promise.resolve(true);
+  return post('/api/save', { email: sessionEmail, state: state }, SAVE_TIMEOUT_MS)
     .then(function (res) {
       if (res.ok) lastSent = raw;
+      return res.ok;
     })
     .catch(function (err) {
       /* retry next tick */
+      return false;
     });
 }
 

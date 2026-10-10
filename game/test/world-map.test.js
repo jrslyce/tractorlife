@@ -27,3 +27,15 @@ test('waypoint state round-trips and rejects unknown destinations atomically', (
   assert.equal(restored.restore({ version: 1, waypointId: 'unrecognized' }), false);
   assert.deepEqual(restored.serialize(), saved);
 });
+
+test('map hit testing uses the exact padded marker projection, including world edges', () => {
+  const map = new WorldMap([{ id: 'edge', x: -10, z: -78 }, { id: 'cache', x: 900, z: 40 }]);
+  const bounds = { minX: -10, maxX: 1780, minZ: -78, maxZ: 80 };
+  const marker = map.project(map.locations[0], bounds, 340, 180);
+  assert.deepEqual(marker, { x: 15, y: 165 });
+  assert.equal(map.pick(marker, bounds, 340, 180, ['edge']), 'edge');
+  assert.equal(map.pick({ x: marker.x + 13, y: marker.y }, bounds, 340, 180, ['edge']), null);
+  const cache = map.project(map.locations[1], bounds, 340, 180);
+  assert.equal(map.pick(cache, bounds, 340, 180, ['edge']), null);
+  assert.equal(map.pick(cache, bounds, 340, 180, ['edge', 'cache']), 'cache');
+});
