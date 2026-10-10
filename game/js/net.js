@@ -1,15 +1,19 @@
 // game/js/net.js — login gate + autosave for Tractor Farm.
 // Cookie-backed auth (email + code) with an offline localStorage fallback.
 // Written conservatively (no optional chaining) for older iPad Safari.
+import { ITEM_BY_ID } from './items.js';
 
 const EMAIL_KEY = 'vt-email';
 const LEGACY_CODE_KEY = 'vt-code';
 const OFFLINE_PREFIX = 'vt-offline:';
+const WORLD_QUEUE_KEY = 'vt-shared-road-queue';
 const SAVE_MS = 15000;
 const LOGIN_TIMEOUT_MS = 6000;
 const SAVE_TIMEOUT_MS = 8000;
 const FARMERS_TIMEOUT_MS = 5000;
 const FARM_STATE_TIMEOUT_MS = 5000;
+const WORLD_TIMEOUT_MS = 5000;
+const TERRAIN_EDIT_TIMEOUT_MS = 8000;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // email of the active session (used for /api/save bodies)
@@ -235,7 +239,159 @@ export function fetchFarmState(slot) {
   });
 }
 
-function tickSave(getSession, getState) {
+export function fetchSharedWorld() {
+  const payload = { method: 'GET' };
+  let timer = null;
+  if (typeof AbortController !== 'undefined') {
+    const ctrl = new AbortController();
+    payload.signal = ctrl.signal;
+    timer = setTimeout(function () { ctrl.abort(); }, WORLD_TIMEOUT_MS);
+  }
+  return fetch('/api/world', payload).then(function (res) {
+    if (timer) clearTimeout(timer);
+    if (!res.ok) return null;
+    return res.json().then(function (data) {
+      if (!data || data.ok !== true || !Array.isArray(data.roads)) return null;
+      return flushSharedRoadQueue().then(function () {
+        var queued = readRoadQueue();
+        for (var i = 0; i < queued.length; i++) data.roads.push(queued[i]);
+        return data;
+      });
+    }, function () { return null; });
+  }, function () {
+    if (timer) clearTimeout(timer);
+    return null;
+  }).catch(function () {
+    if (timer) clearTimeout(timer);
+    return null;
+  });
+}
+
+export function placeSharedRoad(tile) {
+  if (!tile || typeof tile.id !== 'string' || !Number.isInteger(tile.x) || !Number.isInteger(tile.z)) {
+    return Promise.resolve(null);
+  }
+  var cleanTile = { id: tile.id, x: tile.x, z: tile.z };
+  return post('/api/world/place', cleanTile, WORLD_TIMEOUT_MS).then(function (res) {
+    if (!res.ok) { if (isRetryableStatus(res.status)) queueSharedRoad(cleanTile); return null; }
+    return res.json().then(function (data) {
+      if (!data || !data.ok) queueSharedRoad(cleanTile);
+      return data && data.ok ? data : null;
+    }, function () { queueSharedRoad(cleanTile); return null; });
+  }, function () { queueSharedRoad(cleanTile); return null; }).catch(function () {
+    queueSharedRoad(cleanTile);
+    return null;
+  });
+}
+
+export function sendGift(to, itemId, qty) {
+  const recipient = normEmail(to);
+  const amount = Math.floor(Number(qty));
+  if (!recipient || !ITEM_BY_ID[itemId] || !Number.isInteger(amount) || amount < 1 || amount > 20) {
+    return Promise.resolve({ ok: false, error: 'Invalid gift details.' });
+  }
+  return post('/api/gift', { to: recipient, itemId: itemId, qty: amount }, WORLD_TIMEOUT_MS).then(function (res) {
+    return res.json().then(function (data) {
+      if (!res.ok || !data || data.ok !== true) return { ok: false, error: data && data.error ? data.error : 'Gift could not be sent.' };
+      return data;
+    }, function () { return { ok: false, error: 'Gift could not be sent.' }; });
+  }, function () { return { ok: false, error: 'Gift could not be sent.' }; }).catch(function () {
+    return { ok: false, error: 'Gift could not be sent.' };
+  });
+}
+
+// Submit one authoritative terrain mutation. A null session or non-online
+// session is explicitly offline: local prediction must not treat it as accepted.
+export function sendTerrainEdit(edit, session) {
+  if (!session || session.mode !== 'online') {
+    return Promise.resolve({ ok: false, offline: true, error: 'Terrain edits require an online session.' });
+  }
+  if (!edit || !['break', 'place'].includes(edit.action) ||
+      ![edit.x, edit.y, edit.z, edit.expectedRevision].every(Number.isSafeInteger) ||
+      edit.expectedRevision < 0 || (edit.action === 'place' && typeof edit.material !== 'string') ||
+      (edit.material !== undefined && typeof edit.material !== 'string') ||
+      (edit.toolId !== undefined && (typeof edit.toolId !== 'string' || edit.toolId.length > 64))) {
+    return Promise.resolve({ ok: false, error: 'Invalid terrain edit.' });
+  }
+  var operationId = edit.operationId;
+  if (operationId === undefined) {
+    try {
+      operationId = typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID().replace(/-/g, '')
+        : 'op_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2);
+    } catch (err) { operationId = 'op_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2); }
+  }
+  if (typeof operationId !== 'string' || !/^[A-Za-z0-9_-]{8,80}$/.test(operationId)) {
+    return Promise.resolve({ ok: false, error: 'Invalid terrain operation ID.' });
+  }
+  var body = { operationId: operationId, action: edit.action, x: edit.x, y: edit.y, z: edit.z, expectedRevision: edit.expectedRevision };
+  if (edit.material !== undefined) body.material = edit.material;
+  if (edit.toolId !== undefined) body.toolId = edit.toolId;
+  return post('/api/terrain/edit', body, TERRAIN_EDIT_TIMEOUT_MS).then(function (res) {
+    return res.json().then(function (data) {
+      if (!res.ok || !data || data.ok !== true || !data.edit || typeof data.edit !== 'object' ||
+          !Number.isSafeInteger(data.revision) || data.edit.revision !== data.revision || !data.inventory || typeof data.inventory !== 'object') {
+        return { ok: false, offline: false, status: res.status, error: data && typeof data.error === 'string' ? data.error : 'Terrain edit was not accepted.' };
+      }
+      return { ok: true, accepted: true, operationId: operationId, edit: data.edit, revision: data.revision, inventory: data.inventory };
+    }, function () { return { ok: false, offline: false, status: res.status, error: 'Invalid terrain edit response.' }; });
+  }, function () { return { ok: false, offline: true, error: 'Terrain edit could not reach the server.' }; }).catch(function () {
+    return { ok: false, offline: true, error: 'Terrain edit could not reach the server.' };
+  });
+}
+
+export function fetchTerrainState(session) {
+  if (!session || session.mode !== 'online') return Promise.resolve(null);
+  return fetch('/api/terrain/state', { method: 'GET', credentials: 'same-origin' }).then(function (res) {
+    if (!res.ok) return null;
+    return res.json().then(function (data) {
+      if (!data || data.ok !== true || !Number.isSafeInteger(data.terrainRevision) ||
+          !data.terrainEdits || typeof data.terrainEdits !== 'object' || Array.isArray(data.terrainEdits)) return null;
+      return data;
+    }, function () { return null; });
+  }, function () { return null; }).catch(function () { return null; });
+}
+
+// Only transient failures are worth retrying. A 4xx such as "not public
+// land" (403) or "invalid tile" (400) will never succeed, so re-queuing it
+// would retry it on every sync forever.
+function isRetryableStatus(status) {
+  return status === 401 || status === 408 || status === 429 || status >= 500;
+}
+
+function readRoadQueue() {
+  try {
+    var data = JSON.parse(localStorage.getItem(WORLD_QUEUE_KEY) || '[]');
+    return Array.isArray(data) ? data : [];
+  } catch (err) { return []; }
+}
+
+function saveRoadQueue(queue) {
+  try { localStorage.setItem(WORLD_QUEUE_KEY, JSON.stringify(queue)); } catch (err) { /* storage may be unavailable */ }
+}
+
+function queueSharedRoad(tile) {
+  var queue = readRoadQueue();
+  for (var i = 0; i < queue.length; i++) if (queue[i].x === tile.x && queue[i].z === tile.z) return;
+  if (queue.length < 5000) { queue.push(tile); saveRoadQueue(queue); }
+}
+
+function flushSharedRoadQueue() {
+  var queue = readRoadQueue();
+  if (!queue.length) return Promise.resolve();
+  var remaining = [];
+  var chain = Promise.resolve();
+  queue.forEach(function (tile) {
+    chain = chain.then(function () {
+      return post('/api/world/place', tile, WORLD_TIMEOUT_MS).then(function (res) {
+        if (!res.ok && isRetryableStatus(res.status)) remaining.push(tile);
+      }, function () { remaining.push(tile); });
+    });
+  });
+  return chain.then(function () { saveRoadQueue(remaining); });
+}
+
+export function tickSave(getSession, getState) {
   let session;
   try {
     session = getSession();
@@ -256,14 +412,16 @@ function tickSave(getSession, getState) {
     return;
   }
   mirrorOffline(session.email, raw);
-  if (session.mode !== 'online') return;
-  if (raw === lastSent) return;
-  post('/api/save', { email: sessionEmail, state: state }, SAVE_TIMEOUT_MS)
+  if (session.mode !== 'online') return Promise.resolve(false);
+  if (raw === lastSent) return Promise.resolve(true);
+  return post('/api/save', { email: sessionEmail, state: state }, SAVE_TIMEOUT_MS)
     .then(function (res) {
       if (res.ok) lastSent = raw;
+      return res.ok;
     })
     .catch(function (err) {
       /* retry next tick */
+      return false;
     });
 }
 
