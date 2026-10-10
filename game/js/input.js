@@ -68,7 +68,9 @@ var CSS = [
   '  border-radius: 9px; border: 2px solid #b6d77a; background: rgba(21,31,23,.94); color: #f7f6e9;',
   '  font: 700 12px/1.1 system-ui, -apple-system, sans-serif; text-align: center;',
   '  cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent;',
-  '  -webkit-user-select: none; user-select: none; box-shadow: 0 3px 0 #0c130d; }',
+   '  -webkit-user-select: none; user-select: none; box-shadow: 0 3px 0 #0c130d; }',
+   '#vt-buttons button:focus-visible, #vt-vehicle-controls button:focus-visible, #vt-steering-wheel:focus-visible {',
+   '  outline:3px solid #fff; outline-offset:3px; box-shadow:0 0 0 6px #315b9a; }',
   '#vt-buttons button.vt-active { background: #ffe36b; color:#233018; transform: translateY(2px);',
   '  box-shadow: 0 1px 0 #0c130d; }',
   '#vt-buttons .vt-ico { display: block; font-size: 23px; line-height: 1.1; }',
@@ -105,11 +107,16 @@ var CSS = [
   '  min-width:92px; min-height:52px; padding:8px 10px; border:2px solid #d7e4c3; border-radius:14px;',
   '  color:#f4f7eb; background:#394638; box-shadow:0 4px 0 rgba(0,0,0,.35); font:900 13px system-ui,sans-serif;',
   '  pointer-events:auto; touch-action:manipulation; } #vt-reverse.vt-active { color:#17220f; background:#b8d78a; transform:translateY(3px); box-shadow:0 1px 0 rgba(0,0,0,.35); }',
+  'html[data-larger-controls="true"] #vt-buttons button { min-width:64px; min-height:64px; }',
+  'html[data-larger-controls="true"] #vt-buttons.vt-driving button { min-width:64px; min-height:64px; }',
+  'html[data-larger-controls="true"] .vt-pedal { min-width:76px; min-height:112px; }',
+  'html[data-high-contrast="true"] #vt-buttons button,html[data-high-contrast="true"] .vt-pedal { border-width:3px; outline-color:#fff; }',
+  'html[data-text-scale="large"] #vt-buttons .vt-lbl,html[data-text-scale="larger"] #vt-buttons .vt-lbl { font-size:12px; }',
 
   // --- short viewports ---------------------------------------------------
   // Keep action buttons compact on tablet and short landscape viewports.
   '@media (max-height: 780px) {',
-  '  #vt-buttons button { min-width: 52px; min-height: 52px; padding: 4px 6px;',
+   '  #vt-buttons button { min-width: 56px; min-height: 56px; padding: 4px 6px;',
   '    border-radius: 9px; font-size: 12px; }',
   '  #vt-buttons .vt-ico { font-size: 21px; }',
   '  #vt-buttons .vt-lbl { font-size: 9px; margin-top: 1px; }',
@@ -125,12 +132,12 @@ var CSS = [
   '    -webkit-align-items: flex-end; align-items: flex-end; }',
    '  #vt-buttons { gap:5px; max-width:calc(100vw - 24px);',
    '    max-height:calc(100vh - 20px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }',
-  '  #vt-buttons button { margin:0; }',
+   '  #vt-buttons button { min-width:56px; min-height:56px; margin:0; }',
   '}',
   '@media (max-width:640px) {',
   '  #vt-buttons.vt-driving { max-width:calc(100vw - 16px); flex-wrap:wrap; justify-content:center; gap:4px; }',
-  '  #vt-buttons.vt-driving button { min-width:44px; min-height:48px; width:48px; }',
-  '  #vt-buttons.vt-driving .vt-ico { font-size:19px; } #vt-buttons.vt-driving .vt-lbl { font-size:8px; }',
+   '  #vt-buttons.vt-driving button { min-width:56px; min-height:56px; width:58px; }',
+   '  #vt-buttons.vt-driving .vt-ico { font-size:19px; } #vt-buttons.vt-driving .vt-lbl { font-size:10px; }',
   '  #vt-steering-wheel { width:clamp(112px,25vw,150px); bottom:max(18px,calc(18px + env(safe-area-inset-bottom))); }',
   '  #vt-pedals { gap:8px; bottom:max(18px,calc(18px + env(safe-area-inset-bottom))); }',
   '  .vt-pedal { width:clamp(62px,12vw,78px); height:clamp(86px,20vh,118px); } #vt-gas { height:clamp(104px,23vh,142px); }',
@@ -200,6 +207,7 @@ export class Input {
     this._wheelTurn = 0;
     this._drivingMode = false;
     this._buildMode = false;
+    this._advancedSystemsEnabled = true;
     this._enterNear = false;
     this._shopNear = false;
     this._wagonNear = false;
@@ -277,9 +285,14 @@ export class Input {
 
   setEnterVisible(visible) { this._enterNear = !!visible; this._updateContextButtons(); }
   setBuildMode(active) {
-    this._buildMode = !!active;
+    this._buildMode = !!active && this._advancedSystemsEnabled;
     this._setButtonLabel('toggleBuildMode', '🧱', this._buildMode ? 'Exit Build' : 'Build');
-    this._setButtonVisible('toggleBuildMode', !this._drivingMode);
+    this._setButtonVisible('toggleBuildMode', !this._drivingMode && this._advancedSystemsEnabled);
+  }
+  setAdvancedSystemsEnabled(enabled) {
+    this._advancedSystemsEnabled = enabled !== false;
+    if (!this._advancedSystemsEnabled) this.setBuildMode(false);
+    else this._setButtonVisible('toggleBuildMode', !this._drivingMode);
   }
   setToolControl(available, attached, contextLabel, isTruck) {
     this._toolAvailable = !!available;
@@ -298,6 +311,7 @@ export class Input {
     var ico = b.querySelector('.vt-ico'), lbl = b.querySelector('.vt-lbl');
     if (ico) ico.textContent = emoji;
     if (lbl) lbl.textContent = label;
+    b.setAttribute('aria-label', label);
   }
   _setButtonVisible(action, visible) {
     var b = this._btnByAction && this._btnByAction[action];
@@ -315,7 +329,7 @@ export class Input {
     this._setButtonVisible('cycleColor', !this._truckMode);
     this._setButtonVisible('detach', this._drivingMode && this._toolAttached && !this._truckMode);
     this._setButtonVisible('jump', !this._drivingMode);
-    this._setButtonVisible('toggleBuildMode', !this._drivingMode);
+    this._setButtonVisible('toggleBuildMode', !this._drivingMode && this._advancedSystemsEnabled);
   }
 
   // caller consumes the one-shot jump flag, then clears it
@@ -636,6 +650,7 @@ export class Input {
       (function (spec) {
         var b = document.createElement('button');
         b.setAttribute('data-action', spec.action);
+        b.setAttribute('aria-label', spec.label);
         var ico = document.createElement('span');
         ico.className = 'vt-ico';
         ico.textContent = spec.emoji;

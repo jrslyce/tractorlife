@@ -51,7 +51,7 @@ export class RiverCrossings {
     const bridge = this.crossings.find(c => c.type === 'bridge');
     if (!bridge) return { success: false, reason: 'bridge-not-found' };
     if (bridge.health > 0) return { success: false, reason: 'already-built' };
-    if (!this._canPay(resources, cost)) return { success: false, reason: 'insufficient-resources' };
+    if (!this._canPay(resources, cost)) return { success: false, reason: 'insufficient-resources', costs: copy(cost) };
     this._charge(resources, cost); bridge.health = 1;
     return { success: true, costs: copy(cost), health: bridge.health };
   }
@@ -59,7 +59,7 @@ export class RiverCrossings {
     const bridge = this.crossings.find(c => c.type === 'bridge');
     if (!bridge) return { success: false, reason: 'bridge-not-found' };
     if (bridge.health >= 1) return { success: false, reason: 'bridge-intact' };
-    if (!this._canPay(resources, cost)) return { success: false, reason: 'insufficient-resources' };
+    if (!this._canPay(resources, cost)) return { success: false, reason: 'insufficient-resources', costs: copy(cost) };
     this._charge(resources, cost); bridge.health = clamp(bridge.health + amount, 0, 1);
     return { success: true, costs: copy(cost), health: bridge.health };
   }

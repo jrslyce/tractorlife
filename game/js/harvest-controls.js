@@ -143,10 +143,10 @@ export class HarvestControls {
   }
 
   targetAtEvent(e) {
-    if (!this.isEnabled() || e.pointerType === 'touch') return null;
-    this.touch = e.pointerType === 'touch';
+    if (!this.isEnabled()) return null;
+    if (e.pointerType) this.touch = e.pointerType === 'touch';
     this.lastPointer = { clientX: e.clientX, clientY: e.clientY, button: 0 };
-    return this.resolveTarget();
+    return this.resolveTarget(e);
   }
 
   ignored(object) {
@@ -163,7 +163,7 @@ export class HarvestControls {
   placeFromEvent(event) {
     const selected = this.inventory.getSelectedItem();
     if (selected && ['dirt', 'stone'].includes(selected.itemId)) {
-      const target = this.resolveTarget();
+      const target = this.resolveTarget(event);
       if (!target || target.kind !== 'terrain') {
         this.onResult('Aim at a solid terrain face to place a block.', false);
         return false;
@@ -175,12 +175,14 @@ export class HarvestControls {
     return this.builder.placeFromEvent(event);
   }
 
-  resolveTarget() {
+  resolveTarget(event) {
     const rect = this.canvas.getBoundingClientRect();
     if (!rect.width || !rect.height) return null;
-    const event = this.touch || this.getBuildMode() ? this.centerEvent() : this.lastPointer;
-    if (!event) return null;
-    this.pointer.set((event.clientX - rect.left) / rect.width * 2 - 1, -(event.clientY - rect.top) / rect.height * 2 + 1);
+    // Touch actions originate on a separate control, so use the center aim.
+    // Desktop build clicks retain their actual canvas coordinates.
+    const aim = this.touch || !event && this.getBuildMode() ? this.centerEvent() : event || this.lastPointer;
+    if (!aim) return null;
+    this.pointer.set((aim.clientX - rect.left) / rect.width * 2 - 1, -(aim.clientY - rect.top) / rect.height * 2 + 1);
     this.ray.setFromCamera(this.pointer, this.camera);
     const hit = this.firstHit();
     if (!hit) return null;

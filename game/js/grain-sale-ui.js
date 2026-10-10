@@ -19,7 +19,7 @@ var PANEL_CSS = [
   '.grain-sale-note{margin:0;font-size:12px;line-height:1.5;color:#c7dda8}',
   '.grain-sale-error{margin:14px 0 0;padding:10px 12px;border-left:3px solid #ffd18a;background:#3a3022;color:#ffe0ad;font-size:14px;line-height:1.45}.grain-sale-error:empty{display:none}',
   '.grain-sale-actions{display:grid;gap:10px;padding:14px 22px 20px;border-top:1px solid #516442;background:#1b281f;flex-shrink:0}',
-  '.grain-sale-actions button{min-height:48px;padding:10px 14px;border:2px solid #b6d77a;border-radius:6px;font:800 16px system-ui,-apple-system,sans-serif;cursor:pointer;touch-action:manipulation}',
+   '.grain-sale-actions button{min-height:48px;min-width:48px;padding:10px 14px;border:2px solid #b6d77a;border-radius:6px;font:800 16px system-ui,-apple-system,sans-serif;cursor:pointer;touch-action:manipulation}',
   '.grain-sale-accept{background:#ffe36b;color:#233018;box-shadow:0 3px 0 #98ad4b}.grain-sale-accept:hover:not(:disabled){background:#fff09c}.grain-sale-accept:active:not(:disabled){transform:translateY(2px);box-shadow:0 1px 0 #98ad4b}.grain-sale-accept:disabled{opacity:.5;cursor:not-allowed;box-shadow:none}',
   '.grain-sale-cancel{background:#293c2c;color:#f4f4e7}.grain-sale-cancel:hover{background:#405738}.grain-sale-cancel:active{background:#344a32}.grain-sale-panel button:focus-visible,.grain-sale-body:focus-visible{outline:3px solid #ffe36b;outline-offset:3px}',
   '@media(max-width:420px){.grain-sale-head{padding:16px}.grain-sale-head h2{font-size:25px}.grain-sale-body{padding:14px 16px}.grain-sale-actions{padding:12px 16px 16px}.grain-sale-line{gap:7px;grid-template-columns:26px minmax(0,1fr) auto}.grain-sale-receipt{padding:0 10px}}',
@@ -67,6 +67,7 @@ export class GrainSaleUI {
     this._panel.setAttribute('aria-labelledby', id + '-title');
     this._panel.setAttribute('aria-describedby', id + '-note');
     this._panel.tabIndex = -1;
+    this._panel.setAttribute('aria-keyshortcuts', 'Escape');
     var head = element('header', 'grain-sale-head');
     head.appendChild(element('p', 'grain-sale-depot', 'Store grain depot'));
     var title = element('h2', '', 'Grain delivery');
@@ -106,9 +107,11 @@ export class GrainSaleUI {
     var actions = element('footer', 'grain-sale-actions');
     this._accept = element('button', 'grain-sale-accept');
     this._accept.type = 'button';
+    this._accept.setAttribute('aria-label', 'Accept delivery and collect payment');
     this._accept.addEventListener('click', function () { self._collect(); });
     this._cancel = element('button', 'grain-sale-cancel', 'Not now');
     this._cancel.type = 'button';
+    this._cancel.setAttribute('aria-label', 'Close grain delivery offer');
     this._cancel.addEventListener('click', function () { self.close(); });
     actions.appendChild(this._accept);
     actions.appendChild(this._cancel);
@@ -168,8 +171,10 @@ export class GrainSaleUI {
     document.removeEventListener('focusin', this._onFocus, true);
     window.VT_LOCKED = this._previousLock;
     this._quote = null;
-    if (this._previousFocus && this._previousFocus.isConnected && typeof this._previousFocus.focus === 'function') {
+    if (this._previousFocus && this._previousFocus.isConnected !== false && typeof this._previousFocus.focus === 'function') {
       this._previousFocus.focus();
+    } else if (document.body && typeof document.body.focus === 'function') {
+      document.body.focus();
     }
   }
 
@@ -204,9 +209,10 @@ export class GrainSaleUI {
       this.close();
       return;
     }
+    // Do not let gameplay handlers observe any key while the modal is active.
+    if (event.stopImmediatePropagation) event.stopImmediatePropagation();
     if (event.key !== 'Tab') return;
     event.preventDefault();
-    event.stopImmediatePropagation();
     var stops = [this._body];
     if (!this._accept.disabled) stops.push(this._accept);
     stops.push(this._cancel);

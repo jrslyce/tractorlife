@@ -80,7 +80,7 @@ export class WaterSystem {
   // interact(action, target?, resources?): validates all costs before mutation.
   interact(action, target, resources = {}) {
     if (target && typeof target === 'object' && !Array.isArray(target) && arguments.length < 3) { resources = target; target = undefined; }
-    const fail = reason => ({ success: false, reason, costs: {}, rewards: {}, events: [] });
+    const fail = (reason, requiredCosts = {}) => ({ success: false, reason, costs: copy(requiredCosts), rewards: {}, events: [] });
     const field = this.fields.find(f => f.id === target) || (Number.isInteger(target) ? this.fields[target] : null);
     let costs = {}, rewards = {}, event = action;
     if (action === 'build-channel') { if (this.channel) return fail('already-built'); costs = this.config.channelCost; }
@@ -104,7 +104,7 @@ export class WaterSystem {
       costs = this.config.fishingCost; rewards = { fish: Math.max(0, Math.floor(this.config.fishPerCatch * this.fishHealth * (1 - this.pollution))) };
     } else return fail('unknown-action');
     costs = copy(costs || {}); rewards = copy(rewards || {});
-    for (const [key, amount] of Object.entries(costs)) if (number(resources[key]) < amount) return fail('insufficient-resources');
+    for (const [key, amount] of Object.entries(costs)) if (number(resources[key]) < amount) return fail('insufficient-resources', costs);
     for (const [key, amount] of Object.entries(costs)) resources[key] = number(resources[key]) - amount;
     for (const [key, amount] of Object.entries(rewards)) resources[key] = number(resources[key]) + amount;
     if (action === 'build-channel') this.channel = true;

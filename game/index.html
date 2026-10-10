@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Tractor Farm</title>
@@ -12,7 +12,10 @@
     overscroll-behavior: none; -webkit-touch-callout: none;
     -webkit-tap-highlight-color: transparent;
     font-family: system-ui, -apple-system, sans-serif; }
-  canvas { display: block; touch-action: none; }
+  canvas { display: block; touch-action: pinch-zoom; }
+  html[data-text-scale="large"] { font-size: 112.5%; }
+  html[data-text-scale="larger"] { font-size: 125%; }
+  html[data-high-contrast="true"] { filter: contrast(1.15); }
   #login { position: fixed; left: 0; right: 0; top: 0; bottom: 0; z-index: 60;
     display: -webkit-flex; display: flex; -webkit-flex-direction: column;
     flex-direction: column; -webkit-align-items: center; align-items: center;
@@ -85,10 +88,10 @@ window.addEventListener('unhandledrejection', function (e) { vtErr('promise: ' +
   <h1>🚜 Tractor Farm</h1>
   <p class="sub">Hop on the tractor!</p>
   <form id="login-form">
-    <input id="login-email" type="email" inputmode="email" autocapitalize="none"
+    <input id="login-email" type="email" inputmode="email" aria-label="Email address" aria-describedby="login-msg" autocapitalize="none"
       autocorrect="off" spellcheck="false" autocomplete="off"
       placeholder="farmer@email.com">
-    <input id="login-code" type="password" autocapitalize="none" autocorrect="off"
+    <input id="login-code" type="password" aria-label="Secret code" aria-describedby="login-msg" autocapitalize="none" autocorrect="off"
       spellcheck="false" autocomplete="current-password" placeholder="secret code">
     <button id="login-go" type="submit">LET'S FARM!</button>
     <label id="login-remember">
@@ -96,7 +99,7 @@ window.addEventListener('unhandledrejection', function (e) { vtErr('promise: ' +
       Stay logged in
     </label>
   </form>
-  <p id="login-msg"></p>
+  <p id="login-msg" role="status" aria-live="polite"></p>
 </div>
 </body>
 </html>

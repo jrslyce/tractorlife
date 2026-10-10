@@ -33,6 +33,43 @@ test('systems state round-trips per farm including vehicles and job board', () =
   assert.equal(restored.restore({ version: 0 }), false);
 });
 
+test('blocked bridge and vehicle repairs explain missing supplies in player language', () => {
+  const farm = new FarmSystems({ farmSlot: 0 });
+  const bridge = farm.interact({ x: 0, z: -59 }, 'foot', {});
+  assert.equal(bridge.reason, 'insufficient-resources');
+  assert.deepEqual(bridge.costs, { wood: 8, stone: 4 });
+  assert.match(bridge.message, /8 wood and 4 stone/i);
+  assert.match(bridge.message, /shop/i);
+
+  farm.setVehicleCondition('tractor').triggerBreakdown('engine_failure');
+  farm.setVehiclePosition('tractor', { x: 0, y: 0, z: -66 });
+  const repair = farm.interact({ x: 0, z: -66 }, 'foot', {});
+  assert.equal(repair.reason, 'insufficient-resources');
+  assert.match(repair.message, /repair kit and 1 fuel/i);
+});
+
+test('Simple Farm pauses advanced simulation without losing state or recovery actions', () => {
+  const emitted = [];
+  const farm = new FarmSystems({ farmSlot: 0, onEvent: event => emitted.push(event) });
+  farm.setVehicleCondition('tractor').triggerBreakdown('engine_smoke');
+  farm.setVehiclePosition('tractor', { x: 0, y: 0, z: -66 });
+  const before = farm.serialize();
+  farm.setAdvancedSystemsEnabled(false);
+  farm.update(86400, { day: 40, weather: 'storm' }, { tractor: { driving: 1, work: 1 } });
+  assert.deepEqual(farm.serialize(), before);
+  assert.deepEqual(emitted, []);
+  assert.equal(farm.getPrompt({ x: -4, z: -28 }, 'foot'), null);
+  assert.equal(farm.interact({ x: -4, z: -28 }, 'foot', {}).reason, 'systems-paused');
+  assert.deepEqual(farm.getHarvestTargets(), []);
+
+  const repairPrompt = farm.getPrompt({ x: 0, z: -66 }, 'foot');
+  assert.equal(repairPrompt.action, 'repair-vehicle');
+  const repair = farm.interact({ x: 0, z: -66 }, 'foot', { repairKit: 1 });
+  assert.equal(repair.success, true);
+  assert.equal(farm.getVehicleCondition('tractor').getState().breakdown, null);
+  assert.deepEqual(farm.requests.serialize(), before.requests);
+});
+
 test('new farms and pre-breeding starter saves can reach a healthy matching pair', () => {
   const farm = new FarmSystems({ farmSlot: 0 });
   const feedAndWater = stock => {

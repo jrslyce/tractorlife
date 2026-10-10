@@ -259,6 +259,8 @@ export class WagonPanel {
     this._inventory = inventory;
     this._onChange = onChange || function () {};
     this._open = false;
+    this._previousLock = false;
+    this._returnFocus = null;
 
     const style = document.createElement('style');
     style.textContent = PANEL_CSS;
@@ -267,12 +269,12 @@ export class WagonPanel {
     const root = document.createElement('div');
     root.id = 'wagon-panel';
     root.innerHTML =
-      '<div class="wp-card" role="dialog" aria-label="Cargo">' +
-      '<h2 class="wp-title"></h2>' +
+      '<div class="wp-card" role="dialog" aria-modal="true" aria-labelledby="wagon-panel-title">' +
+      '<h2 class="wp-title" id="wagon-panel-title"></h2>' +
       '<p class="wp-help"></p>' +
-      '<h3>🎒 Your hotbar</h3><div class="wp-grid" data-row="hotbar"></div>' +
-      '<h3 class="wp-hold"></h3><div class="wp-grid" data-row="wagon"></div>' +
-      '<div class="wp-msg"></div>' +
+      '<h3 id="wagon-hotbar-label">🎒 Your hotbar</h3><div class="wp-grid" data-row="hotbar" aria-labelledby="wagon-hotbar-label"></div>' +
+      '<h3 class="wp-hold" id="wagon-hold-label"></h3><div class="wp-grid" data-row="wagon" aria-labelledby="wagon-hold-label"></div>' +
+      '<div class="wp-msg" role="status" aria-live="polite"></div>' +
       '<button type="button" class="wp-close">Done</button>' +
       '</div>';
     document.body.appendChild(root);
@@ -288,11 +290,19 @@ export class WagonPanel {
     root.querySelector('.wp-close').addEventListener('click', function () { self.close(); });
     root.addEventListener('click', function (e) { if (e.target === root) self.close(); });
     document.addEventListener('keydown', function (e) {
-      // Deferred so Input's own KeyL handler still sees the game locked and
-      // does not immediately queue another 'openWagon'.
-      if (self._open && (e.key === 'Escape' || e.code === 'KeyL')) {
+      if (!self._open) return;
+      if (e.key === 'Tab') {
+        const controls = Array.from(self._root.querySelectorAll('button:not([disabled])'));
+        if (!controls.length) { e.preventDefault(); return; }
+        const first = controls[0], last = controls[controls.length - 1];
+        if (e.shiftKey && (document.activeElement === first || !self._root.contains(document.activeElement))) {
+          e.preventDefault(); last.focus();
+        } else if (!e.shiftKey && (document.activeElement === last || !self._root.contains(document.activeElement))) {
+          e.preventDefault(); first.focus();
+        }
+      } else if (e.key === 'Escape' || e.code === 'KeyL') {
         e.preventDefault();
-        setTimeout(function () { self.close(); }, 0);
+        self.close();
       }
     });
   }
@@ -301,7 +311,10 @@ export class WagonPanel {
 
   // Show `hold` (the wagon or the truck bed; defaults to the last one shown).
   open(hold) {
+    if (this._open) return;
     if (hold) this._wagon = hold;
+    this._returnFocus = document.activeElement;
+    this._previousLock = window.VT_LOCKED;
     const noun = this._wagon.name.toLowerCase().replace('farm ', '');
     this._title.textContent = this._wagon.emoji + ' ' + this._wagon.name;
     this._help.textContent = 'Tap something in your hotbar to load it. Tap something in the ' + noun + ' to take it.';
@@ -311,13 +324,16 @@ export class WagonPanel {
     this._render();
     this._root.style.display = 'flex';
     window.VT_LOCKED = true; // no walking around while the panel is up
+    this._root.querySelector('.wp-close').focus();
   }
 
   close() {
     if (!this._open) return;
     this._open = false;
     this._root.style.display = 'none';
-    window.VT_LOCKED = false;
+    window.VT_LOCKED = this._previousLock;
+    if (this._returnFocus && typeof this._returnFocus.focus === 'function') this._returnFocus.focus();
+    this._returnFocus = null;
   }
 
   _slotButton(stack, onTap) {
@@ -328,6 +344,7 @@ export class WagonPanel {
       const item = ITEM_BY_ID[stack.itemId];
       b.textContent = item ? item.emoji : '?';
       b.title = (item ? item.name : stack.itemId) + ' × ' + stack.qty;
+      b.setAttribute('aria-label', b.title);
       const q = document.createElement('span');
       q.className = 'wp-qty';
       q.textContent = stack.qty;
@@ -335,6 +352,7 @@ export class WagonPanel {
       b.addEventListener('click', onTap);
     } else {
       b.disabled = true;
+      b.setAttribute('aria-label', 'Empty slot');
     }
     return b;
   }
