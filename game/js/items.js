@@ -1,7 +1,7 @@
 // Shared catalog for the shop and inventory. `pack` is how many units one
 // purchase adds to the inventory (default 1): a seed bag plants 50 tiles, a
 // spray jug covers 50 tiles, a fertilizer sack feeds 10 tiles. Keep prices
-// and packs in step with GIFT_ITEMS in worker.js.
+// and packs are also used by the Worker's gift validation.
 // Terrain tools remain reusable and are available from the shop; dirt is still
 // gathered in-world rather than purchased.
 export var ITEMS = [
