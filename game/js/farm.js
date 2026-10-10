@@ -453,7 +453,7 @@ export class Farm {
   }
 
   getStats() {
-    var t = { tilled: 0, planted: 0, sprayed: 0, harvested: 0, weeds: 0, bugs: 0 };
+    var t = { tilled: 0, planted: 0, sprayed: 0, harvested: 0, weeds: 0, bugs: 0, fertility: 0 };
     for (var i = 0; i < this._fields.length; i++) {
       var s = this._fields[i].stats;
       t.tilled += s.tilled;
@@ -462,7 +462,9 @@ export class Farm {
       t.harvested += s.harvested;
       t.weeds += s.weeds;
       t.bugs += s.bugs;
+      t.fertility += s.fertility;
     }
+    t.fertility = Math.round(t.fertility / Math.max(1, this._fields.length));
     return t;
   }
 }

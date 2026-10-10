@@ -77,6 +77,17 @@ export class Climate {
     };
   }
 
+  // The seeded calendar makes upcoming daily weather knowable without
+  // advancing or mutating the active simulation.
+  getForecast(days = 3) {
+    const count = Math.max(1, Math.min(7, Math.floor(Number(days) || 3)));
+    return Array.from({ length: count }, (_, index) => {
+      const day = this.day + index + 1;
+      const season = this._seasonForDay(day);
+      return { day, season, weather: weatherFor(this.seed, day, season) };
+    });
+  }
+
   serialize() {
     return {
       version: 1,

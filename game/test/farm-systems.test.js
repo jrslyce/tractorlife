@@ -32,3 +32,25 @@ test('systems state round-trips per farm including vehicles and job board', () =
   assert.deepEqual(restored.getRequests(), farm.getRequests());
   assert.equal(restored.restore({ version: 0 }), false);
 });
+
+test('new farms and pre-breeding starter saves can reach a healthy matching pair', () => {
+  const farm = new FarmSystems({ farmSlot: 0 });
+  const feedAndWater = stock => {
+    for (const animal of stock.animals) {
+      stock.interact('feed', animal.id, { feed: 1 });
+      stock.interact('water', animal.id, { water: 1 });
+    }
+    assert.equal(stock.getBreedCandidate(), 1);
+  };
+  feedAndWater(farm.livestock);
+  const legacy = farm.serialize();
+  legacy.livestock.version = 1;
+  legacy.livestock.animals = legacy.livestock.animals.slice(0, 2);
+  const restored = new FarmSystems({ farmSlot: 0 });
+  assert.equal(restored.restore(legacy), true);
+  assert.equal(restored.livestock.animals.length, 3);
+  feedAndWater(restored.livestock);
+  const migrated = restored.serialize();
+  assert.equal(restored.restore(migrated), true);
+  assert.equal(restored.livestock.animals.length, 3);
+});
