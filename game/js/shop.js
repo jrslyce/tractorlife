@@ -173,6 +173,52 @@ export class Shop {
     shopModel.position.set(centerX, 0, centerZ);
     this._group.add(shopModel);
 
+    // Grain depot on the east side of the shop: a concrete delivery apron,
+    // two corrugated silos and a bright roof cap make the wagon drop-off easy
+    // to spot from the road.
+    this._grainBinPosition = new THREE.Vector3(centerX + 22, 0, centerZ + 5);
+    var depot = new THREE.Group();
+    depot.name = 'grain-bin-depot';
+    depot.position.copy(this._grainBinPosition);
+    var apron = new THREE.Mesh(new THREE.BoxGeometry(17, 0.18, 15),
+      new THREE.MeshStandardMaterial({ color: '#88877f', roughness: 0.95 }));
+    apron.position.set(0, 0.02, 0);
+    apron.receiveShadow = true;
+    depot.add(apron);
+    var siloMat = new THREE.MeshStandardMaterial({ color: '#c4c6bd', roughness: 0.68, metalness: 0.35 });
+    var roofMat = new THREE.MeshStandardMaterial({ color: '#b67b32', roughness: 0.7, metalness: 0.2 });
+    [-4.3, 4.3].forEach(function (x) {
+      var silo = new THREE.Mesh(new THREE.CylinderGeometry(1.9, 2.1, 8.4, 12, 1), siloMat);
+      silo.position.set(x, 4.3, -1.2);
+      silo.castShadow = true; silo.receiveShadow = true; depot.add(silo);
+      var cap = new THREE.Mesh(new THREE.ConeGeometry(2.05, 1.25, 12), roofMat);
+      cap.position.set(x, 9.1, -1.2);
+      cap.castShadow = true; depot.add(cap);
+      var band = new THREE.Mesh(new THREE.TorusGeometry(2, 0.07, 5, 16), roofMat);
+      band.rotation.x = Math.PI / 2; band.position.set(x, 3.2, -1.2); depot.add(band);
+    });
+    var signPost = new THREE.Mesh(new THREE.BoxGeometry(0.28, 2.2, 0.28),
+      new THREE.MeshStandardMaterial({ color: '#65482c', roughness: 0.9 }));
+    signPost.position.set(0, 1.2, 6);
+    depot.add(signPost);
+    var signCanvas = document.createElement('canvas');
+    signCanvas.width = 512; signCanvas.height = 128;
+    var signContext = signCanvas.getContext('2d');
+    signContext.fillStyle = '#315a29'; signContext.fillRect(0, 0, 512, 128);
+    signContext.strokeStyle = '#e3c16d'; signContext.lineWidth = 10; signContext.strokeRect(7, 7, 498, 114);
+    signContext.fillStyle = '#fffbe8'; signContext.font = 'bold 46px system-ui, sans-serif';
+    signContext.textAlign = 'center'; signContext.textBaseline = 'middle'; signContext.fillText('GRAIN DROP-OFF', 256, 64);
+    var sign = new THREE.Mesh(new THREE.BoxGeometry(5.5, 1.45, 0.22),
+      new THREE.MeshStandardMaterial({ color: '#315a29', roughness: 0.8 }));
+    sign.position.set(0, 2.5, 6);
+    sign.castShadow = true; depot.add(sign);
+    var signFace = new THREE.Mesh(new THREE.PlaneGeometry(5.15, 1.15), new THREE.MeshBasicMaterial({
+      map: new THREE.CanvasTexture(signCanvas), side: THREE.DoubleSide
+    }));
+    signFace.position.set(0, 2.5, 6.12); depot.add(signFace);
+    signFace.rotation.y = Math.PI; // face the road/store approach
+    this._group.add(depot);
+
     // Build the shopkeeper (behind the counter, inside north wall)
     var shopkeeper = buildShopkeeper();
     shopkeeper.position.set(centerX + 6, 0, centerZ + 5);
@@ -190,14 +236,18 @@ export class Shop {
     return new THREE.Vector3(this._centerX, 0, this._centerZ);
   }
 
+  getGrainBinPosition() { return this._grainBinPosition.clone(); }
+
   getTriggerRadius() {
     return this._triggerRadius;
   }
 
   // Check if player is within trigger zone
   isNear(playerX, playerZ) {
-    var dx = playerX - this._centerX;
-    var dz = playerZ - this._centerZ;
+    // Door is centered on the south wall at local x=6,z=0. Trigger just
+    // outside it, not at the building origin (which is behind the west wall).
+    var dx = playerX - (this._centerX + 6);
+    var dz = playerZ - (this._centerZ - 2);
     return (dx * dx + dz * dz) <= (this._triggerRadius * this._triggerRadius);
   }
 
