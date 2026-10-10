@@ -144,7 +144,8 @@ export class FarmSystems {
       const action = a.escaped ? 'herd' : !a.feedToday ? 'feed' : !a.waterToday ? 'water' : '';
       if (action) out.push({ kind: a.escaped ? 'escaped-animal' : 'animal', id: a.id, x: this.originX - 4 + (a.id - 1) * 2, z: a.escaped ? -20 : -28, action });
     }
-    const breedingTarget = this.livestock.getBreedCandidate();
+    const breedingTarget = typeof this.livestock.getBreedCandidate === 'function'
+      ? this.livestock.getBreedCandidate() : null;
     if (breedingTarget !== null) out.push({ kind: 'animal', id: breedingTarget,
       x: this.originX - 4 + (breedingTarget - 1) * 2, z: -28, action: 'breed' });
     for (const tree of this.woodland.trees) out.push({ kind: tree.stage === 'stump' ? 'stump' : 'tree', id: tree.id, x: tree.x, z: tree.z, action: tree.stage === 'stump' ? 'clear-stump' : 'fell' });
