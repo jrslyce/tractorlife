@@ -1,5 +1,6 @@
 // TractorLife worker: secret-backed login sessions + per-player saves in a Durable Object.
 // Static game assets are served by env.ASSETS; all /api/* routes are handled here.
+import { ITEMS } from './game/js/items.js';
 
 const MAX_STATE_LENGTH = 524288;
 const MAX_REQUEST_LENGTH = MAX_STATE_LENGTH + 4096;
@@ -9,18 +10,34 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // How long a farmer stays on the /api/farmers list after their last login.
 const FARMER_RECENT_MS = 30 * 24 * 60 * 60 * 1000;
 const encoder = new TextEncoder();
-// Mirrors game/js/items.js: price per purchase, and `pack` units per purchase.
-const GIFT_ITEMS = {
-  asphalt: { price: 4, emoji: "⬛" }, gravel: { price: 2, emoji: "◽" }, brick: { price: 6, emoji: "🧱" },
-  wood: { price: 12, emoji: "🪵" }, axe: { price: 35, emoji: "🪓" }, shovel: { price: 25, emoji: "🥄" }, pickaxe: { price: 45, emoji: "⛏️" },
-  roof_shingles: { price: 90, emoji: "🏠" }, fence_kit: { price: 80, emoji: "🚧" },
-  window_glass: { price: 65, emoji: "🪟" }, door: { price: 70, emoji: "🚪" }, lamp_light: { price: 55, emoji: "💡" },
-  string_lights: { price: 95, emoji: "✨" }, fertilizer: { price: 25, emoji: "🪴", pack: 10 },
-  crop_spray: { price: 20, emoji: "🧴", pack: 200 }, corn_seeds: { price: 15, emoji: "🌽", pack: 100 },
-  wheat_seeds: { price: 10, emoji: "🌾", pack: 100 }, pumpkin_seeds: { price: 25, emoji: "🎃", pack: 100 },
-  sunflower_seeds: { price: 18, emoji: "🌻", pack: 100 }, pea_seeds: { price: 8, emoji: "🟢", pack: 100 }, paint: { price: 30, emoji: "🎨" }, hay_bale: { price: 28, emoji: "🟨" },
-  scarecrow: { price: 60, emoji: "🧑‍🌾" }, pumpkin_pile: { price: 75, emoji: "🎃" }, corn_shocks: { price: 48, emoji: "🌽" }, mailbox: { price: 42, emoji: "📮" },
-};
+// Use the same prices and pack sizes as the shop; gathered produce is not sold as gifts.
+const GIFT_ITEMS = Object.fromEntries(ITEMS.filter(item => item.available !== false && item.price > 0)
+  .map(item => [item.id, item]));
+function giftItem(id) {
+  return typeof id === "string" && Object.prototype.hasOwnProperty.call(GIFT_ITEMS, id) ? GIFT_ITEMS[id] : null;
+}
+
+function giftAdjustment(state) {
+  return Number.isSafeInteger(state && state.giftBalanceAdjustment) ? state.giftBalanceAdjustment : 0;
+}
+
+function addGift(state, gift) {
+  const item = giftItem(gift.itemId);
+  if (!item || !Number.isInteger(gift.qty) || gift.qty < 1 || gift.qty > 20) return false;
+  if (!isPlainObject(state.inventory) || !Array.isArray(state.inventory.slots)) {
+    state.inventory = { v: 1, selectedSlot: -1, slots: new Array(9).fill(null) };
+  }
+  const slots = state.inventory.slots;
+  if (slots.length !== 9) return false;
+  let target = slots.findIndex(slot => slot && slot.itemId === gift.itemId);
+  if (target < 0) target = slots.findIndex(slot => !slot);
+  if (target < 0) return false;
+  const units = gift.qty * (item.pack || 1);
+  const quantity = slots[target] ? slots[target].qty : 0;
+  if (!Number.isSafeInteger(quantity) || quantity < 0 || !Number.isSafeInteger(quantity + units)) return false;
+  slots[target] = { itemId: gift.itemId, qty: quantity + units, emoji: item.emoji };
+  return true;
+}
 const TERRAIN_MATERIALS = new Set(["grass", "dirt", "stone", "wood"]);
 const TERRAIN_TOOLS = new Set(["", "axe", "shovel", "pickaxe"]);
 const MAX_TERRAIN_CELLS = 2500;
@@ -247,7 +264,7 @@ export class GameSaves {
     if (request.method === "POST" && url.pathname === "/gift-debit") {
       let body = {};
       try { body = await request.json(); } catch (err) { return json({ ok: false, error: "bad request" }, 400); }
-      const item = body && GIFT_ITEMS[body.itemId];
+      const item = body && giftItem(body.itemId);
       const qty = body && body.qty;
       const requestId = body && body.requestId;
       if (!item || !Number.isInteger(qty) || qty < 1 || qty > 20 ||
@@ -272,6 +289,7 @@ export class GameSaves {
       }
       if (state.money < transfer.total) return json({ ok: false, error: "not enough money" }, 409);
       state.money = Math.max(0, Math.floor(state.money - transfer.total));
+      state.giftBalanceAdjustment = giftAdjustment(state) - transfer.total;
       await this.ctx.storage.put({
         state: JSON.stringify(state),
         [transactionKey]: Object.assign({}, transfer, { status: "debited", from: body.from || "" })
@@ -377,7 +395,7 @@ export class GameSaves {
     if (request.method === "POST" && url.pathname === "/gift-credit") {
       let body = {};
       try { body = await request.json(); } catch (err) { return json({ ok: false, error: "bad request" }, 400); }
-      const item = body && GIFT_ITEMS[body.itemId];
+      const item = body && giftItem(body.itemId);
       if (!item || !Number.isInteger(body.qty) || body.qty < 1 || body.qty > 20 ||
           typeof body.requestId !== "string" || !/^[A-Za-z0-9_-]{8,80}$/.test(body.requestId) || !normalizeEmail(body.from)) {
         return json({ ok: false, error: "invalid gift" }, 400);
@@ -389,22 +407,7 @@ export class GameSaves {
       let state;
       try { state = raw ? JSON.parse(raw) : null; } catch (err) { state = null; }
       if (!isPlainObject(state)) state = { v: 3, money: 0 };
-      if (!isPlainObject(state.inventory) || !Array.isArray(state.inventory.slots)) {
-        state.inventory = { v: 1, selectedSlot: -1, slots: new Array(9).fill(null) };
-      }
-      const slots = state.inventory.slots;
-      let target = -1;
-      for (let i = 0; i < slots.length; i++) {
-        if (slots[i] && slots[i].itemId === body.itemId) { target = i; break; }
-      }
-      if (target < 0) {
-        for (let i = 0; i < slots.length; i++) if (!slots[i]) { target = i; break; }
-      }
-      if (target < 0) return json({ ok: false, error: "recipient inventory is full" }, 409);
-      const units = body.qty * (item.pack || 1);
-      if (slots[target] && (Number(slots[target].qty) || 0) + units > 9999) return json({ ok: false, error: "recipient stack is full" }, 409);
-      if (slots[target]) slots[target].qty = Math.max(0, Number(slots[target].qty) || 0) + units;
-      else slots[target] = { itemId: body.itemId, qty: units, emoji: item.emoji };
+      if (!addGift(state, body)) return json({ ok: false, error: "recipient inventory is full or invalid" }, 409);
       const inbox = Array.isArray(state.giftInbox) ? state.giftInbox.slice(-19) : [];
       inbox.push({ requestId: body.requestId, from: body.from, itemId: body.itemId, qty: body.qty, at: Date.now() });
       state.giftInbox = inbox;
@@ -429,6 +432,7 @@ export class GameSaves {
         try { state = raw ? JSON.parse(raw) : null; } catch (err) { state = null; }
         if (isPlainObject(state)) {
           state.money = Math.max(0, Number(state.money) || 0) + transaction.total;
+          state.giftBalanceAdjustment = giftAdjustment(state) + transaction.total;
           transaction.status = "refunded";
           await this.ctx.storage.put({ state: JSON.stringify(state), [key]: transaction });
         }
@@ -444,6 +448,7 @@ export class GameSaves {
       try { body = await request.json(); } catch (err) { body = {}; }
       if (!isPlainObject(body)) body = {};
       const state = body.state === undefined ? null : body.state;
+      if (!isPlainObject(state)) return json({ ok: false, error: "bad state" }, 400);
       const saveTransaction = async (storage) => {
         const oldRaw = await storage.get("state");
         let oldState = null;
@@ -458,6 +463,15 @@ export class GameSaves {
           return json({ ok: false, error: "terrain revision conflict", revision: currentTerrainRevision }, 409);
         }
         if (isPlainObject(state) && isPlainObject(oldState) && Array.isArray(oldState.giftInbox)) {
+          // An autosave can have been captured before a server gift arrived.
+          // Reconcile unobserved credits into that snapshot, not just its inbox.
+          const applied = new Set(Array.isArray(state.appliedGiftIds) ? state.appliedGiftIds : []);
+          for (const gift of oldState.giftInbox) {
+            if (!gift || !gift.requestId || applied.has(gift.requestId)) continue;
+            if (!addGift(state, gift)) return json({ ok: false, error: "reload to collect pending gifts" }, 409);
+            applied.add(gift.requestId);
+          }
+          state.appliedGiftIds = Array.from(applied).slice(-100);
           const inbox = Array.isArray(state.giftInbox) ? state.giftInbox.slice() : [];
           const ids = {};
           for (let i = 0; i < inbox.length; i++) if (inbox[i] && inbox[i].requestId) ids[inbox[i].requestId] = true;
@@ -466,6 +480,12 @@ export class GameSaves {
             if (gift && gift.requestId && !ids[gift.requestId]) inbox.push(gift);
           }
           state.giftInbox = inbox.slice(-20);
+        }
+        // Preserve server debits/refunds that an in-flight snapshot has not seen.
+        if (isPlainObject(oldState)) {
+          const adjustment = giftAdjustment(oldState);
+          state.money = Math.max(0, (Number(state.money) || 0) + adjustment - giftAdjustment(state));
+          state.giftBalanceAdjustment = adjustment;
         }
         if (isPlainObject(oldState) && Object.prototype.hasOwnProperty.call(oldState, "terrainRevision")) {
           state.terrainRevision = oldState.terrainRevision;
@@ -624,7 +644,7 @@ export class RealtimeRoom {
         return json({ ok: true });
       }
       if (!isPlainObject(body) || body.type !== "gift" || !normalizeEmail(body.from) || !normalizeEmail(body.to) ||
-          !GIFT_ITEMS[body.itemId] || !Number.isInteger(body.qty) || body.qty < 1 || body.qty > 20 ||
+          !giftItem(body.itemId) || !Number.isInteger(body.qty) || body.qty < 1 || body.qty > 20 ||
           typeof body.requestId !== "string" || !/^[A-Za-z0-9_-]{8,80}$/.test(body.requestId)) {
         return json({ ok: false }, 400);
       }
@@ -940,7 +960,7 @@ export default {
       catch (err) { return json({ ok: false, error: "bad request" }, 400); }
       if (!isPlainObject(body)) return json({ ok: false, error: "bad request" }, 400);
       const to = normalizeEmail(body.to);
-      if (!to || to === session.email || !GIFT_ITEMS[body.itemId] || !Number.isInteger(body.qty) || body.qty < 1 || body.qty > 20) {
+      if (!to || to === session.email || !giftItem(body.itemId) || !Number.isInteger(body.qty) || body.qty < 1 || body.qty > 20) {
         return json({ ok: false, error: "invalid gift" }, 400);
       }
       // Only gift to accounts present in the recent farmer roster.

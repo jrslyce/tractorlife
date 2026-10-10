@@ -38,3 +38,21 @@ test('field rotations, fertility and premium harvest yield survive save restore'
   assert.equal(restored._soilFertility[0], 86);
   assert.equal(SOIL_START, 72);
 });
+
+test('premium combine crops remain standing when their bonus exceeds remaining bin capacity', () => {
+  const field = makeField('corn', TileState.READY, 1, 1);
+  field._soilFertility[0] = 95;
+  const before = field.serialize();
+  assert.equal(field.applyEffect(0, 0, 1, 'harvest', 0, 'corn', 1, 1).affected, 0);
+  assert.deepEqual(field.serialize(), before);
+  assert.equal(field.applyEffect(0, 0, 1, 'harvest', 0, 'corn', 2, 2).produceCount, 2);
+});
+
+test('premium hand-picked crops check capacity for the whole yield before mutation', () => {
+  const field = makeField('pumpkin', TileState.READY, 1, 1);
+  field._soilFertility[0] = 95;
+  const before = field.serialize();
+  assert.equal(field.harvestAt(0, 0, (id, qty) => qty <= 1), null);
+  assert.deepEqual(field.serialize(), before);
+  assert.equal(field.harvestAt(0, 0, (id, qty) => qty <= 2).quantity, 2);
+});
