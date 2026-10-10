@@ -99,7 +99,7 @@ export class ShopUI {
     selfRecipient.textContent = 'My inventory';
     this._recipient.appendChild(selfRecipient);
     this._recipient.addEventListener('change', function () {
-      var buttons = self._list ? self._list.querySelectorAll('.shop-buy') : [];
+      var buttons = self._list ? self._list.querySelectorAll('.shop-buy[data-purchase]') : [];
       for (var bi = 0; bi < buttons.length; bi++) {
         var price = buttons[bi].textContent.substring(buttons[bi].textContent.indexOf('$'));
         buttons[bi].textContent = (self._recipient.value ? 'Gift · ' : 'Buy · ') + price;
@@ -195,6 +195,7 @@ export class ShopUI {
           var button = document.createElement('button');
           button.type = 'button';
           button.className = 'shop-buy';
+          button.setAttribute('data-purchase', item.id);
           button.textContent = (self._recipient.value ? 'Gift · $' : 'Buy · $') + item.price;
           button.addEventListener('click', function () { self._purchase(item); });
           row.appendChild(emoji);
@@ -298,7 +299,7 @@ export class ShopUI {
       this._recipient.appendChild(option);
     }
     this._recipient.value = selected;
-    var buttons = this._list.querySelectorAll('.shop-buy');
+    var buttons = this._list.querySelectorAll('.shop-buy[data-purchase]');
     for (var b = 0; b < buttons.length; b++) {
       var label = buttons[b].textContent.split(' · $').pop();
       buttons[b].textContent = (this._recipient.value ? 'Gift · $' : 'Buy · $') + label;
@@ -311,11 +312,12 @@ export class ShopUI {
   }
 
   open() {
-    if (this._open) return;
-    this._previousFocus = document.activeElement;
-    this._previousLock = typeof window !== 'undefined' ? window.VT_LOCKED : false;
-    if (typeof window !== 'undefined') window.VT_LOCKED = true;
+    if (!this._open) {
+      this._previousFocus = typeof document !== 'undefined' ? document.activeElement : null;
+      this._previousLock = typeof window !== 'undefined' ? window.VT_LOCKED : false;
+    }
     this._open = true;
+    if (typeof window !== 'undefined') window.VT_LOCKED = true;
     this._message.textContent = '';
     this.refreshBalance();
     this._showMenu();
@@ -324,6 +326,7 @@ export class ShopUI {
   }
 
   close() {
+    if (!this._open) return;
     this._open = false;
     this._overlay.style.display = 'none';
     if (typeof window !== 'undefined') window.VT_LOCKED = this._previousLock;
