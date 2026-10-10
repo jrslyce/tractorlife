@@ -12,7 +12,8 @@ const encoder = new TextEncoder();
 // Mirrors game/js/items.js: price per purchase, and `pack` units per purchase.
 const GIFT_ITEMS = {
   asphalt: { price: 4, emoji: "⬛" }, gravel: { price: 2, emoji: "◽" }, brick: { price: 6, emoji: "🧱" },
-  wood: { price: 12, emoji: "🪵" }, roof_shingles: { price: 90, emoji: "🏠" }, fence_kit: { price: 80, emoji: "🚧" },
+  wood: { price: 12, emoji: "🪵" }, axe: { price: 35, emoji: "🪓" }, shovel: { price: 25, emoji: "🥄" }, pickaxe: { price: 45, emoji: "⛏️" },
+  roof_shingles: { price: 90, emoji: "🏠" }, fence_kit: { price: 80, emoji: "🚧" },
   window_glass: { price: 65, emoji: "🪟" }, door: { price: 70, emoji: "🚪" }, lamp_light: { price: 55, emoji: "💡" },
   string_lights: { price: 95, emoji: "✨" }, fertilizer: { price: 25, emoji: "🪴", pack: 10 },
   crop_spray: { price: 20, emoji: "🧴", pack: 200 }, corn_seeds: { price: 15, emoji: "🌽", pack: 100 },
@@ -20,6 +21,72 @@ const GIFT_ITEMS = {
   sunflower_seeds: { price: 18, emoji: "🌻", pack: 100 }, pea_seeds: { price: 8, emoji: "🟢", pack: 100 }, paint: { price: 30, emoji: "🎨" }, hay_bale: { price: 28, emoji: "🟨" },
   scarecrow: { price: 60, emoji: "🧑‍🌾" }, pumpkin_pile: { price: 75, emoji: "🎃" }, corn_shocks: { price: 48, emoji: "🌽" }, mailbox: { price: 42, emoji: "📮" },
 };
+const TERRAIN_MATERIALS = new Set(["grass", "dirt", "stone", "wood"]);
+const TERRAIN_TOOLS = new Set(["", "axe", "shovel", "pickaxe"]);
+const MAX_TERRAIN_CELLS = 2500;
+const MAX_TERRAIN_OPERATIONS = 10000;
+
+// Keep this integer-only relief function in sync with game/js/terrain.js.
+function terrainHeight(x, z) {
+  const hills = [[8, 31, 2], [27, 33, 1], [11, 59, 2]];
+  let height = 0;
+  for (const [cx, cz, peak] of hills) {
+    const d = Math.abs(x - cx) + Math.abs(z - cz);
+    if (d <= 2) height = Math.max(height, peak);
+    else if (d <= 5) height = Math.max(height, 1);
+  }
+  if (Math.abs(x - 19) + Math.abs(z - 39) <= 4) height = -1;
+  return height;
+}
+
+function terrainBaseMaterial(x, y, z, slot) {
+  const top = terrainHeight(x - slot * 180 - 108, z + 53);
+  if (y >= top) return "air";
+  if (y === top - 1) return "grass";
+  if (y <= -6) return "stone";
+  return "dirt";
+}
+
+function terrainCellMaterial(state, x, y, z, slot) {
+  const changed = state.terrainEdits && state.terrainEdits[x + "," + y + "," + z];
+  return changed ? changed.material : terrainBaseMaterial(x, y, z, slot);
+}
+
+function terrainInBounds(slot, x, y, z) {
+  const localX = x - slot * 180 - 108;
+  const localZ = z + 53;
+  const reservedExpansionPlot = localX >= 5 && localX <= 34 && localZ >= 0 && localZ <= 22;
+  return x > slot * 180 + 108 && x < slot * 180 + 145 && z > -53 && z < 24 && y > -8 && y <= 16 && !reservedExpansionPlot;
+}
+
+function seedCanonicalTerrain(state, farmSlot) {
+  if (state.terrainCanonicalSeeded) return;
+  const incomingEdits = state.terrainEdits;
+  state.terrainEdits = {};
+  if (isPlainObject(incomingEdits)) {
+    for (const [cell, value] of Object.entries(incomingEdits)) {
+      const coords = cell.split(',').map(Number);
+      const material = typeof value === 'string' ? value : value && value.material;
+      if (coords.length !== 3 || !coords.every(Number.isSafeInteger) || !terrainInBounds(farmSlot, coords[0], coords[1], coords[2]) ||
+          !TERRAIN_MATERIALS.has(material) || Object.keys(state.terrainEdits).length >= MAX_TERRAIN_CELLS) continue;
+      state.terrainEdits[cell] = { material: material, revision: 0 };
+    }
+  }
+  const terrain = state.terrain;
+  const expectedX = farmSlot * 180 + 108;
+  if (!Object.keys(state.terrainEdits).length && isPlainObject(terrain) && isPlainObject(terrain.bounds) && Array.isArray(terrain.changes) &&
+      terrain.bounds.originX === expectedX && terrain.bounds.originZ === -53 &&
+      terrain.bounds.width === 38 && terrain.bounds.depth === 78 &&
+      terrain.bounds.minY === -8 && terrain.bounds.maxY === 16 && terrain.changes.length <= MAX_TERRAIN_CELLS) {
+    for (const row of terrain.changes) {
+      if (!Array.isArray(row) || row.length !== 4 || !row.slice(0, 3).every(Number.isSafeInteger) ||
+          !TERRAIN_MATERIALS.has(row[3]) || row[0] <= expectedX || row[0] >= expectedX + 37 ||
+          row[1] < -7 || row[1] > 16 || row[2] <= -53 || row[2] >= 24) continue;
+      state.terrainEdits[row[0] + "," + row[1] + "," + row[2]] = { material: row[3], revision: 0 };
+    }
+  }
+  state.terrainCanonicalSeeded = true;
+}
 
 function json(data, status, headers) {
   const responseHeaders = new Headers(headers || {});
@@ -212,6 +279,101 @@ export class GameSaves {
       return json({ ok: true, status: "debited", total: transfer.total });
     }
 
+    if (request.method === "POST" && url.pathname === "/terrain-edit") {
+      let body;
+      try { body = await request.json(); } catch (err) { return json({ ok: false, error: "bad request" }, 400); }
+      if (!isPlainObject(body) || typeof body.operationId !== "string" || !/^[A-Za-z0-9_-]{8,80}$/.test(body.operationId) ||
+          !["break", "place"].includes(body.action) || ![body.x, body.y, body.z].every(Number.isSafeInteger) ||
+          !Number.isSafeInteger(body.expectedRevision) || body.expectedRevision < 0 ||
+          (body.action === "place" && (!TERRAIN_MATERIALS.has(body.material) || body.material === "grass")) ||
+          (body.material !== undefined && !TERRAIN_MATERIALS.has(body.material)) ||
+          (body.toolId !== undefined && (typeof body.toolId !== "string" || !TERRAIN_TOOLS.has(body.toolId)))) {
+        return json({ ok: false, error: "invalid terrain edit" }, 400);
+      }
+      // Worker supplies identity/slot; DO internal routes are never exposed directly.
+      if (!Number.isInteger(body.farmSlot) || body.farmSlot < 0 || body.farmSlot > 9 ||
+          !terrainInBounds(body.farmSlot, body.x, body.y, body.z)) {
+        return json({ ok: false, error: "out of bounds" }, 400);
+      }
+      const key = "terrain-op:" + body.operationId;
+      const requestShape = { action: body.action, x: body.x, y: body.y, z: body.z,
+        material: body.material || "", toolId: body.toolId || "", expectedRevision: body.expectedRevision };
+      let result;
+      const transact = async (storage) => {
+        const prior = await storage.get(key);
+        const raw = await storage.get("state");
+        let state;
+        try { state = raw ? JSON.parse(raw) : null; } catch (err) { state = null; }
+        if (!isPlainObject(state)) state = { v: 3, money: 0 };
+        state.terrainEdits = isPlainObject(state.terrainEdits) ? state.terrainEdits : {};
+        state.terrainRevision = Number.isSafeInteger(state.terrainRevision) ? state.terrainRevision : 0;
+        state.terrainOperationCount = Number.isSafeInteger(state.terrainOperationCount) && state.terrainOperationCount >= 0
+          ? state.terrainOperationCount : state.terrainRevision;
+        seedCanonicalTerrain(state, body.farmSlot);
+        if (prior) {
+          if (JSON.stringify(prior.request) !== JSON.stringify(requestShape)) result = { error: "operation id conflict", revision: state.terrainRevision };
+          else result = prior.result;
+          return;
+        }
+        if (body.expectedRevision !== state.terrainRevision) { result = { error: "stale revision", revision: state.terrainRevision }; return; }
+        if (state.terrainOperationCount >= MAX_TERRAIN_OPERATIONS) { result = { error: "terrain operation limit reached", revision: state.terrainRevision }; return; }
+        const cell = body.x + "," + body.y + "," + body.z;
+        const existing = state.terrainEdits[cell];
+        const current = existing ? existing.material : terrainBaseMaterial(body.x, body.y, body.z, body.farmSlot);
+        if (body.action === "break" && current === "air") { result = { error: "empty cell", revision: state.terrainRevision }; return; }
+        if (body.action === "place" && current !== "air") { result = { error: "occupied cell", revision: state.terrainRevision }; return; }
+        if (!isPlainObject(state.inventory)) state.inventory = { v: 1, selectedSlot: -1, slots: new Array(9).fill(null) };
+        if (!Array.isArray(state.inventory.slots) || state.inventory.slots.length !== 9) {
+          result = { error: "invalid inventory", revision: state.terrainRevision }; return;
+        }
+        const slots = state.inventory.slots;
+        const toolId = body.toolId || "";
+        if (toolId && !slots.some((item) => item && item.itemId === toolId && Number.isSafeInteger(item.qty) && item.qty > 0)) {
+          result = { error: "missing tool", revision: state.terrainRevision }; return;
+        }
+        const material = body.action === "place" ? body.material : current;
+        const itemId = body.action === "break" && current === "grass" ? "dirt" : material;
+        if (body.action === "break" && current === "stone" && toolId !== "pickaxe") { result = { error: "pickaxe required", revision: state.terrainRevision }; return; }
+        if (body.action === "break" && current === "dirt" && toolId && toolId !== "shovel") { result = { error: "wrong tool", revision: state.terrainRevision }; return; }
+        if (body.action === "break" && current === "wood" && toolId && toolId !== "axe") { result = { error: "wrong tool", revision: state.terrainRevision }; return; }
+        if (body.action === "place") {
+          const neighbors = [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]];
+          if (!neighbors.some(([dx,dy,dz]) => terrainInBounds(body.farmSlot, body.x + dx, body.y + dy, body.z + dz) &&
+              terrainCellMaterial(state, body.x + dx, body.y + dy, body.z + dz, body.farmSlot) !== "air")) {
+            result = { error: "not attached", revision: state.terrainRevision }; return;
+          }
+        }
+        let slot = slots.findIndex((s) => s && s.itemId === itemId && Number.isSafeInteger(s.qty) && s.qty > 0);
+        if (body.action === "place" && slot < 0) { result = { error: "missing material", revision: state.terrainRevision }; return; }
+        if (!existing && Object.keys(state.terrainEdits).length >= MAX_TERRAIN_CELLS) { result = { error: "terrain limit reached", revision: state.terrainRevision }; return; }
+        if (body.action === "place") {
+          slots[slot].qty--;
+          if (!slots[slot].qty) slots[slot] = null;
+        } else {
+          slot = slots.findIndex((s) => s && s.itemId === itemId && Number.isSafeInteger(s.qty) && s.qty < Number.MAX_SAFE_INTEGER);
+          if (slot < 0) slot = slots.findIndex((s) => !s);
+          if (slot < 0) { result = { error: "inventory full", revision: state.terrainRevision }; return; }
+          if (slots[slot]) slots[slot].qty++;
+          else slots[slot] = { itemId: itemId, qty: 1 };
+        }
+        const revision = state.terrainRevision + 1;
+        const edit = { operationId: body.operationId, action: body.action, x: body.x, y: body.y, z: body.z, material: body.action === "place" ? material : "air", revision };
+        state.terrainEdits[cell] = { material: edit.material, revision };
+        state.terrainRevision = revision;
+        state.terrainOperationCount++;
+        state.terrain = null;
+        result = { ok: true, edit, revision, inventory: state.inventory };
+        const serialized = JSON.stringify(state);
+        if (serialized.length > MAX_STATE_LENGTH) { result = { error: "save limit reached", revision: state.terrainRevision - 1 }; return; }
+        await storage.put({ state: serialized, [key]: { request: requestShape, result: result } });
+      };
+      if (typeof this.ctx.storage.transaction === "function") await this.ctx.storage.transaction(transact);
+      else await transact(this.ctx.storage);
+      if (result && result.error) return json({ ok: false, error: result.error, revision: result.revision },
+        result.error === "stale revision" || result.error === "operation id conflict" ? 409 : result.error === "save limit reached" ? 413 : 400);
+      return json(result);
+    }
+
     if (request.method === "POST" && url.pathname === "/gift-credit") {
       let body = {};
       try { body = await request.json(); } catch (err) { return json({ ok: false, error: "bad request" }, 400); }
@@ -279,29 +441,50 @@ export class GameSaves {
 
     if (request.method === "POST" && url.pathname === "/save") {
       let body = {};
-      try {
-        body = await request.json();
-      } catch (err) {
-        body = {};
-      }
+      try { body = await request.json(); } catch (err) { body = {}; }
       if (!isPlainObject(body)) body = {};
       const state = body.state === undefined ? null : body.state;
-      const oldRaw = await this.ctx.storage.get("state");
-      let oldState = null;
-      try { oldState = oldRaw ? JSON.parse(oldRaw) : null; } catch (err) { oldState = null; }
-      if (isPlainObject(state) && isPlainObject(oldState) && Array.isArray(oldState.giftInbox)) {
-        const inbox = Array.isArray(state.giftInbox) ? state.giftInbox.slice() : [];
-        const ids = {};
-        for (let i = 0; i < inbox.length; i++) if (inbox[i] && inbox[i].requestId) ids[inbox[i].requestId] = true;
-        for (let i = 0; i < oldState.giftInbox.length; i++) {
-          const gift = oldState.giftInbox[i];
-          if (gift && gift.requestId && !ids[gift.requestId]) inbox.push(gift);
+      const saveTransaction = async (storage) => {
+        const oldRaw = await storage.get("state");
+        let oldState = null;
+        try { oldState = oldRaw ? JSON.parse(oldRaw) : null; } catch (err) { oldState = null; }
+        const currentTerrainRevision = isPlainObject(oldState) && Number.isSafeInteger(oldState.terrainRevision) ? oldState.terrainRevision : 0;
+        const incomingTerrainRevision = Number.isSafeInteger(state && state.terrainRevision) ? state.terrainRevision : 0;
+        if (incomingTerrainRevision < currentTerrainRevision) {
+          return json({ ok: false, error: "stale terrain revision", revision: currentTerrainRevision }, 409);
         }
-        state.giftInbox = inbox.slice(-20);
-      }
-      const raw = JSON.stringify(state);
-      await this.ctx.storage.put("state", raw);
-      return json({ ok: true });
+        if (isPlainObject(oldState) && Object.prototype.hasOwnProperty.call(oldState, "terrainRevision") &&
+            incomingTerrainRevision !== currentTerrainRevision) {
+          return json({ ok: false, error: "terrain revision conflict", revision: currentTerrainRevision }, 409);
+        }
+        if (isPlainObject(state) && isPlainObject(oldState) && Array.isArray(oldState.giftInbox)) {
+          const inbox = Array.isArray(state.giftInbox) ? state.giftInbox.slice() : [];
+          const ids = {};
+          for (let i = 0; i < inbox.length; i++) if (inbox[i] && inbox[i].requestId) ids[inbox[i].requestId] = true;
+          for (let i = 0; i < oldState.giftInbox.length; i++) {
+            const gift = oldState.giftInbox[i];
+            if (gift && gift.requestId && !ids[gift.requestId]) inbox.push(gift);
+          }
+          state.giftInbox = inbox.slice(-20);
+        }
+        if (isPlainObject(oldState) && Object.prototype.hasOwnProperty.call(oldState, "terrainRevision")) {
+          state.terrainRevision = oldState.terrainRevision;
+          state.terrainEdits = oldState.terrainEdits;
+          state.terrainOperationCount = oldState.terrainOperationCount;
+          state.terrainCanonicalSeeded = oldState.terrainCanonicalSeeded === true;
+          state.terrain = null;
+        } else if (state && Object.prototype.hasOwnProperty.call(state, "terrainRevision")) {
+          state.terrainRevision = Number.isSafeInteger(state.terrainRevision) && state.terrainRevision >= 0 ? state.terrainRevision : 0;
+          state.terrainEdits = isPlainObject(state.terrainEdits) ? state.terrainEdits : {};
+        }
+        const raw = JSON.stringify(state);
+        if (raw.length > MAX_STATE_LENGTH) return json({ ok: false, error: "state too large" }, 413);
+        await storage.put("state", raw);
+        return json({ ok: true });
+      };
+      return typeof this.ctx.storage.transaction === "function"
+        ? await this.ctx.storage.transaction(saveTransaction)
+        : await saveTransaction(this.ctx.storage);
     }
 
     // Otherwise: load.
@@ -436,6 +619,10 @@ export class RealtimeRoom {
     if (request.method === "POST" && url.pathname === "/broadcast") {
       let body;
       try { body = await request.json(); } catch (err) { return json({ ok: false }, 400); }
+      if (isPlainObject(body) && body.type === "terrain-edit" && normalizeEmail(body.email) && isPlainObject(body.edit) && Number.isSafeInteger(body.revision)) {
+        this._broadcast({ type: "terrain-edit", email: body.email, edit: body.edit, revision: body.revision }, null);
+        return json({ ok: true });
+      }
       if (!isPlainObject(body) || body.type !== "gift" || !normalizeEmail(body.from) || !normalizeEmail(body.to) ||
           !GIFT_ITEMS[body.itemId] || !Number.isInteger(body.qty) || body.qty < 1 || body.qty > 20 ||
           typeof body.requestId !== "string" || !/^[A-Za-z0-9_-]{8,80}$/.test(body.requestId)) {
@@ -616,6 +803,38 @@ export default {
       return json({ ok: true, email: email, farmSlot: farmSlot, state: data.state }, 200, { "set-cookie": setCookie });
     }
 
+    if (url.pathname === "/api/terrain/state") {
+      if (request.method !== "GET") return json({ ok: false, error: "method not allowed" }, 405);
+      const session = await readSession(request, env);
+      if (!session) return json({ ok: false, error: "unauthorized" }, 401);
+      const saves = env.SAVES.get(env.SAVES.idFromName(session.email));
+      const response = await saves.fetch("https://saves/load");
+      const loaded = await response.json();
+      const state = isPlainObject(loaded.state) ? loaded.state : {};
+      return json({ ok: true, terrain: state.terrain || null,
+        terrainEdits: isPlainObject(state.terrainEdits) ? state.terrainEdits : {},
+        terrainRevision: Number.isSafeInteger(state.terrainRevision) ? state.terrainRevision : 0,
+        inventory: state.inventory || null });
+    }
+
+    if (url.pathname === "/api/terrain/edit") {
+      if (request.method !== "POST") return json({ ok: false, error: "method not allowed" }, 405);
+      const session = await readSession(request, env);
+      if (!session) return json({ ok: false, error: "unauthorized" }, 401);
+      let body;
+      try { body = await readJsonBody(request); } catch (err) { return json({ ok: false, error: "bad request" }, 400); }
+      if (!isPlainObject(body)) return json({ ok: false, error: "bad request" }, 400);
+      const payload = Object.assign({}, body, { farmSlot: assignFarmSlot(session.email) });
+      const saves = env.SAVES.get(env.SAVES.idFromName(session.email));
+      const response = await saves.fetch("https://saves/terrain-edit", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+      const data = await response.clone().json();
+      if (response.ok && data.ok) {
+        try { await env.REALTIME.get(env.REALTIME.idFromName("map-room")).fetch("https://realtime/broadcast", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ type: "terrain-edit", email: session.email, edit: data.edit, revision: data.revision }) }); }
+        catch (err) { /* durable edit remains canonical */ }
+      }
+      return response;
+    }
+
     if (url.pathname === "/api/farmers") {
       if (request.method !== "GET") {
         return json({ ok: false, error: "method not allowed" }, 405);
@@ -686,7 +905,10 @@ export default {
           const f = farms[i];
           if (!isPlainObject(f) || typeof f.farmSlot !== "number" || Math.floor(f.farmSlot) !== slot) continue;
           if (!Array.isArray(f.fields)) break;
-          farm = { farmSlot: f.farmSlot, fields: f.fields };
+          farm = { farmSlot: f.farmSlot, fields: f.fields, expansion: f.expansion === true,
+            terrain: state.terrain || null,
+            terrainEdits: isPlainObject(state.terrainEdits) ? state.terrainEdits : {},
+            terrainRevision: Number.isSafeInteger(state.terrainRevision) ? state.terrainRevision : 0 };
           break;
         }
       } catch (err) {

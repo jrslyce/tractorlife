@@ -172,7 +172,7 @@ export class ShopUI {
       this._list.appendChild(this._produce);
     } else {
       for (var j = 0; j < ITEMS.length; j++) {
-        if (!category.includes(ITEMS[j])) continue;
+        if (ITEMS[j].available === false || !category.includes(ITEMS[j])) continue;
         (function (item) {
           var row = document.createElement('div');
           row.className = 'shop-row';

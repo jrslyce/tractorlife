@@ -2,10 +2,13 @@
 // purchase adds to the inventory (default 1): a seed bag plants 50 tiles, a
 // spray jug covers 50 tiles, a fertilizer sack feeds 10 tiles. Keep prices
 // and packs in step with GIFT_ITEMS in worker.js.
+// Terrain tools remain reusable and are available from the shop; dirt is still
+// gathered in-world rather than purchased.
 export var ITEMS = [
   { id: 'asphalt', name: 'Asphalt', emoji: '⬛', price: 4, category: 'Roads', description: 'A smooth, dark road tile.' },
   { id: 'gravel', name: 'Gravel', emoji: '◽', price: 2, category: 'Roads', description: 'A rustic path or farm road tile.' },
   { id: 'brick', name: 'Brick', emoji: '🧱', price: 6, category: 'Roads', description: 'A warm red paving tile.' },
+  { id: 'dirt', available: false, name: 'Dirt', emoji: '🟫', price: 1, category: 'Building', description: 'A gathered earth block for building and filling ground.' },
   { id: 'wood', name: 'Wood', emoji: '🪵', price: 12, category: 'Building', description: 'A sturdy voxel building block.' },
   { id: 'roof_shingles', name: 'Roof Shingles', emoji: '🏠', price: 90, category: 'Building', description: 'A bundle of cozy roof shingles.' },
   { id: 'fence_kit', name: 'Fence Kit', emoji: '🚧', price: 80, category: 'Building', description: 'Build a little fence around your yard.' },
@@ -13,8 +16,8 @@ export var ITEMS = [
   { id: 'door', name: 'Door', emoji: '🚪', price: 70, category: 'Building', description: 'A welcoming front door.' },
   { id: 'lamp_light', name: 'Lamp Light', emoji: '💡', price: 55, category: 'Lighting', description: 'A warm farmyard lamp.' },
   { id: 'string_lights', name: 'String Lights', emoji: '✨', price: 95, category: 'Lighting', description: 'Little lights for autumn evenings.' },
-  { id: 'fertilizer', name: 'Fertilizer', emoji: '🪴', price: 25, pack: 10, category: 'Farm supplies', description: 'Sack of 10 — tap a growing tile to speed it up.' },
-  { id: 'crop_spray', name: 'Crop Spray', emoji: '🧴', price: 20, pack: 200, category: 'Farm supplies', description: 'Jug for 200 tiles — the sprayer needs it to ripen crops.' },
+  { id: 'fertilizer', name: 'Fertilizer', emoji: '🪴', price: 25, pack: 10, category: 'Farm supplies', description: 'Optional sack of 10 — tap a growing tile to reduce its growth time by 40%.' },
+  { id: 'crop_spray', name: 'Crop Spray', emoji: '🧴', price: 20, pack: 200, category: 'Farm supplies', description: 'Optional jug for 200 affected tiles — clears weeds and bugs, with 45 seconds of protection. Healthy crops do not need spray.' },
   { id: 'animal_feed', name: 'Animal Feed', emoji: '🌾', price: 12, pack: 10, category: 'Farm supplies', description: 'Feed livestock for ten daily care actions.' },
   { id: 'water_jug', name: 'Water Jug', emoji: '💧', price: 6, pack: 10, category: 'Farm supplies', description: 'Water orchards, animals, and irrigation.' },
   { id: 'fuel_can', name: 'Fuel Can', emoji: '⛽', price: 18, pack: 5, category: 'Farm supplies', description: 'Fuel pumps and help repair serious engine trouble.' },
@@ -24,6 +27,9 @@ export var ITEMS = [
   { id: 'sapling', name: 'Tree Sapling', emoji: '🌱', price: 9, category: 'Farm supplies', description: 'Plant a new tree in the woodland.' },
   { id: 'stone', name: 'Stone', emoji: '🪨', price: 5, category: 'Building', description: 'Repair riverbanks and reinforce bridges.' },
   { id: 'metal', name: 'Metal Parts', emoji: '⚙️', price: 15, category: 'Building', description: 'Parts for a farm water pump.' },
+  { id: 'axe', name: 'Axe', emoji: '🪓', price: 35, reusable: true, category: 'Farm supplies', description: 'Reusable hand tool. Hold to chop trees and wooden blocks faster.' },
+  { id: 'shovel', name: 'Shovel', emoji: '🥄', price: 25, reusable: true, category: 'Farm supplies', description: 'Reusable hand tool. Hold to dig dirt faster.' },
+  { id: 'pickaxe', name: 'Pickaxe', emoji: '⛏️', price: 45, reusable: true, category: 'Farm supplies', description: 'Reusable hand tool. Required to mine stone blocks.' },
   { id: 'tool_use', name: 'Garden Tools', emoji: '🪓', price: 8, category: 'Farm supplies', description: 'Tools for pruning and clearing stumps.' },
   { id: 'corn_seeds', name: 'Corn Seeds', emoji: '🌽', price: 15, pack: 100, category: 'Farm supplies', description: 'Bag of 100 — load the planter to grow golden corn.' },
   { id: 'wheat_seeds', name: 'Wheat Seeds', emoji: '🌾', price: 10, pack: 100, category: 'Farm supplies', description: 'Bag of 100 — load the planter to grow dependable wheat.' },

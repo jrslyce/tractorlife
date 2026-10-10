@@ -60,7 +60,9 @@ var CSS = [
   '  border: 2px solid rgba(0,0,0,.15); }',
   '#vt-buttons { position: fixed; right: 12px; z-index: 41; display: -webkit-flex;',
   '  display: flex; -webkit-flex-direction: column; flex-direction: column;',
-  '  bottom: 14px; bottom: calc(14px + env(safe-area-inset-bottom)); gap:7px; }',
+   '  bottom: 14px; bottom: calc(14px + env(safe-area-inset-bottom)); gap:7px;',
+   '  max-height:calc(100vh - 28px - env(safe-area-inset-top) - env(safe-area-inset-bottom));',
+   '  overflow-y:auto; overscroll-behavior:contain; }',
   '#vt-buttons button { -webkit-appearance: none; appearance: none; display: block;',
   '  min-width: 58px; min-height: 58px; padding: 5px 7px; margin:0;',
   '  border-radius: 9px; border: 2px solid #b6d77a; background: rgba(21,31,23,.94); color: #f7f6e9;',
@@ -115,13 +117,14 @@ var CSS = [
   // Very short (landscape phone): one row docked to the bottom-right, so the
   // whole pad stays on screen and clear of the stats card and the hint card.
   '@media (max-height: 700px) {',
-  '  #vt-buttons { right: 12px;',
+   '  #vt-buttons { right: 12px; left:auto; top:auto;',
   '    bottom: 10px; bottom: calc(10px + env(safe-area-inset-bottom));',
   '    -webkit-flex-direction: row; flex-direction: row;',
   '    -webkit-flex-wrap: wrap; flex-wrap: wrap;',
   '    -webkit-justify-content: flex-end; justify-content: flex-end;',
   '    -webkit-align-items: flex-end; align-items: flex-end; }',
-  '  #vt-buttons { gap:5px; }',
+   '  #vt-buttons { gap:5px; max-width:calc(100vw - 24px);',
+   '    max-height:calc(100vh - 20px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }',
   '  #vt-buttons button { margin:0; }',
   '}',
   '@media (max-width:640px) {',
@@ -212,6 +215,7 @@ export class Input {
     this._joyId = null;      // active joystick touch identifier
     this._joyX = 0;          // origin of joystick in client px
     this._joyY = 0;
+    this._joyMoved = false;
     this._lastTapT = 0;
     this._lastTapX = 0;
     this._lastTapY = 0;
@@ -349,7 +353,8 @@ export class Input {
       this._charTurn = approach(this._charTurn, tt, dt);
     } else {
       // vehicle driving mode
-      var vtd = clamp(this._keyDrive + (this._drivingMode ? this._pedalDrive : this._joyDrive), -1, 1);
+      var pedalDrive = this._drivingMode ? this._pedalDrive : this._joyDrive;
+      var vtd = this._pedalBrake ? 0 : clamp(this._keyDrive + pedalDrive, -1, 1);
       var vtt = clamp(this._keyTurn + (this._drivingMode ? this._wheelTurn : this._joyTurn), -1, 1);
       this._drive = approach(this._drive, vtd, dt);
       this._turn = approach(this._turn, vtt, dt);
@@ -386,6 +391,11 @@ export class Input {
     if (!node) return;
     node.addEventListener(type, fn, opts);
     this._listeners.push({ node: node, type: type, fn: fn, opts: opts });
+  }
+
+  _shouldSuppressWorldClick(target) {
+    return !!(this._suppressWorldClickUntil && Date.now() < this._suppressWorldClickUntil &&
+      !(target && target.closest && target.closest('#vt-buttons, #vt-vehicle-controls, #shop-overlay, .grain-sale-overlay')));
   }
 
   _installStyle() {
@@ -446,6 +456,18 @@ export class Input {
     this._listen(this._target, 'blur', this._onBlur, false);
     this._listen(document, 'visibilitychange', function () {
       if (document.hidden) self._clearVehicleControls();
+    }, false);
+    // Mobile browsers often report the new viewport one frame after
+    // orientationchange. Re-emit resize after that viewport settles so the
+    // renderer can resize its canvas using current dimensions.
+    this._listen(window, 'orientationchange', function () {
+      setTimeout(function () {
+        if (self._disposed || typeof window === 'undefined') return;
+        var resize;
+        try { resize = new Event('resize'); }
+        catch (e) { resize = document.createEvent('Event'); resize.initEvent('resize', false, false); }
+        window.dispatchEvent(resize);
+      }, 120);
     }, false);
   }
 
@@ -523,6 +545,7 @@ export class Input {
       self._joyId = ct ? ct.identifier : 'mouse';
       self._joyX = cx;
       self._joyY = cy;
+      self._joyMoved = false;
       self._joy.style.left = cx + 'px';
       self._joy.style.top = cy + 'px';
       self._joy.style.display = 'block';
@@ -550,6 +573,7 @@ export class Input {
       var dx = ct.clientX - self._joyX;
       var dy = ct.clientY - self._joyY;
       var len = Math.sqrt(dx * dx + dy * dy);
+      if (len > 12) self._joyMoved = true;
       if (len > JOY_R) { dx = dx / len * JOY_R; dy = dy / len * JOY_R; }
       // knob visual
       self._knob.style.left = (50 + dx / JOY_R * 50) + '%';
@@ -578,6 +602,8 @@ export class Input {
       }
       if (!ended) return;
       self._joyId = null;
+      if (self._joyMoved) self._suppressWorldClickUntil = Date.now() + BTN_GUARD;
+      self._joyMoved = false;
       self._joyDrive = 0;
       self._joyTurn = 0;
       self._joy.style.display = 'none';
@@ -591,6 +617,13 @@ export class Input {
     this._listen(document, 'mousedown', this._onJoyStart, false);
     this._listen(document, 'mousemove', this._onJoyMove, false);
     this._listen(document, 'mouseup', this._onJoyEnd, false);
+    this._onClickCapture = function (e) {
+      if (self._shouldSuppressWorldClick(e.target)) {
+        if (e.cancelable) e.preventDefault();
+        if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+      }
+    };
+    this._listen(document, 'click', this._onClickCapture, true);
   }
 
   _installButtons() {

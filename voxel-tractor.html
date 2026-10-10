@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Voxel Tractor</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #87ceeb;
+    touch-action: manipulation; -webkit-user-select: none; user-select: none;
+    overscroll-behavior: none; font-family: system-ui, sans-serif; }
+  canvas { display: block; touch-action: none; }
+  #hint { position: fixed; left: 12px; bottom: 12px; color: #1c3b12;
+    background: rgba(255,255,255,.65); padding: 6px 10px; border-radius: 8px;
+    font-size: 13px; pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="hint">drag to orbit &middot; scroll / pinch to zoom</div>
+<script type="importmap">
+{ "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87ceeb);
+scene.fog = new THREE.Fog(0x87ceeb, 60, 140);
+
+const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 300);
+camera.position.set(18, 11, 18);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(1, 4, 0);
+controls.enableDamping = true;
+controls.autoRotate = true;
+controls.autoRotateSpeed = 1.2;
+controls.minDistance = 8;
+controls.maxDistance = 70;
+controls.maxPolarAngle = Math.PI * 0.49;
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x668855, 0.9));
+const sun = new THREE.DirectionalLight(0xfff3d6, 1.4);
+sun.position.set(20, 30, 12);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -25; sun.shadow.camera.right = 25;
+sun.shadow.camera.top = 25; sun.shadow.camera.bottom = -25;
+sun.shadow.camera.far = 90;
+scene.add(sun);
+
+// ---------- voxel model ----------
+const voxels = new Map(); // "x,y,z" -> color
+function set(x, y, z, color) { voxels.set(x + ',' + y + ',' + z, color); }
+function box(x0, x1, y0, y1, z0, z1, color) {
+  for (let x = x0; x <= x1; x++)
+    for (let y = y0; y <= y1; y++)
+      for (let z = z0; z <= z1; z++) set(x, y, z, color);
+}
+// cylinder wheel in the x/y plane, axis along z
+function wheel(cx, cy, r, zStart, zEnd, tire, hub) {
+  for (let dz = zStart; dz <= zEnd; dz++)
+    for (let dx = -r; dx <= r; dx++)
+      for (let dy = -r; dy <= r; dy++) {
+        const d = dx * dx + dy * dy;
+        if (d <= r * r) {
+          const inner = Math.max(0.5, (r - 1) * (r - 1));
+          set(cx + dx, cy + dy, dz, d <= inner ? hub : tire);
+        }
+      }
+}
+
+const RED = '#c0392b', DARKRED = '#8e2a1f', TIRE = '#1e1e22', HUB = '#c9c9cf',
+      METAL = '#5a5a62', DARK = '#33333a', SEAT = '#2f3b4a', LIGHT = '#ffd94a',
+      GLASS = '#bfe3f5';
+
+// main frame / body
+box(-5, 8, 2, 3, -2, 2, RED);
+// engine hood
+box(4, 8, 4, 5, -1, 1, RED);
+// hood top stripe
+box(4, 8, 5, 5, 0, 0, DARKRED);
+// front grille
+box(8, 8, 3, 5, -1, 1, DARK);
+// headlights (overwrite grille face)
+set(8, 5, -1, LIGHT); set(8, 5, 1, LIGHT);
+// rear deck
+box(-5, 1, 4, 4, -2, 2, RED);
+// rear fenders over big wheels
+box(-5, -1, 7, 7, -5, -3, RED);
+box(-5, -1, 7, 7, 3, 5, RED);
+// fender side skirts
+box(-5, -1, 5, 6, -4, -3, DARKRED);
+box(-5, -1, 5, 6, 3, 4, DARKRED);
+// wheels
+wheel(-2, 3, 3, -5, -4, TIRE, HUB);
+wheel(-2, 3, 3, 4, 5, TIRE, HUB);
+wheel(6, 2, 2, -4, -3, TIRE, HUB);
+wheel(6, 2, 2, 3, 4, TIRE, HUB);
+// axles
+box(6, 6, 2, 2, -4, 4, METAL);
+// seat
+box(-3, -1, 5, 5, -1, 1, SEAT);
+box(-4, -4, 5, 7, -1, 1, SEAT);
+// steering column + wheel
+box(1, 1, 4, 5, 0, 0, METAL);
+set(1, 6, 0, DARK); set(0, 6, 0, DARK); set(2, 6, 0, DARK);
+set(1, 6, -1, DARK); set(1, 6, 1, DARK);
+// exhaust stack
+box(3, 3, 6, 8, 1, 1, METAL);
+set(3, 9, 1, DARK);
+// roll bar behind seat
+box(-5, -5, 5, 9, -2, -2, METAL);
+box(-5, -5, 5, 9, 2, 2, METAL);
+box(-5, -5, 9, 9, -2, 2, METAL);
+// taillights
+set(-5, 4, -1, '#ff6b35'); set(-5, 4, 1, '#ff6b35');
+// antenna
+set(0, 5, -2, METAL); set(0, 6, -2, METAL); set(0, 7, -2, LIGHT);
+
+// build meshes grouped by color
+const byColor = new Map();
+for (const [key, color] of voxels) {
+  if (!byColor.has(color)) byColor.set(color, []);
+  byColor.get(color).push(key.split(',').map(Number));
+}
+const geo = new THREE.BoxGeometry(1, 1, 1);
+const dummy = new THREE.Object3D();
+const tractor = new THREE.Group();
+for (const [color, cells] of byColor) {
+  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.75, metalness: 0.05 });
+  const mesh = new THREE.InstancedMesh(geo, mat, cells.length);
+  cells.forEach(([x, y, z], i) => {
+    dummy.position.set(x, y, z);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(i, dummy.matrix);
+  });
+  mesh.castShadow = mesh.receiveShadow = true;
+  tractor.add(mesh);
+}
+scene.add(tractor);
+
+// ---------- ground ----------
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(400, 400),
+  new THREE.MeshStandardMaterial({ color: '#5aa02c', roughness: 1 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// crop rows to sell the farm
+const rowMat = new THREE.MeshStandardMaterial({ color: '#3f7d1f', roughness: 1 });
+const rowGeo = new THREE.BoxGeometry(1, 0.5, 6);
+for (let i = 0; i < 8; i++) {
+  const row = new THREE.Mesh(rowGeo, rowMat);
+  row.position.set(-10 + i * 3, 0.25, -14);
+  row.castShadow = row.receiveShadow = true;
+  scene.add(row);
+}
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+renderer.setAnimationLoop(() => {
+  controls.update();
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>

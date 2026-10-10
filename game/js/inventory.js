@@ -20,6 +20,7 @@ var ITEM_EMOJI = {
   harvest_grain: '🌾', harvest_corn: '🌽', harvest_wheat: '🌾', harvest_sunflower: '🌻', harvest_pumpkin: '🎃', harvest_peas: '🟢',
   animal_feed: '🌾', water_jug: '💧', fuel_can: '⛽', spare_tire: '🛞', repair_kit: '🧰',
   cleanup_kit: '🧹', sapling: '🌱', stone: '🪨', metal: '⚙️', tool_use: '🪓', firewood: '🪵',
+  dirt: '🟫', axe: '🪓', shovel: '🥄', pickaxe: '⛏️',
   fruit: '🍎', fish: '🐟', animal_produce: '🥚'
 };
 var ITEM_COLORS = {
@@ -33,6 +34,7 @@ var ITEM_COLORS = {
   harvest_grain: '#e0b83a', harvest_corn: '#d6b33d', harvest_wheat: '#c6a544', harvest_sunflower: '#e4bd32', harvest_pumpkin: '#e87925', harvest_peas: '#6f9a43',
   animal_feed: '#c6a544', water_jug: '#4d9ad8', fuel_can: '#bd6737', spare_tire: '#343632', repair_kit: '#7a6851',
   cleanup_kit: '#6f9b77', sapling: '#5da64f', stone: '#777a78', metal: '#8d9a9c', tool_use: '#8b6a39', firewood: '#81552f',
+  dirt: '#765237', axe: '#9eaaab', shovel: '#837c70', pickaxe: '#84959b',
   fruit: '#cf4f3c', fish: '#6faabd', animal_produce: '#eadcb8'
 };
 
@@ -63,26 +65,30 @@ export class Inventory {
 
   // ---- public API ----
 
-  // Add purchased items to a stack. The shop validates and deducts currency.
-  // Returns { ok: bool, error?: string }.
-  buy(itemId, qty) {
-    qty = Math.floor(Number(qty));
-    if (!itemId || !isFinite(qty) || qty <= 0) return { ok: false, error: 'invalid quantity' };
-    // Check if item already exists in any slot
+  // Add collected, purchased, or gifted items. A failed addition never mutates
+  // the inventory; callers must keep the world resource intact on failure.
+  addItem(itemId, qty) {
+    if (!Object.prototype.hasOwnProperty.call(ITEM_BY_ID, itemId)) {
+      return { ok: false, error: 'unknown item' };
+    }
+    qty = Number(qty);
+    if (!Number.isSafeInteger(qty) || qty <= 0) return { ok: false, error: 'invalid quantity' };
     for (var i = 0; i < this._slots.length; i++) {
       var s = this._slots[i];
       if (s && s.itemId === itemId) {
+        if (!Number.isSafeInteger(s.qty + qty)) return { ok: false, error: 'quantity overflow' };
         s.qty += qty;
-        s.emoji = ITEM_EMOJI[itemId] || '?';
+        s.emoji = ITEM_EMOJI[itemId] || ITEM_BY_ID[itemId].emoji || '?';
+        if (i === this._selectedSlot) this._updateHeldItem();
         this.updateDOM();
         return { ok: true };
       }
     }
-    // Find empty slot
     for (var i = 0; i < this._slots.length; i++) {
       if (this._slots[i] === null) {
         this._slots[i] = new InventoryItem(itemId, qty);
-        this._slots[i].emoji = ITEM_EMOJI[itemId] || '?';
+        this._slots[i].emoji = ITEM_EMOJI[itemId] || ITEM_BY_ID[itemId].emoji || '?';
+        if (i === this._selectedSlot) this._updateHeldItem();
         this.updateDOM();
         return { ok: true };
       }
@@ -90,11 +96,20 @@ export class Inventory {
     return { ok: false, error: 'inventory full' };
   }
 
-  canAdd(itemId) {
+  // Compatibility entry point: the shop handles currency separately.
+  buy(itemId, qty) {
+    return this.addItem(itemId, qty);
+  }
+
+  canAdd(itemId, qty = 1) {
+    qty = Number(qty);
+    if (!Object.prototype.hasOwnProperty.call(ITEM_BY_ID, itemId) ||
+        !Number.isSafeInteger(qty) || qty <= 0) return false;
     for (var i = 0; i < this._slots.length; i++) {
-      if (!this._slots[i] || this._slots[i].itemId === itemId) return true;
+      var s = this._slots[i];
+      if (s && s.itemId === itemId) return Number.isSafeInteger(s.qty + qty);
     }
-    return false;
+    return this._slots.indexOf(null) !== -1;
   }
 
   getCount(itemId) {
@@ -348,7 +363,8 @@ export class Inventory {
       var ds = d.slots[i];
       if (ds) {
         this._slots[i] = new InventoryItem(ds.itemId, ds.qty);
-        this._slots[i].emoji = ds.emoji || '';
+        this._slots[i].emoji = ds.emoji || ITEM_EMOJI[ds.itemId] ||
+          (ITEM_BY_ID[ds.itemId] && ITEM_BY_ID[ds.itemId].emoji) || '?';
       } else {
         this._slots[i] = null;
       }

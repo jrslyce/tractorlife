@@ -7,7 +7,8 @@ import { ITEM_BY_ID } from '../js/items.js';
 // Exercise real Field gameplay methods without allocating a WebGL scene.
 const source = await readFile(new URL('../js/field.js', import.meta.url), 'utf8');
 const { Field, TileState } = await import('data:text/javascript;base64,' +
-  Buffer.from(source.replace("import * as THREE from 'three';", 'const THREE = {};')).toString('base64'));
+  Buffer.from(source.replace("import * as THREE from 'three';", 'const THREE = {};')
+    .replace("'./crop-problems.js'", JSON.stringify(new URL('../js/crop-problems.js', import.meta.url).href))).toString('base64'));
 function readyField(crop = 'generic', count = 4) {
   const field = Object.create(Field.prototype);
   Object.assign(field, { count, tile: 2, _tx: new Array(count).fill(0),
