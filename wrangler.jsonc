@@ -12,18 +12,24 @@
   "durable_objects": {
     "bindings": [
       { "name": "SAVES", "class_name": "GameSaves" },
-      { "name": "FARMERS", "class_name": "FarmerList" }
+      { "name": "FARMERS", "class_name": "FarmerList" },
+      { "name": "SHARED_WORLD", "class_name": "SharedWorld" },
+      { "name": "REALTIME", "class_name": "RealtimeRoom" }
     ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["GameSaves"] },
-    { "tag": "v2", "new_sqlite_classes": ["FarmerList"] }
+    { "tag": "v2", "new_sqlite_classes": ["FarmerList"] },
+    { "tag": "v3", "new_sqlite_classes": ["SharedWorld"] },
+    { "tag": "v4", "new_sqlite_classes": ["RealtimeRoom"] }
   ],
   "previews": {
     "durable_objects": {
       "bindings": [
         { "name": "SAVES", "class_name": "GameSaves" },
-        { "name": "FARMERS", "class_name": "FarmerList" }
+        { "name": "FARMERS", "class_name": "FarmerList" },
+        { "name": "SHARED_WORLD", "class_name": "SharedWorld" },
+        { "name": "REALTIME", "class_name": "RealtimeRoom" }
       ]
     }
   }
