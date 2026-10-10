@@ -4,6 +4,7 @@ const DEFAULTS = {
   feedCost: { feed: 1 }, waterCost: { water: 1 }, fenceRepairCost: { wood: 2 }, herdCost: {},
   fenceRepairAmount: 0.35, feedWelfare: 0.12, waterWelfare: 0.12,
   neglectPenalty: 0.18, welfareRecovery: 0.04, escapeBaseChance: 0.001,
+  maxAnimals: 12, breedCost: { feed: 3 }, breedWelfare: 0.7,
   fenceEscapeChance: 0.025, stormEscapeChance: 0.04, producePerCare: 1
 };
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
@@ -17,6 +18,7 @@ export class Livestock {
     this.config.feedCost = { ...DEFAULTS.feedCost, ...(config.feedCost || {}) };
     this.config.waterCost = { ...DEFAULTS.waterCost, ...(config.waterCost || {}) };
     this.config.fenceRepairCost = { ...DEFAULTS.fenceRepairCost, ...(config.fenceRepairCost || {}) };
+    this.config.breedCost = { ...DEFAULTS.breedCost, ...(config.breedCost || {}) };
     this.time = 0; this.day = 0; this.dayTime = 0;
     this.fenceCondition = clamp(num(fenceCondition, 1), 0, 1);
     this.animals = copy(animals ?? this.config.initialAnimals).map((a, i) => ({
@@ -83,6 +85,12 @@ export class Livestock {
       if (action !== 'herd' && a.escaped) return fail('animal-escaped');
       if (action === 'feed') { if (a.feedToday) return fail('already-fed'); costs = this.config.feedCost; rewards = { produce: Math.max(0, Math.floor(this.config.producePerCare * a.welfare)) }; }
       if (action === 'water') { if (a.waterToday) return fail('already-watered'); costs = this.config.waterCost; }
+    } else if (action === 'breed') {
+      const mate = this.animals.find(other => other !== a && other.kind === a?.kind && !other.escaped &&
+        other.welfare >= this.config.breedWelfare && other.feedToday && other.waterToday);
+      if (!a || a.escaped || a.welfare < this.config.breedWelfare || !a.feedToday || !a.waterToday || !mate) return fail('breeding-needs-healthy-cared-pair');
+      if (this.animals.length >= this.config.maxAnimals) return fail('herd-at-capacity');
+      costs = this.config.breedCost;
     } else if (action === 'repair-fence') {
       if (this.fenceCondition >= 1) return fail('fence-intact'); costs = this.config.fenceRepairCost;
     } else return fail('unknown-action');
@@ -94,11 +102,27 @@ export class Livestock {
     if (action === 'water') { a.waterToday = a.watered = true; a.welfare = clamp(a.welfare + this.config.waterWelfare, 0, 1); }
     if (action === 'herd') { a.escaped = false; a.welfare = clamp(a.welfare - 0.05, 0, 1); }
     if (action === 'repair-fence') this.fenceCondition = clamp(this.fenceCondition + this.config.fenceRepairAmount, 0, 1);
-    const event = { type: action, ...(a ? { animalId: a.id } : {}) };
+    if (action === 'breed') {
+      const id = this.animals.reduce((max, animal) => Math.max(max, Number(animal.id) || 0), 0) + 1;
+      const kind = a.kind;
+      this.animals.push({ id, kind, welfare: 0.8, fed: false, watered: false, escaped: false,
+        feedToday: false, waterToday: false });
+    }
+    const event = { type: action, ...(a ? { animalId: a.id } : {}), ...(action === 'breed' ? { offspringId: this.animals[this.animals.length - 1].id } : {}) };
     this.events.push(event); this._refreshJobs();
     return { success: true, costs, rewards, events: [copy(event)] };
   }
   queryEscaped() { return copy(this.animals.filter(a => a.escaped)); }
+  getBreedCandidate() {
+    if (this.animals.length >= this.config.maxAnimals) return null;
+    for (let i = 0; i < this.animals.length; i++) {
+      const animal = this.animals[i];
+      if (animal.escaped || animal.welfare < this.config.breedWelfare || !animal.feedToday || !animal.waterToday) continue;
+      if (this.animals.some(other => other !== animal && other.kind === animal.kind && !other.escaped &&
+          other.welfare >= this.config.breedWelfare && other.feedToday && other.waterToday)) return animal.id;
+    }
+    return null;
+  }
   queryCareNeeds() { return copy(this.animals.filter(a => !a.escaped && (!a.feedToday || !a.waterToday)).map(a => ({ animalId: a.id, feed: !a.feedToday, water: !a.waterToday }))); }
   getStatus() { this._refreshJobs(); return { time: this.time, day: this.day, dayTime: this.dayTime, fenceCondition: this.fenceCondition, animals: copy(this.animals), escaped: this.queryEscaped(), careNeeds: this.queryCareNeeds(), jobs: copy(this.jobs), events: copy(this.events) }; }
   query() { return this.getStatus(); }

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { GRAIN_VALUES, quoteGrain, acceptGrainSale, transferBinToWagon } from '../js/grain-commerce.js';
+import { GRAIN_VALUES, marketUnitPrice, quoteGrain, acceptGrainSale, transferBinToWagon } from '../js/grain-commerce.js';
 import { ITEM_BY_ID } from '../js/items.js';
 
 // Exercise real Field gameplay methods without allocating a WebGL scene.
@@ -93,6 +93,27 @@ test('mixed harvest gets itemized store prices; stale or remote offers cannot se
   wagon.cargo[0].qty++;
   assert.equal(acceptGrainSale(wagon, quote, ITEM_BY_ID, true).ok, false);
   assert.equal(wagon.cargo[0].qty, 3);
+});
+
+test('produce market prices vary by day deterministically and stale offers cannot sell', () => {
+  const cargo = [{ itemId: 'harvest_corn', qty: 4 }];
+  const market = { day: 3, seed: 17 };
+  const quote = quoteGrain(cargo, ITEM_BY_ID, market);
+  assert.deepEqual(quote, quoteGrain(cargo, ITEM_BY_ID, market));
+  assert.ok(quote.lines[0].unitValue >= Math.round(GRAIN_VALUES.harvest_corn * 0.8));
+  assert.ok(quote.lines[0].unitValue <= Math.round(GRAIN_VALUES.harvest_corn * 1.2));
+  const nextMarket = Array.from({ length: 30 }, (_, index) => ({ ...market, day: market.day + index + 1 }))
+    .find(candidate => quoteGrain(cargo, ITEM_BY_ID, candidate).signature !== quote.signature);
+  assert.ok(nextMarket, 'market prices should cycle over time');
+  const nextDay = quoteGrain(cargo, ITEM_BY_ID, nextMarket);
+  const hold = { cargo: cargo.map(stack => ({ ...stack })) };
+  const accepted = acceptGrainSale(hold, quote, ITEM_BY_ID, true, market);
+  assert.equal(accepted.ok, true);
+  assert.equal(accepted.value, quote.value);
+  const stale = { cargo: cargo.map(stack => ({ ...stack })) };
+  assert.equal(acceptGrainSale(stale, quote, ITEM_BY_ID, true, nextMarket).ok, false);
+  assert.equal(stale.cargo[0].qty, 4);
+  assert.ok(marketUnitPrice('harvest_corn', 3, 18) > 0);
 });
 
 test('full wagon cannot lose/duplicate a mixed bin; existing grain stacks can merge', () => {

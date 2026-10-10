@@ -50,3 +50,40 @@ test('failed interactions do not mutate resources or animals', () => {
   assert.deepEqual(stock.serialize(), before);
   assert.deepEqual(resources, { feed: 0 });
 });
+
+test('healthy same-species animals can breed once after daily care and offspring persists', () => {
+  const stock = new Livestock({ animals: [
+    { id: 1, kind: 'cow', welfare: 0.9, feedToday: true, waterToday: true },
+    { id: 2, kind: 'cow', welfare: 0.85, feedToday: true, waterToday: true },
+    { id: 3, kind: 'chicken', welfare: 1, feedToday: true, waterToday: true }
+  ] });
+  const resources = { feed: 3 };
+  assert.equal(stock.getBreedCandidate(), 1);
+  const result = stock.interact('breed', 1, resources);
+  assert.equal(result.success, true);
+  assert.equal(resources.feed, 0);
+  assert.deepEqual(stock.animals[3], { id: 4, kind: 'cow', welfare: 0.8, fed: false, watered: false,
+    escaped: false, feedToday: false, waterToday: false });
+  const restored = new Livestock();
+  assert.equal(restored.restore(stock.serialize()), true);
+  assert.deepEqual(restored.getStatus(), stock.getStatus());
+  assert.equal(stock.interact('breed', 1, resources).success, false);
+});
+
+test('breeding rejects mismatched or uncared animals and herd capacity atomically', () => {
+  const pairs = new Livestock({ animals: [
+    { id: 1, kind: 'cow', welfare: 1, feedToday: true, waterToday: true },
+    { id: 2, kind: 'chicken', welfare: 1, feedToday: true, waterToday: true }
+  ] });
+  const resources = { feed: 10 };
+  const before = pairs.serialize();
+  assert.equal(pairs.interact('breed', 1, resources).reason, 'breeding-needs-healthy-cared-pair');
+  assert.deepEqual(pairs.serialize(), before);
+  assert.deepEqual(resources, { feed: 10 });
+  const full = new Livestock({ config: { maxAnimals: 2 }, animals: [
+    { id: 1, kind: 'cow', welfare: 1, feedToday: true, waterToday: true },
+    { id: 2, kind: 'cow', welfare: 1, feedToday: true, waterToday: true }
+  ] });
+  assert.equal(full.interact('breed', 1, resources).reason, 'herd-at-capacity');
+  assert.deepEqual(resources, { feed: 10 });
+});

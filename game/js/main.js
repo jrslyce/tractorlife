@@ -337,10 +337,14 @@ function hasSaleableWagonCargo() {
   return wagon.hasAny(function (id) { return Object.prototype.hasOwnProperty.call(GRAIN_VALUES, id); });
 }
 
+function currentMarket() {
+  return { day: climate.getState().day, seed: 0x4d41524b };
+}
+
 const grainSaleUI = new GrainSaleUI({
   getMoney: function () { return money; },
   onAccept: function (quote) {
-    const result = acceptGrainSale(wagon, quote, ITEM_BY_ID, wagonAtGrainBin());
+    const result = acceptGrainSale(wagon, quote, ITEM_BY_ID, wagonAtGrainBin(), currentMarket());
     if (!result.ok) return result;
     money += result.value;
     tickSave(function () { return session; }, snapshot);
@@ -354,7 +358,7 @@ let grainOfferSeen = '';
 
 function sellWagonCrops() {
   if (!wagonAtGrainBin()) { showToast('Drive the loaded wagon onto the grain-bin drop-off apron first.'); return false; }
-  const quote = quoteGrain(wagon.cargo, ITEM_BY_ID);
+  const quote = quoteGrain(wagon.cargo, ITEM_BY_ID, currentMarket());
   if (!quote.quantity) { showToast('The wagon has no crops to sell.'); return false; }
   speed = 0;
   grainOfferSeen = quote.signature;
@@ -367,7 +371,7 @@ function checkGrainDelivery() {
   if (window.VT_LOCKED !== false || !hasSaleableWagonCargo()) return;
   // Only the player actually hauling/reaching this wagon should get an offer.
   if (!(mode === 'driving' && vehicleType === 'truck' && wagon.hitched) && reachableHold() !== wagon) return;
-  const quote = quoteGrain(wagon.cargo, ITEM_BY_ID);
+  const quote = quoteGrain(wagon.cargo, ITEM_BY_ID, currentMarket());
   if (quote.signature !== grainOfferSeen) sellWagonCrops();
 }
 
