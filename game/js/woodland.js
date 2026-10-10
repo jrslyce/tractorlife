@@ -170,6 +170,36 @@ export class Woodland {
   queryWildlife() { return { population: this.wildlife, level: this.wildlife > 0.66 ? 'abundant' : this.wildlife > 0.25 ? 'present' : this.wildlife > 0 ? 'scarce' : 'absent' }; }
   getCropNibbleEvents() { return this.events.filter(e => e.type === 'crop-nibbled').map(copy); }
 
+  // Stable simulation IDs let a held action revalidate its target at completion.
+  getHarvestTargets() {
+    return this.trees.filter(tree => tree.stage === 'mature' || tree.stage === 'young').map(tree => ({
+      id: tree.id, x: tree.x, z: tree.z, kind: 'tree', material: 'wood',
+      radius: tree.radius || (tree.stage === 'young' ? 0.45 : 0.8),
+      stage: tree.stage, revision: tree.stage,
+    }));
+  }
+
+  // The caller owns hold timing, reach, and farm permissions. Inventory.addItem
+  // is an all-or-nothing synchronous insertion; never remove a tree on failure.
+  harvestTree(id, inventory, expectedRevision) {
+    const fail = (reason, message) => ({ success: false, reason, message, costs: {}, rewards: {}, events: [], target: id });
+    const tree = this.trees.find(item => item.id === id && (item.stage === 'mature' || item.stage === 'young'));
+    if (!tree) return fail('target-not-found', 'That tree is no longer available.');
+    if (expectedRevision != null && tree.stage !== expectedRevision) return fail('target-changed', 'The tree changed. Start chopping again.');
+    if (!inventory || typeof inventory.canAdd !== 'function' || typeof inventory.addItem !== 'function') {
+      return fail('invalid-inventory', 'Inventory is unavailable.');
+    }
+    if (!inventory.canAdd('wood', 3)) return fail('inventory-full', 'Inventory full. Make room for wood first.');
+    const added = inventory.addItem('wood', 3);
+    if (!added?.ok) return fail('inventory-full', 'Inventory full. Make room for wood first.');
+    this.trees.splice(this.trees.indexOf(tree), 1);
+    const stump = { id: this._id(), x: tree.x, z: tree.z, stage: 'stump', radius: 0.55 };
+    this.trees.push(stump);
+    this.wildlife = clamp(this.wildlife - this.config.wildlifeDeclinePerTree, 0, this.config.maxWildlife);
+    return { success: true, reason: 'harvested', message: 'Collected 3 wood.', costs: {}, rewards: { wood: 3 },
+      events: [{ type: 'tree-harvested', id, stumpId: stump.id, material: 'wood', quantity: 3 }], target: id };
+  }
+
   serialize() {
     return { version: 1, seed: this.seed >>> 0, time: this.time, nextId: this._nextId, config: copy(this.config), trees: copy(this.trees), saplings: copy(this.saplings), orchards: copy(this.orchards), debris: copy(this.debris), wildlife: this.wildlife, events: copy(this.events) };
   }

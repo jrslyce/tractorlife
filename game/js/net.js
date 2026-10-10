@@ -13,6 +13,7 @@ const SAVE_TIMEOUT_MS = 8000;
 const FARMERS_TIMEOUT_MS = 5000;
 const FARM_STATE_TIMEOUT_MS = 5000;
 const WORLD_TIMEOUT_MS = 5000;
+const TERRAIN_EDIT_TIMEOUT_MS = 8000;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // email of the active session (used for /api/save bodies)
@@ -297,6 +298,58 @@ export function sendGift(to, itemId, qty) {
   }, function () { return { ok: false, error: 'Gift could not be sent.' }; }).catch(function () {
     return { ok: false, error: 'Gift could not be sent.' };
   });
+}
+
+// Submit one authoritative terrain mutation. A null session or non-online
+// session is explicitly offline: local prediction must not treat it as accepted.
+export function sendTerrainEdit(edit, session) {
+  if (!session || session.mode !== 'online') {
+    return Promise.resolve({ ok: false, offline: true, error: 'Terrain edits require an online session.' });
+  }
+  if (!edit || !['break', 'place'].includes(edit.action) ||
+      ![edit.x, edit.y, edit.z, edit.expectedRevision].every(Number.isSafeInteger) ||
+      edit.expectedRevision < 0 || (edit.action === 'place' && typeof edit.material !== 'string') ||
+      (edit.material !== undefined && typeof edit.material !== 'string') ||
+      (edit.toolId !== undefined && (typeof edit.toolId !== 'string' || edit.toolId.length > 64))) {
+    return Promise.resolve({ ok: false, error: 'Invalid terrain edit.' });
+  }
+  var operationId = edit.operationId;
+  if (operationId === undefined) {
+    try {
+      operationId = typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID().replace(/-/g, '')
+        : 'op_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2);
+    } catch (err) { operationId = 'op_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2); }
+  }
+  if (typeof operationId !== 'string' || !/^[A-Za-z0-9_-]{8,80}$/.test(operationId)) {
+    return Promise.resolve({ ok: false, error: 'Invalid terrain operation ID.' });
+  }
+  var body = { operationId: operationId, action: edit.action, x: edit.x, y: edit.y, z: edit.z, expectedRevision: edit.expectedRevision };
+  if (edit.material !== undefined) body.material = edit.material;
+  if (edit.toolId !== undefined) body.toolId = edit.toolId;
+  return post('/api/terrain/edit', body, TERRAIN_EDIT_TIMEOUT_MS).then(function (res) {
+    return res.json().then(function (data) {
+      if (!res.ok || !data || data.ok !== true || !data.edit || typeof data.edit !== 'object' ||
+          !Number.isSafeInteger(data.revision) || data.edit.revision !== data.revision || !data.inventory || typeof data.inventory !== 'object') {
+        return { ok: false, offline: false, status: res.status, error: data && typeof data.error === 'string' ? data.error : 'Terrain edit was not accepted.' };
+      }
+      return { ok: true, accepted: true, operationId: operationId, edit: data.edit, revision: data.revision, inventory: data.inventory };
+    }, function () { return { ok: false, offline: false, status: res.status, error: 'Invalid terrain edit response.' }; });
+  }, function () { return { ok: false, offline: true, error: 'Terrain edit could not reach the server.' }; }).catch(function () {
+    return { ok: false, offline: true, error: 'Terrain edit could not reach the server.' };
+  });
+}
+
+export function fetchTerrainState(session) {
+  if (!session || session.mode !== 'online') return Promise.resolve(null);
+  return fetch('/api/terrain/state', { method: 'GET', credentials: 'same-origin' }).then(function (res) {
+    if (!res.ok) return null;
+    return res.json().then(function (data) {
+      if (!data || data.ok !== true || !Number.isSafeInteger(data.terrainRevision) ||
+          !data.terrainEdits || typeof data.terrainEdits !== 'object' || Array.isArray(data.terrainEdits)) return null;
+      return data;
+    }, function () { return null; });
+  }, function () { return null; }).catch(function () { return null; });
 }
 
 // Only transient failures are worth retrying. A 4xx such as "not public

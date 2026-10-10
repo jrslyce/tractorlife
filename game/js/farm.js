@@ -2,6 +2,7 @@
 // ES module, Three.js (importmap 0.160.0). Imports Field from './field.js'.
 import * as THREE from 'three';
 import { Field } from './field.js';
+import { EXPANSION_COST, EXPANSION_DEF, expansionCenter } from './farm-expansion.js';
 
 // ---------------------------------------------------------------- constants
 // Farms sit FARM_SPACING apart along X. Each one is the west pad strip, the
@@ -36,7 +37,6 @@ const FIELD_DEFS = [
   { originX: 8,  originZ: -8,  cols: 44, rows: 36, tile: 1 }, // south-west
   { originX: 62, originZ: -8,  cols: 44, rows: 36, tile: 1 }, // south-east
 ];
-
 // ---------------------------------------------------------------- helpers
 var colorCache = new Map();
 function col(hex) {
@@ -88,6 +88,9 @@ export class Farm {
     // every scene mesh this farm owns (fields, fence, pads) for culling
     this._cullables = [];
     this._culled = false;
+    this._terrainCutoutMeshes = [];
+    this._yardMesh = null;
+    this._yardMaterial = null;
 
     // both pads live in the west margin strip, stacked north-to-south and
     // clear of the north-west field (tiles start at local x 7.5)
@@ -105,6 +108,7 @@ export class Farm {
 
     // --- fields ---
     this._fields = [];
+    this._expansionField = null;
     for (var fi = 0; fi < FIELD_DEFS.length; fi++) {
       var def = FIELD_DEFS[fi];
       var fd = {
@@ -116,12 +120,30 @@ export class Farm {
       };
       this._fields.push(new Field(scene, fd));
     }
+    this._scene = scene;
 
     // --- fence (InstancedMesh for posts + rails) ---
     this._buildFence(scene);
 
     // --- house / barn pads (flat ground markers) ---
     this._buildPads(scene);
+    this._buildExpansionMarker(scene);
+  }
+
+  _buildExpansionMarker(scene) {
+    const def = EXPANSION_DEF;
+    const group = new THREE.Group();
+    const frame = new THREE.LineSegments(
+      new THREE.EdgesGeometry(new THREE.BoxGeometry(def.cols, 0.04, def.rows)),
+      new THREE.LineBasicMaterial({ color: '#d7ed86', transparent: true, opacity: 0.9 })
+    );
+    frame.position.y = 0.15;
+    group.add(frame);
+    group.position.set(this._offsetX + def.originX + (def.cols - 1) / 2, 0, def.originZ + (def.rows - 1) / 2);
+    group.visible = !this._culled;
+    scene.add(group);
+    this._expansionMarker = group;
+    this._cullables.push(group);
   }
 
   // ---------- fence ----------
@@ -284,9 +306,10 @@ export class Farm {
 
     // Build yard: packed-dirt strip east of the fields, kept empty so
     // players have room for barns, fences and decorations.
-    var yardMesh = new THREE.Mesh(padGeo, new THREE.MeshStandardMaterial({
+    var yardMaterial = new THREE.MeshStandardMaterial({
       color: '#a8b872', roughness: 1, metalness: 0
-    }));
+    });
+    var yardMesh = new THREE.Mesh(padGeo, yardMaterial);
     var yardW = this._maxX - this._yardMinX;
     var yardD = this._maxZ - this._minZ;
     yardMesh.position.set(this._yardMinX + yardW / 2, 0.02, this._minZ + yardD / 2);
@@ -294,6 +317,45 @@ export class Farm {
     yardMesh.receiveShadow = true;
     scene.add(yardMesh);
     this._cullables.push(yardMesh);
+    this._yardMesh = yardMesh;
+    this._yardMaterial = yardMaterial;
+  }
+
+  // Cut the active voxel patch out of the packed yard ground so the global
+  // ground plane cannot visually seal excavations. Surrounding yard remains.
+  setTerrainCutout(bounds) {
+    const scene = this._yardMesh && this._yardMesh.parent;
+    for (const mesh of this._terrainCutoutMeshes) {
+      if (scene) scene.remove(mesh);
+      const index = this._cullables.indexOf(mesh);
+      if (index >= 0) this._cullables.splice(index, 1);
+      mesh.geometry.dispose();
+    }
+    this._terrainCutoutMeshes = [];
+    this._terrainCutout = !!bounds;
+    if (!this._yardMesh) return;
+    this._yardMesh.visible = !this._culled && !bounds;
+    if (!bounds || !scene) return;
+
+    const center = this._yardMesh.position;
+    const width = this._yardMesh.scale.x, depth = this._yardMesh.scale.z;
+    const x0 = center.x - width / 2, x1 = center.x + width / 2;
+    const z0 = center.z - depth / 2, z1 = center.z + depth / 2;
+    const hx0 = Math.max(x0, bounds.minX), hx1 = Math.min(x1, bounds.maxX);
+    const hz0 = Math.max(z0, bounds.minZ), hz1 = Math.min(z1, bounds.maxZ);
+    if (hx0 >= hx1 || hz0 >= hz1) return;
+    const slabs = [
+      [x0, z0, hx0 - x0, depth], [hx1, z0, x1 - hx1, depth],
+      [hx0, z0, hx1 - hx0, hz0 - z0], [hx0, hz1, hx1 - hx0, z1 - hz1]
+    ].filter(([, , w, d]) => w > 0.001 && d > 0.001);
+    for (const [sx, sz, w, d] of slabs) {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, 0.05, d), this._yardMaterial);
+      mesh.position.set(sx + w / 2, 0.02, sz + d / 2);
+      mesh.receiveShadow = true;
+      scene.add(mesh);
+      this._terrainCutoutMeshes.push(mesh);
+      this._cullables.push(mesh);
+    }
   }
 
   // ---------- culling ----------
@@ -303,7 +365,9 @@ export class Farm {
     this._culled = culled;
     var visible = !culled;
     for (var i = 0; i < this._cullables.length; i++) {
-      this._cullables[i].visible = visible;
+      if (this._cullables[i] === this._yardMesh) this._cullables[i].visible = visible && !this._terrainCutout;
+      else if (this._cullables[i] === this._expansionMarker) this._cullables[i].visible = visible && !this._expansionField;
+      else this._cullables[i].visible = visible;
     }
     for (var f = 0; f < this._fields.length; f++) {
       this._fields[f]._tileMesh.visible = visible;
@@ -342,6 +406,28 @@ export class Farm {
     return this._fields;
   }
 
+  getExpansionCost() { return EXPANSION_COST; }
+
+  getExpansionCenter() {
+    return expansionCenter(this._farmSlot);
+  }
+
+  expand() {
+    if (this._expansionField) return false;
+    const def = EXPANSION_DEF;
+    this._expansionField = new Field(this._scene, {
+      originX: def.originX + this._offsetX, originZ: def.originZ,
+      cols: def.cols, rows: def.rows, tile: def.tile
+    });
+    this._fields.push(this._expansionField);
+    if (this._expansionMarker) this._expansionMarker.visible = false;
+    for (const mesh of [this._expansionField._tileMesh, this._expansionField._cropMesh, this._expansionField._underMesh]) {
+      mesh.visible = !this._culled;
+      this._cullables.push(mesh);
+    }
+    return true;
+  }
+
   // ---------- persistence ----------
   serialize() {
     var fd = [];
@@ -350,12 +436,16 @@ export class Farm {
     }
     return {
       farmSlot: this._farmSlot,
-      fields: fd
+      fields: fd,
+      expansion: !!this._expansionField
     };
   }
 
   restore(d) {
     if (!d || !d.fields || !Array.isArray(d.fields)) return false;
+    // Expansion is accepted only as its exact known, local plot. Never trust
+    // serialized geometry, which could widen ownership into a neighbour.
+    if (d.expansion === true && this._fields.length === FIELD_DEFS.length) this.expand();
     for (var i = 0; i < this._fields.length && i < d.fields.length; i++) {
       this._fields[i].restore(d.fields[i]);
     }
@@ -363,13 +453,15 @@ export class Farm {
   }
 
   getStats() {
-    var t = { tilled: 0, planted: 0, sprayed: 0, harvested: 0 };
+    var t = { tilled: 0, planted: 0, sprayed: 0, harvested: 0, weeds: 0, bugs: 0 };
     for (var i = 0; i < this._fields.length; i++) {
       var s = this._fields[i].stats;
       t.tilled += s.tilled;
       t.planted += s.planted;
       t.sprayed += s.sprayed;
       t.harvested += s.harvested;
+      t.weeds += s.weeds;
+      t.bugs += s.bugs;
     }
     return t;
   }

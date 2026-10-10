@@ -73,8 +73,14 @@ export class FarmSystems {
     for (const mesh of this._props) this.scene.remove(mesh);
     this._props = [];
     const T = this.THREE, s = this._shared;
+    const harvestableTrees = new Set(this.woodland.trees.filter(tree => tree.stage === 'mature' || tree.stage === 'young'));
     const draw = (items, geo, mat, scale, cap = Infinity) => {
-      for (const item of items.slice(0, cap)) { const m = new T.Mesh(geo, mat); m.position.set(item.x, scale.y / 2, item.z); m.scale.set(scale.x,scale.y,scale.z); this.scene.add(m); this._props.push(m); }
+      for (const item of items.slice(0, cap)) {
+        const m = new T.Mesh(geo, mat);
+        m.position.set(item.x, scale.y / 2, item.z); m.scale.set(scale.x,scale.y,scale.z);
+        if (harvestableTrees.has(item)) m.userData.harvestTreeId = item.id;
+        this.scene.add(m); this._props.push(m);
+      }
     };
     const liveTrees = this.woodland.trees.filter(t => t.stage !== 'stump').concat(this.woodland.orchards);
     draw(liveTrees.concat(this.woodland.saplings), s.trunk, s.bark, {x:1,y:1.6,z:1}, 32);
@@ -165,12 +171,26 @@ export class FarmSystems {
     if (!position || !Number.isFinite(position.x) || !Number.isFinite(position.z)) return null;
     const limit = vehicleType && vehicleType !== 'foot' ? 9 : 5;
     const target = this._targets().map(t => ({ ...t, distance: dist(position, t) })).filter(t => t.distance < limit && (t.kind !== 'crossing' || t.action !== 'cross')).sort((a, b) => a.distance - b.distance)[0];
-    return target ? { action: target.action, target: target.id, kind: target.kind, distance: target.distance, label: target.action.replaceAll('-', ' ') } : null;
+    return target ? { action: target.action, target: target.id, kind: target.kind, distance: target.distance, label: target.kind === 'tree' ? 'hold Chop to collect wood' : target.action.replaceAll('-', ' ') } : null;
+  }
+
+  getHarvestTargets() { return this.woodland.getHarvestTargets(); }
+
+  harvestTree(id, inventory, expectedRevision) {
+    const result = this.woodland.harvestTree(id, inventory, expectedRevision);
+    if (result.success) {
+      for (const event of result.events) this.onEvent({ ...event, source: 'woodland' });
+      this._syncVisuals();
+    }
+    return result;
   }
 
   interact(position, vehicleType = 'foot', resourceBag = {}) {
     const prompt = this.getPrompt(position, vehicleType);
     if (!prompt) return { success: false, reason: 'no-nearby-target', costs: {}, rewards: {}, events: [], message: 'Nothing nearby to interact with.' };
+    if (prompt.kind === 'tree' || prompt.action === 'fell' || prompt.action === 'clear-tree') {
+      return { success: false, reason: 'hold-chop-required', costs: {}, rewards: {}, events: [], target: prompt.target, message: 'Hold Chop while facing the tree to collect wood.' };
+    }
     let result;
     if (prompt.kind === 'branch') result = this.woodland.interact('clear-branch', prompt.target, resourceBag);
     else if (prompt.kind === 'orchard' || prompt.kind === 'tree' || prompt.kind === 'stump') result = this.woodland.interact(prompt.action, prompt.target, resourceBag);

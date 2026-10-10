@@ -14,20 +14,28 @@ import { World, WORLD_MIN_X, WORLD_MAX_X, SHOP_X, SHOP_Z } from './world.js';
 import { FARM_SPACING } from './farm.js';
 import { buildEnvironment } from './environment.js';
 import { Climate } from './climate.js';
+import { CropProblemVisuals } from './crop-problem-visuals.js';
 import { FarmSystems } from './farm-systems.js';
 import { Shop } from './shop.js';
 import { ShopUI } from './shopui.js';
 import { Builder } from './build.js';
+import { HarvestControls } from './harvest-controls.js';
 import { RealtimeClient } from './realtime.js';
 import { ITEM_BY_ID, packSize } from './items.js';
 import { Inventory } from './inventory.js';
 import { Wagon, WagonPanel, CargoHold, TRUCK_BED_SLOTS } from './wagon.js';
 import { GRAIN_VALUES, quoteGrain, acceptGrainSale, transferBinToWagon } from './grain-commerce.js';
 import { GrainSaleUI } from './grain-sale-ui.js';
+import { Exploration } from './exploration.js';
+import { expansionPlotOccupied, expansionPurchaseState } from './farm-expansion.js';
 import { PerformanceBudget } from './performance.js';
 import { steeringYawDelta } from './vehicle-physics.js';
+import { createFarmTerrain, restoreAuthoritativeFarmTerrain, validFarmTerrainCell } from './terrain-runtime.js';
+import { createTerrainRenderer } from './terrain-renderer.js';
+import { TerrainActions } from './terrain-actions.js';
+import { moveCharacter as moveTerrainCharacter } from './terrain-physics.js';
 import { TOOL_ORDER, COMBINE_HEAD_ORDER, buildTool, buildCombineHead } from './equipment.js';
-import { login, restoreRememberedSession, rememberedEmail, hasRememberedEmail, forgetRememberedCredentials, startAutosave, tickSave, fetchFarmers, fetchFarmState, fetchSharedWorld, placeSharedRoad, sendGift } from './net.js';
+import { login, restoreRememberedSession, rememberedEmail, hasRememberedEmail, forgetRememberedCredentials, startAutosave, tickSave, fetchFarmers, fetchFarmState, fetchSharedWorld, placeSharedRoad, sendGift, sendTerrainEdit, fetchTerrainState } from './net.js';
 
 // per-vehicle scale; wheel roll radius and tool width read from this table
 const VEHICLE_SCALES = { tractor: 0.5, combine: 0.5, truck: 0.5 };
@@ -102,14 +110,36 @@ scene.add(sun.target);
 // ---------------------------------------------------------------- ground
 // covers every farm + shop area with ~90 units of margin on every side
 const GROUND_W = WORLD_MAX_X - WORLD_MIN_X + 180;
-const ground = new THREE.Mesh(
-  new THREE.PlaneGeometry(GROUND_W, 400),
-  new THREE.MeshStandardMaterial({ color: '#5aa02c', roughness: 1 })
-);
+const terrainGroundCutout = { value: new THREE.Vector4(0, 0, 0, 0) };
+const groundMaterial = new THREE.MeshStandardMaterial({ color: '#5aa02c', roughness: 1 });
+groundMaterial.onBeforeCompile = function (shader) {
+  shader.uniforms.uTerrainCutout = terrainGroundCutout;
+  shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vTerrainWorldPosition;');
+  shader.vertexShader = shader.vertexShader.replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvTerrainWorldPosition = worldPosition.xyz;');
+  shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vTerrainWorldPosition;\nuniform vec4 uTerrainCutout;');
+  shader.fragmentShader = shader.fragmentShader.replace('#include <clipping_planes_fragment>',
+    '#include <clipping_planes_fragment>\nif (uTerrainCutout.z > 0.5 && vTerrainWorldPosition.x >= uTerrainCutout.x && vTerrainWorldPosition.x <= uTerrainCutout.z && vTerrainWorldPosition.z >= uTerrainCutout.y && vTerrainWorldPosition.z <= uTerrainCutout.w) discard;');
+};
+groundMaterial.customProgramCacheKey = function () { return 'terrain-ground-cutout-v1'; };
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(GROUND_W, 400), groundMaterial);
 ground.rotation.x = -Math.PI / 2;
 ground.position.set((WORLD_MIN_X + WORLD_MAX_X) / 2, 0, -20);
 ground.receiveShadow = true;
 scene.add(ground);
+
+function setTerrainGroundCutout(slot) {
+  const allFarms = world.getFarms();
+  for (const farm of allFarms) if (farm && farm.setTerrainCutout) farm.setTerrainCutout(null);
+  if (!Number.isSafeInteger(slot) || slot < 0 || slot > 9) {
+    terrainGroundCutout.value.set(0, 0, 0, 0);
+    return;
+  }
+  const minX = slot * FARM_SPACING + 107.5, maxX = slot * FARM_SPACING + 145.5;
+  const minZ = -53.5, maxZ = 24.5;
+  terrainGroundCutout.value.set(minX, minZ, maxX, maxZ);
+  const farm = allFarms[slot];
+  if (farm && farm.setTerrainCutout) farm.setTerrainCutout({ minX, maxX, minZ, maxZ });
+}
 
 // --- M1: E-W road strip along farms' south edge ---
 // Road runs the full width of the world at z ≈ 29-41 (south of the farms)
@@ -162,8 +192,23 @@ hayBale(57, 0.8, -13, 0.7);
 // ---------------------------------------------------------------- world (10 farms)
 // All field work / stats / serialize / restore go through world.getFarms().
 const world = new World(scene, '');
+setTerrainGroundCutout(world.getAssignedSlot());
+// Bounded terrain is scoped strictly to the assigned farm slot. Terrain visuals
+// are added separately; the legacy global ground remains a known hole-covering
+// limitation until its surface is replaced by a terrain-aware ground mesh.
+let farmTerrain = createFarmTerrain(world.getAssignedSlot());
+let terrainRenderer = farmTerrain ? createTerrainRenderer(THREE, scene, farmTerrain, { maxFaces: 30000 }) : null;
+if (terrainRenderer) terrainRenderer.rebuildAll();
+let terrainRevision = 0;
+let terrainActions = null;
+let remoteTerrainSlot = -1;
+let remoteTerrainOwner = '';
+let remoteTerrain = null;
+let remoteTerrainRenderer = null;
+let remoteTerrainRevision = 0;
 const farms = world.getFarms();
 const farmFields = farms.map(function (farm) { return farm.getFields(); });
+const cropProblemVisuals = new CropProblemVisuals(scene);
 const environment = buildEnvironment(scene, {
   minX: WORLD_MIN_X, maxX: WORLD_MAX_X, minZ: WORLD_MIN_Z, maxZ: WORLD_MAX_Z
 });
@@ -189,6 +234,21 @@ for (const machine of MACHINES) farmSystems.setVehicleCondition(machine);
 const inventory = new Inventory();
 inventory.install(document.body);
 window.vtInventory = inventory;
+const exploration = new Exploration({ seed: 0x4d435f });
+
+function replaceFarmTerrain(slot, serialized, canonicalEdits, revision) {
+  const restored = restoreAuthoritativeFarmTerrain(serialized, canonicalEdits, slot) || createFarmTerrain(slot);
+  if (!restored) return false;
+  if (terrainRenderer) terrainRenderer.dispose();
+  farmTerrain = restored;
+  terrainRenderer = createTerrainRenderer(THREE, scene, farmTerrain, { maxFaces: 30000 });
+  terrainRenderer.rebuildAll();
+  terrainActions = new TerrainActions({ terrain: farmTerrain, inventory: inventory });
+  terrainRevision = Number.isSafeInteger(revision) && revision >= 0 ? revision : 0;
+  setTerrainGroundCutout(slot);
+  return true;
+}
+terrainActions = new TerrainActions({ terrain: farmTerrain, inventory: inventory });
 
 // ---------------------------------------------------------------- M1: Shop
 // South of the road in the middle of the map (SHOP_X/SHOP_Z from world.js).
@@ -346,6 +406,7 @@ function holdUnderPointer(e) {
 renderer.domElement.addEventListener('pointerdown', function (e) {
   tapTarget = null;
   if (window.VT_LOCKED !== false || mode !== 'walking' || buildMode || (e.button !== undefined && e.button !== 0)) return;
+  if (harvestControls && harvestControls.targetAtEvent(e)) return;
   const hold = holdUnderPointer(e);
   if (!hold) {
     // Pumpkins and peas are hand-harvested: tap a ready tile while standing
@@ -483,14 +544,144 @@ if (window.vtInventory) {
     getAssignedSlot: function () { return world.getAssignedSlot(); },
     getWalking: function () { return mode === 'walking' && !shopUI.isOpen() && window.VT_LOCKED === false; },
     getBuildMode: function () { return buildMode; },
+    getPlayerPosition: function () { return character.group.position; },
+    getPlayerObject: function () { return character.group; },
+    isPlacementBlocked: function (cell, item) {
+      if (item.id !== 'wood') return false;
+      const box = new THREE.Box3(new THREE.Vector3(cell.x - 0.5, cell.y, cell.z - 0.5),
+        new THREE.Vector3(cell.x + 0.5, cell.y + cell.height, cell.z + 0.5));
+      const farm = world.getFarms()[world.getAssignedSlot()];
+      // Keep new physical building blocks off working fields and farm pads.
+      if (cell.x < world.getAssignedSlot() * FARM_SPACING + 7 && cell.z < -20) return true;
+      if (farm && farm.getFields().some(function (field) { return field.isInside(cell.x, cell.z); })) return true;
+      if (farmSystems.woodland.queryObstacles(cell.x, cell.z, 0.72).length) return true;
+      return [tractor, combine, truck, wagon.group].some(function (object) {
+        return box.intersectsBox(new THREE.Box3().setFromObject(object));
+      });
+    },
+    onRemoved: function () { lastSig = ''; tickSave(function () { return session; }, snapshot); },
     onPlaced: function (entry) {
       if (entry.id === 'asphalt' || entry.id === 'gravel' || entry.id === 'brick') {
         placeSharedRoad(entry);
       }
       if (realtime) realtime.sendBuild(entry);
+      if (entry.id === 'wood') tickSave(function () { return session; }, snapshot);
     }
   });
+  builder.setExternalInput(true);
 }
+
+function terrainPlacementOverlapsActor(cell) {
+  const box = new THREE.Box3(new THREE.Vector3(cell.x - 0.5, cell.y, cell.z - 0.5),
+    new THREE.Vector3(cell.x + 0.5, cell.y + 1, cell.z + 0.5));
+  const player = new THREE.Box3(new THREE.Vector3(character.group.position.x - 0.3, character.group.position.y, character.group.position.z - 0.3),
+    new THREE.Vector3(character.group.position.x + 0.3, character.group.position.y + 1.8, character.group.position.z + 0.3));
+  if (box.intersectsBox(player)) return true;
+  return [tractor, combine, truck, wagon.group].some(function (object) {
+    return box.intersectsBox(new THREE.Box3().setFromObject(object));
+  });
+}
+
+function terrainPlacementBlocked(cell) {
+  if (terrainPlacementOverlapsActor(cell)) return true;
+  if (builder && builder._occupied && Object.keys(builder._occupied).some(function (key) {
+    return boxForObject(builder._occupied[key]).intersectsBox(new THREE.Box3(
+      new THREE.Vector3(cell.x - 0.5, cell.y, cell.z - 0.5),
+      new THREE.Vector3(cell.x + 0.5, cell.y + 1, cell.z + 0.5)));
+  })) return true;
+  return farmSystems.woodland.queryObstacles(cell.x, cell.z, 0.72).length > 0;
+}
+
+function boxForObject(object) { return new THREE.Box3().setFromObject(object); }
+
+function performTerrainAction(action, target, material, toolId) {
+  const cell = { x: target.x, y: target.y, z: target.z };
+  if (!farmTerrain || !validFarmTerrainCell(farmTerrain, world.getAssignedSlot(), cell.x, cell.y, cell.z)) {
+    showToast('That terrain is outside your editable yard.');
+    return { ok: false, error: 'Out of bounds.' };
+  }
+  if (action === 'place' && terrainPlacementBlocked(cell)) {
+    showToast('That block overlaps a person, vehicle, structure, or tree.');
+    return { ok: false, error: 'Occupied.' };
+  }
+  let effectiveTool = ['axe', 'shovel', 'pickaxe'].includes(toolId) ? toolId : '';
+  if (action === 'break') {
+    if ((target.material === 'grass' || target.material === 'dirt') && effectiveTool !== 'shovel') effectiveTool = '';
+    if (target.material === 'wood' && effectiveTool !== 'axe') effectiveTool = '';
+  } else effectiveTool = '';
+  if (session && session.mode === 'online') {
+    const ownerSlot = world.getAssignedSlot();
+    const ownerTerrain = farmTerrain;
+    const requestSession = session;
+    const edit = { action: action, x: cell.x, y: cell.y, z: cell.z,
+      expectedRevision: terrainRevision, toolId: effectiveTool };
+    if (action === 'place') edit.material = material;
+    return sendTerrainEdit(edit, requestSession).then(function (result) {
+      if (!result.ok || !result.accepted) {
+        if (result.status === 409 && session === requestSession && world.getAssignedSlot() === ownerSlot && farmTerrain === ownerTerrain) {
+          fetchTerrainState(requestSession).then(function (state) {
+            if (!state || session !== requestSession || world.getAssignedSlot() !== ownerSlot || farmTerrain !== ownerTerrain) return;
+            replaceFarmTerrain(ownerSlot, state.terrain, state.terrainEdits, state.terrainRevision);
+            if (state.inventory) inventory.restore(state.inventory);
+            lastSig = '';
+            updateHUD();
+          });
+        }
+        showToast(result.error || 'Terrain edit was rejected.');
+        if (Number.isSafeInteger(result.revision) && result.revision > terrainRevision) terrainRevision = result.revision;
+        return result;
+      }
+      if (session !== requestSession || world.getAssignedSlot() !== ownerSlot || farmTerrain !== ownerTerrain) return result;
+      const applied = farmTerrain && farmTerrain.applyAuthoritativeCell(result.edit.x, result.edit.y, result.edit.z, result.edit.material);
+      if (!applied || !applied.success) {
+        showToast('World changed; rejoin to resync terrain.');
+        return { ok: false, error: 'Terrain state changed.' };
+      }
+      inventory.restore(result.inventory);
+      terrainRevision = result.revision;
+      terrainRenderer.update();
+      lastSig = '';
+      updateHUD();
+      tickSave(function () { return session; }, snapshot);
+      showToast(action === 'place' ? '+1 ' + material : '+1 ' + (result.edit.material === 'air' ? (target.material === 'grass' ? 'Dirt' : target.material) : result.edit.material));
+      return result;
+    });
+  }
+  if (!terrainActions) return { ok: false, error: 'Terrain unavailable.' };
+  const result = action === 'break'
+    ? terrainActions.breakCell(cell.x, cell.y, cell.z, effectiveTool)
+    : terrainActions.placeCell(cell.x, cell.y, cell.z, material);
+  if (!result.ok) {
+    showToast(result.error || 'Terrain edit failed.');
+    return result;
+  }
+  terrainRevision++;
+  terrainRenderer.update();
+  lastSig = '';
+  updateHUD();
+  tickSave(function () { return session; }, snapshot);
+  showToast(action === 'place' ? '+1 ' + material : '+' + result.quantity + ' ' + result.itemId);
+  return result;
+}
+
+var harvestControls = builder ? new HarvestControls({
+  scene, camera, canvas: renderer.domElement, character, firstPersonArm, inventory, builder,
+  getTerrain: function () { return remoteTerrainSlot === currentFarmSlot() && remoteTerrain ? remoteTerrain : farmTerrain; },
+  getTerrainRenderer: function () { return remoteTerrainSlot === currentFarmSlot() && remoteTerrainRenderer ? remoteTerrainRenderer : terrainRenderer; },
+  getTerrainRevision: function () { return remoteTerrainSlot === currentFarmSlot() && remoteTerrain ? remoteTerrainRevision : terrainRevision; },
+  isTerrainPlacementBlocked: terrainPlacementBlocked,
+  onTerrainAction: performTerrainAction,
+  getFarmSystems: function () { return farmSystems; },
+  getBuildMode: function () { return buildMode; },
+  isEnabled: function () {
+    return mode === 'walking' && window.VT_LOCKED === false && !document.hidden &&
+      !shopUI.isOpen() && !wagonPanel.isOpen() && !grainSaleUI.isOpen();
+  },
+  onResult: function (message, success) {
+    showToast(message);
+    if (success) { lastSig = ''; updateHUD(); tickSave(function () { return session; }, snapshot); }
+  }
+}) : null;
 
 // ---------------------------------------------------------------- tools
 let currentTool = -1; // index into the active vehicle's attachment list; -1 = detached
@@ -661,12 +852,18 @@ hud.innerHTML = `
   <div class="card" id="hud-top-left"></div>
   <div class="card" id="hud-top-right"></div>
   <div class="card" id="hud-hint"></div>
+  <div class="card" id="hud-exploration" aria-live="polite"></div>
   <div id="build-reticle" aria-hidden="true"></div>
 `;
 document.body.appendChild(hud);
 const hudLeft = document.getElementById('hud-top-left');
 const hudRight = document.getElementById('hud-top-right');
 const hudHint = document.getElementById('hud-hint');
+const hudExploration = document.getElementById('hud-exploration');
+hudExploration.style.display = 'none';
+const explorationStyle = document.createElement('style');
+explorationStyle.textContent = '#hud #hud-exploration{top:clamp(128px,20vh,160px);left:50%;transform:translateX(-50%);max-width:min(330px,calc(100vw - 24px));padding:6px 10px;font-size:11px;line-height:1.2;font-weight:800;text-align:center;color:#fffbe8}';
+document.head.appendChild(explorationStyle);
 
 const toast = document.createElement('div');
 toast.style.cssText = 'position:fixed;left:50%;top:18%;transform:translateX(-50%);z-index:90;' +
@@ -685,6 +882,37 @@ function showToast(text) {
 
 let money = 0;
 let lastSig = '';
+let lastExplorationHintAt = 0;
+function updateExploration(now) {
+  if (!session || window.VT_LOCKED !== false || shopUI.isOpen()) {
+    hudExploration.style.display = 'none';
+    return;
+  }
+  hudExploration.style.display = 'block';
+  const position = mode === 'driving' ? vehicle.position : character.group.position;
+  const found = exploration.update(position.x, position.z, inventory);
+  for (const event of found) {
+    if (event.reward) {
+      const rewardItem = ITEM_BY_ID[event.reward.itemId];
+      showToast('🧭 Found ' + event.name + '! +' + event.reward.qty + ' ' + (rewardItem ? rewardItem.name : event.reward.itemId) + '.');
+    } else showToast('🧭 Discovered ' + event.name + '!');
+  }
+  if (now - lastExplorationHintAt < 600) return;
+  lastExplorationHintAt = now;
+  const next = exploration.list().filter(item => !item.discovered)
+    .map(item => Object.assign({}, item, { distance: Math.hypot(position.x - item.x, position.z - item.z) }))
+    .sort((a, b) => a.distance - b.distance)[0];
+  const facing = mode === 'driving' ? vehicle.rotation.y : character.group.rotation.y;
+  const arrows = ['↑', '↗', '→', '↘', '↓', '↙', '←', '↖'];
+  let arrow = '';
+  if (next) {
+    const bearing = Math.atan2(next.x - position.x, next.z - position.z) - facing;
+    arrow = arrows[((Math.round(bearing / (Math.PI / 4)) % 8) + 8) % 8] + ' ';
+  }
+  hudExploration.textContent = next
+    ? '🧭 ' + arrow + (next.type === 'cache' ? 'Search for a supply cache' : next.goal) + ' · ' + Math.round(next.distance) + 'm'
+    : '🧭 Every landmark discovered!';
+}
 const FARM_RESOURCE_ITEMS = {
   wood: 'wood', stone: 'stone', metal: 'metal', feed: 'animal_feed', water: 'water_jug', fuel: 'fuel_can',
   spareTire: 'spare_tire', repairKit: 'repair_kit', cleanup_kit: 'cleanup_kit',
@@ -713,9 +941,10 @@ function applyFarmResourceBag(before, after) {
   inventory.updateDOM();
 }
 window.vtPurchaseItem = function (item, qty, balance) {
+  if (item && item.available === false) return { ok: false, error: 'This item is not available yet.' };
   if (!item || !Number.isInteger(qty) || qty < 1 || money < item.price * qty) return { ok: false, error: 'Not enough money.' };
   const units = qty * packSize(item);
-  if (['animal_feed', 'water_jug', 'fuel_can', 'spare_tire', 'repair_kit', 'cleanup_kit', 'sapling', 'stone', 'metal', 'tool_use'].indexOf(item.id) !== -1) {
+  if (['animal_feed', 'water_jug', 'fuel_can', 'spare_tire', 'repair_kit', 'cleanup_kit', 'sapling', 'stone', 'metal', 'tool_use', 'axe'].indexOf(item.id) !== -1) {
     return inventory.buy(item.id, units);
   }
   // Wagon parked at the shop: purchases go straight onto it for the trip home.
@@ -829,7 +1058,7 @@ function updateHUD() {
   const nearName = near ? MACHINE_NAMES[near.type] : '';
   // rebuild only when something actually changed
   const sig = vehicleType + '|' + money + '|' + currentTool + '|' + currentColor + '|' +
-    s.tilled + '|' + s.planted + '|' + s.sprayed + '|' + s.harvested + '|' +
+    s.tilled + '|' + s.planted + '|' + s.sprayed + '|' + s.harvested + '|' + s.weeds + '|' + s.bugs + '|' +
     climateState.day + '|' + climateState.season + '|' + climateState.weather + '|' +
     (farmPrompt ? farmPrompt.action + ':' + farmPrompt.target : '') + '|' +
     farmStatus.livestock.day + '|' + farmStatus.livestock.escaped.length + '|' +
@@ -865,7 +1094,8 @@ function updateHUD() {
     '<div>🐟 Fish <b>' + Math.round(farmStatus.water.fishPopulation) + '</b></div>' +
     '<div>🟫 Soil <b>' + s.tilled + '</b></div>' +
     '<div>🌱 Crops <b>' + s.planted + '</b></div>' +
-    '<div>🫧 Fed <b>' + s.sprayed + '</b></div>' +
+    '<div>🫧 Treated <b>' + s.sprayed + '</b></div>' +
+    (s.weeds || s.bugs ? '<div>🌿 Weeds <b>' + s.weeds + '</b> · 🪰 Bugs <b>' + s.bugs + '</b></div>' : '') +
     '<div>🌾 Picked <b>' + s.harvested + '</b></div>' +
     (mode === 'driving' && vehicleType === 'combine' ?
       '<div>🛢️ Combine bin: <b>' + combineBinCount() + '/' + COMBINE_BIN_CAPACITY + '</b>' +
@@ -891,10 +1121,10 @@ function updateHUD() {
     hint = 'Tap Attach to fit the PLOW — drive into any field';
   } else if (s.planted === 0) {
     hint = 'Tap Next tool for the PLANTER — drive over tilled soil';
-  } else if (s.sprayed === 0 || s.sprayed < s.planted) {
-    hint = 'Crops are green — tap Next tool to attach the SPRAYER';
+  } else if (s.weeds || s.bugs) {
+    hint = 'Weeds or flying bugs are slowing some crops — spray those patches if you want. Crops still mature naturally.';
   } else if (s.harvested === 0) {
-    hint = 'Golden crops! Tap Next tool for the HARVESTER to collect them';
+    hint = 'Crops grow on their own. Fertilizer is optional — harvest when they turn golden.';
   } else {
     hint = 'Great farming! Keep going 💰';
   }
@@ -902,7 +1132,7 @@ function updateHUD() {
   if (outOfSupply === 'plant') {
     hint = 'The planter is empty — buy seeds at the 🏪 Shop (follow the arrow at the top)';
   } else if (outOfSupply === 'spray') {
-    hint = 'The sprayer is empty — buy Crop Spray at the 🏪 Shop (follow the arrow at the top)';
+    hint = 'Spray is optional — buy Crop Spray at the 🏪 Shop only to treat weeds or bugs.';
   } else if (seasonBlocked) {
     hint = '❄️ The ground is resting for winter — plant again when spring arrives.';
   }
@@ -1031,7 +1261,15 @@ function stepPhysics(dt) {
     x: clampX(vehicle.position.x + cs * speed * dt),
     z: clampZ(vehicle.position.z - sn * speed * dt)
   };
-  if (farmSystems.isMovementBlocked(previous, next, vehicleType, farmSystems.water.riverLevel)) {
+  const half = VEHICLE_HALF[vehicleType] || { x: 0, z: 0 };
+  let reachesTerrainPatch = false;
+  for (let slot = 0; slot < 10 && !reachesTerrainPatch; slot++) {
+    const patchMinX = slot * FARM_SPACING + 107.5, patchMaxX = slot * FARM_SPACING + 145.5;
+    const patchMinZ = -53.5, patchMaxZ = 24.5;
+    reachesTerrainPatch = next.x + half.x >= patchMinX && next.x - half.x <= patchMaxX &&
+      next.z + half.z >= patchMinZ && next.z - half.z <= patchMaxZ;
+  }
+  if (reachesTerrainPatch || farmSystems.isMovementBlocked(previous, next, vehicleType, farmSystems.water.riverLevel)) {
     speed = 0;
   } else {
     vehicle.position.x = next.x;
@@ -1054,6 +1292,12 @@ function tryJump() {
   onGround = false;
 }
 
+function terrainForPosition(x, z) {
+  const slot = world.getFarmAtPosition(x, z);
+  if (remoteTerrain && remoteTerrainSlot === slot) return remoteTerrain;
+  return farmTerrain;
+}
+
 function stepCharacter(dt) {
   if (mode === 'walking') {
     // turn (rotation.y; model faces +Z, so facing = (sin a, 0, cos a))
@@ -1063,11 +1307,16 @@ function stepCharacter(dt) {
     // drive along the facing
     const mv = input.charDrive * CHAR_SPEED;
     const p = character.group.position;
+    const movementTerrain = terrainForPosition(p.x, p.z);
     const previous = { x: p.x, z: p.z };
     const next = { x: clampX(p.x + Math.sin(a) * mv * dt), z: clampZ(p.z + Math.cos(a) * mv * dt) };
     if (!farmSystems.isMovementBlocked(previous, next, 'foot', farmSystems.water.riverLevel)) {
-      p.x = next.x;
-      p.z = next.z;
+      const dx = next.x - p.x, dz = next.z - p.z;
+      const moved = moveTerrainCharacter({ terrain: movementTerrain, position: p,
+        velocity: { x: dt > 0 ? dx / dt : 0, y: 0, z: dt > 0 ? dz / dt : 0 }, deltaTime: dt,
+        halfWidth: 0.3, height: 1.8 });
+      p.x = moved.position.x;
+      p.z = moved.position.z;
     }
 
     // one-shot jump from Space or the mobile Jump button
@@ -1076,14 +1325,17 @@ function stepCharacter(dt) {
 
     // gravity
     velY += GRAVITY * dt;
-    p.y += velY * dt;
-    if (p.y <= 0) {
+    const vertical = moveTerrainCharacter({ terrain: movementTerrain, position: p,
+      velocity: { x: 0, y: velY, z: 0 }, deltaTime: dt, halfWidth: 0.3, height: 1.8 });
+    p.y = vertical.position.y;
+    velY = vertical.velocity.y;
+    const insideTerrain = p.x >= movementTerrain.originX - 0.5 && p.x <= movementTerrain.originX + movementTerrain.width - 0.5 &&
+      p.z >= movementTerrain.originZ - 0.5 && p.z <= movementTerrain.originZ + movementTerrain.depth - 0.5;
+    if (!insideTerrain && p.y <= 0) {
       p.y = 0;
       velY = 0;
       onGround = true;
-    } else {
-      onGround = false;
-    }
+    } else onGround = vertical.onGround;
 
     character.setWalking(Math.abs(input.charDrive) > 0.08);
     character.setJumping(!onGround && velY > 0);
@@ -1252,6 +1504,7 @@ function canPlantCrop(cropType, season) {
 let cropTickElapsed = 0;
 let floodStressElapsed = [0, 0, 0, 0];
 function stepFieldWork(dt) {
+  if (window.VT_LOCKED !== false) return;
   const toolEffect = mode === 'driving' && toolGroup ? toolGroup.userData.effect : '';
   outOfSupply = hasSupplyFor(toolEffect) ? '' : toolEffect;
   seasonBlocked = false;
@@ -1350,7 +1603,7 @@ function stepFieldWork(dt) {
             }
           } else floodStressElapsed[j] = 0;
         }
-        farmFields[i][j].update(cropDt, { growthRate: growthRate });
+        farmFields[i][j].update(cropDt, { growthRate: growthRate, problems: i === ownedSlot });
       }
     }
   }
@@ -1430,6 +1683,26 @@ function interactWithFarm() {
     } else showToast('📬 No open contracts today. Check back tomorrow.');
     return;
   }
+  const assignedFarm = world.getFarms()[world.getAssignedSlot()];
+  const plot = assignedFarm && assignedFarm.getExpansionCenter();
+  if (plot && Math.hypot(position.x - plot.x, position.z - plot.z) <= 5) {
+    if (assignedFarm.getFields().length > 4) {
+      showToast('🌾 Your extra field is already open.');
+    } else {
+      const purchase = expansionPurchaseState({ expanded: false, balance: money,
+        occupied: expansionPlotOccupied(builder ? builder.serializeLocal() : [], assignedFarm.getFarmSlot()) });
+      if (!purchase.ok && purchase.reason === 'occupied') showToast('🚧 Move buildings off the marked expansion plot first.');
+      else if (!purchase.ok && purchase.reason === 'insufficient-funds') {
+        showToast('🌾 Clear the marked plot and press interact to buy it for $' + assignedFarm.getExpansionCost() + '.');
+      } else if (purchase.ok && assignedFarm.expand()) {
+        money = purchase.balance;
+        showToast('🌱 Extra field purchased for $' + assignedFarm.getExpansionCost() + '!');
+      }
+    }
+    lastSig = '';
+    updateHUD();
+    return;
+  }
   const before = getFarmResourceBag();
   const bag = Object.assign({}, before);
   const result = farmSystems.interact(position, 'foot', bag);
@@ -1505,13 +1778,14 @@ function drainActions() {
 }
 
 function setBuildMode(active) {
+  if (harvestControls) harvestControls.cancel();
   buildMode = !!active && mode === 'walking';
   firstPersonArm.visible = buildMode;
   character.setVisible(!buildMode);
   document.body.classList.toggle('vt-build-mode', buildMode);
   inventory.setFirstPerson(buildMode);
   input.setBuildMode(buildMode);
-  if (buildMode) showToast('🧱 Build mode: select an item in your hotbar, aim, then tap to place.');
+  if (buildMode) showToast('🧱 Build: select wood, aim, and click Place. Hold right mouse or Break to reclaim wood.');
 }
 
 // ---------------------------------------------------------------- camera
@@ -1521,11 +1795,11 @@ function updateCamera(dt) {
     const a = character.group.rotation.y;
     const fx = Math.sin(a), fz = Math.cos(a);
     dx = character.group.position.x;
-    dy = 1.55;
+    dy = character.group.position.y + 1.55;
     dz = character.group.position.z;
     lax = dx + fx * 8;
     laz = dz + fz * 8;
-    lookY = 1.15;
+    lookY = dy + Math.tan(harvestControls ? harvestControls.buildPitch : -0.45) * 8;
     camPos.set(dx, dy, dz);
     camera.position.copy(camPos);
     lookAt.set(lax, lookY, laz);
@@ -1650,10 +1924,19 @@ function resetToSpawn() {
 // made with farms 140 apart, so world-space positions must be shifted.
 const FARM_LAYOUT = 2;
 const OLD_FARM_SPACING = 140;
-const STARTER_MONEY = 100; // a brand-new farm can afford its first seeds and spray
+const STARTER_MONEY = 100; // seeds are enough to begin; crop care is optional
 let session = null;
 let sharedWorldTimer = null;
 let realtime = null;
+
+function terrainSaveFields() {
+  if (!farmTerrain) return { terrain: null, terrainRevision: terrainRevision };
+  const saved = farmTerrain.serialize();
+  if (!session || session.mode !== 'online') return { terrain: saved, terrainRevision: terrainRevision };
+  const terrainEdits = {};
+  for (const row of saved.changes) terrainEdits[row[0] + ',' + row[1] + ',' + row[2]] = { material: row[3] };
+  return { terrain: null, terrainEdits: terrainEdits, terrainRevision: terrainRevision };
+}
 
 function snapshot() {
   return {
@@ -1672,6 +1955,7 @@ function snapshot() {
     cz: character.group.position.z,
     ctheta: character.group.rotation.y,
     world: world.serialize(),
+    ...terrainSaveFields(),
     structures: builder ? builder.serializeLocal() : [],
     inventory: inventory.serialize(),
     wagon: wagon.serialize(),
@@ -1680,6 +1964,7 @@ function snapshot() {
     climate: climate.serialize(),
     farmSystems: farmSystems.serialize(),
     appliedGiftIds: appliedGiftIds.slice(-100),
+    exploration: exploration.serialize(),
   };
 }
 
@@ -1687,6 +1972,10 @@ function snapshot() {
 // array of 4 Field serialisations, no `world` key, always driving).
 function applyState(s) {
   if (!s || typeof s !== 'object') return false;
+  if (s.exploration) exploration.restore(s.exploration);
+  if (s.terrain || s.terrainEdits || Number.isSafeInteger(s.terrainRevision)) {
+    replaceFarmTerrain(world.getAssignedSlot(), s.terrain, s.terrainEdits, s.terrainRevision);
+  }
   if (s.climate) {
     try { climate.restore(s.climate); } catch (err) { /* ignore invalid legacy climate state */ }
     climateState = climate.getState();
@@ -1838,7 +2127,7 @@ function applyState(s) {
 }
 
 // Seeds now cost money, so a farm with no cash, no seeds and nothing growing
-// could never earn again. Top it back up to the price of a seed bag + spray.
+  // could never earn again. Top it back up so it can afford seeds.
 function rescueStuckFarm() {
   const RESCUE = 40;
   if (money >= RESCUE) return;
@@ -1849,7 +2138,7 @@ function rescueStuckFarm() {
   const own = farms[world.getAssignedSlot()];
   if (own && own.getFields().some(function (f) { return f.hasHarvestComing(); })) return;
   money = RESCUE;
-  showToast('🤝 The farm co-op topped you up to $' + RESCUE + ' for seeds and spray');
+  showToast('🤝 The farm co-op topped you up to $' + RESCUE + ' for seeds. Spray and fertilizer are optional.');
 }
 
 // ---------------------------------------------------------------- farmers
@@ -2044,6 +2333,19 @@ function acceptRealtimeMessage(msg) {
     delete remoteTargets[slot];
   } else if (msg.type === 'build' && builder && msg.entry) {
     builder.restore([msg.entry], true);
+  } else if (msg.type === 'terrain-edit' && msg.edit && Number.isSafeInteger(msg.revision)) {
+    if (remoteTerrainSlot !== slot || remoteTerrainOwner !== String(msg.email).toLowerCase() || !remoteTerrain) return;
+    if (msg.revision <= remoteTerrainRevision) return;
+    if (msg.revision !== remoteTerrainRevision + 1) {
+      fetchFarmState(slot).then(function (data) {
+        if (data && currentFarmSlot() === slot) installRemoteFarmState(slot, data);
+      });
+      return;
+    }
+    const applied = remoteTerrain.applyAuthoritativeCell(msg.edit.x, msg.edit.y, msg.edit.z, msg.edit.material);
+    if (!applied.success) return;
+    remoteTerrainRevision = msg.revision;
+    remoteTerrainRenderer.update();
   }
 }
 
@@ -2131,13 +2433,42 @@ const FARM_STATE_MIN_MS = 15000;
 let farmStateLastAt = {}; // farmSlot -> performance.now() of the last request
 let farmStateSeenSlot = -2; // last slot we stood on (edge-triggered)
 
+function clearRemoteTerrain() {
+  if (remoteTerrainRenderer) remoteTerrainRenderer.dispose();
+  remoteTerrainRenderer = null;
+  remoteTerrain = null;
+  remoteTerrainSlot = -1;
+  remoteTerrainOwner = '';
+  remoteTerrainRevision = 0;
+}
+
+function installRemoteFarmState(slot, data) {
+  if (!data || !data.farm || slot === world.getAssignedSlot()) return;
+  world.getFarms()[slot].restore(data.farm);
+  const incomingRevision = Number.isSafeInteger(data.farm.terrainRevision) ? data.farm.terrainRevision : 0;
+  const incomingOwner = String(data.email || '').toLowerCase();
+  if (remoteTerrainSlot === slot && remoteTerrainOwner === incomingOwner && remoteTerrainRevision === incomingRevision) return;
+  clearRemoteTerrain();
+  remoteTerrain = restoreAuthoritativeFarmTerrain(data.farm.terrain, data.farm.terrainEdits, slot);
+  if (!remoteTerrain) return;
+  remoteTerrain.editable = false;
+  remoteTerrainSlot = slot;
+  remoteTerrainOwner = incomingOwner;
+  remoteTerrainRevision = incomingRevision;
+  remoteTerrainRenderer = createTerrainRenderer(THREE, scene, remoteTerrain, { maxFaces: 30000 });
+  remoteTerrainRenderer.rebuildAll();
+  setTerrainGroundCutout(slot);
+}
+
 function maybeFetchForeignState() {
   if (!session || session.mode !== 'online') return;
   const slot = currentFarmSlot();
-  if (slot === farmStateSeenSlot) return; // only on entering a new farm
+  const entered = slot !== farmStateSeenSlot;
+  if (!entered && (slot < 0 || slot > 9 || slot === world.getAssignedSlot())) return;
   farmStateSeenSlot = slot;
-  if (slot < 0 || slot > 9) return;
-  if (slot === world.getAssignedSlot()) return; // never your own farm
+  if (entered && (slot < 0 || slot > 9)) { clearRemoteTerrain(); setTerrainGroundCutout(-1); return; }
+  if (entered && slot === world.getAssignedSlot()) { clearRemoteTerrain(); setTerrainGroundCutout(slot); return; }
+  if (entered) { clearRemoteTerrain(); setTerrainGroundCutout(-1); }
   const now = performance.now();
   const lastAt = farmStateLastAt[slot] || 0;
   if (now - lastAt < FARM_STATE_MIN_MS) return;
@@ -2146,7 +2477,7 @@ function maybeFetchForeignState() {
     if (!data || !data.farm) return; // failure → keep the local fields
     if (slot === world.getAssignedSlot()) return; // never your own farm
     if (currentFarmSlot() !== slot) return; // moved on → drop the stale reply
-    world.getFarms()[slot].restore(data.farm);
+    installRemoteFarmState(slot, data);
   });
 }
 
@@ -2180,6 +2511,8 @@ function setupLogin() {
       world.setAssignedSlot(world.slotFromEmail(res.email || ''));
     }
     const slot = world.getAssignedSlot();
+    clearRemoteTerrain();
+    replaceFarmTerrain(slot, null, null, 0);
 
     farmSystems.dispose();
     farmSystems = new FarmSystems({ scene: scene, THREE: THREE, farmSlot: slot, onEvent: handleFarmEvent });
@@ -2193,7 +2526,7 @@ function setupLogin() {
     world.setAssignedSlot(slot); // resolved slot stays authoritative
     if (!res.state) {
       money = STARTER_MONEY; // brand-new farm
-      showToast('🌱 Welcome, farmer! Here’s $' + STARTER_MONEY + ' — follow the 🏪 arrow to buy seeds and spray');
+      showToast('🌱 Welcome, farmer! Here’s $' + STARTER_MONEY + ' — buy seeds at the 🏪 shop. Crops grow naturally; care is optional.');
     } else {
       rescueStuckFarm();
     }
@@ -2323,7 +2656,10 @@ renderer.setAnimationLoop(function () {
   stepWagon();
   checkGrainDelivery();
   stepCharacter(dt);
+  updateExploration(now);
   stepFieldWork(dt);
+  const cropFields = farmFields[world.getAssignedSlot()] || [];
+  cropProblemVisuals.update(dt, cropFields, mode === 'driving' ? vehicle.position : character.group.position, !!session);
   maybeFetchForeignState();
 
   // mobile Enter button follows the entry prompt
@@ -2345,6 +2681,11 @@ renderer.setAnimationLoop(function () {
   farmPrompt = mode === 'walking' && !buildMode
     ? farmSystems.getPrompt({ x: character.group.position.x, z: character.group.position.z }, 'foot')
     : null;
+  const ownerFarm = world.getFarms()[world.getAssignedSlot()];
+  const expansionCenter = ownerFarm && ownerFarm.getExpansionCenter();
+  const nearExpansion = mode === 'walking' && !buildMode && !shopUI.isOpen() && ownerFarm && ownerFarm.getFields().length <= 4 &&
+    Math.hypot(character.group.position.x - expansionCenter.x, character.group.position.z - expansionCenter.z) <= 5;
+  if (!farmPrompt && nearExpansion) farmPrompt = { kind: 'field-expansion', action: 'open extra field', label: 'open extra field' };
   if (!farmPrompt && mode === 'walking' && shopNear) {
     farmPrompt = { kind: 'market', action: 'check requests', label: 'check farm requests' };
   }
@@ -2366,6 +2707,7 @@ renderer.setAnimationLoop(function () {
   updateShopPointer();
 
   updateCamera(dt);
+  if (harvestControls) harvestControls.update(dt);
   world.updateCulling(camera.position.x, camera.position.z);
   updateFarmerCharacters(dt);
   if (performanceBudget.shouldUpdateSun(now)) updateSun();
@@ -2382,6 +2724,8 @@ addEventListener('resize', function () {
   camera.far = perfProfile.maxView;
   camera.updateProjectionMatrix();
   performanceBudget.setSize(renderer, innerWidth, innerHeight);
+  renderer.domElement.style.width = innerWidth + 'px';
+  renderer.domElement.style.height = innerHeight + 'px';
 });
 
 document.addEventListener('visibilitychange', function () {
