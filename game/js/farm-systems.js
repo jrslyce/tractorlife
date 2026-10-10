@@ -4,15 +4,19 @@ import { Livestock } from './livestock.js';
 import { VehicleCondition } from './vehicle-condition.js';
 import { RiverCrossings } from './river-crossings.js';
 import { FarmRequests } from './farm-requests.js';
+import { formatGameAction, formatGameReason } from './game-messages.js';
 
 const dist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 const weatherOf = state => typeof state === 'string' ? state : state?.weather || state?.type || 'clear';
+const RECOVERY_ACTIONS = new Set(['repair-vehicle', 'build-bridge', 'repair-bridge', 'repair-bank', 'repair-fence', 'herd']);
+const PAUSED_SYSTEMS_MESSAGE = 'Advanced farm systems are paused in Simple Farm. Switch to Full Farm in Settings to resume them.';
 
 /** Farm-local simulation facade. Simulation coordinates and saved state are world-space. */
 export class FarmSystems {
   constructor({ scene, THREE, farmSlot = 0, onEvent } = {}) {
     this.scene = scene; this.THREE = THREE; this.farmSlot = Math.max(0, Number(farmSlot) || 0);
     this.originX = this.farmSlot * 180; this.onEvent = typeof onEvent === 'function' ? onEvent : () => {};
+    this.advancedSystemsEnabled = true;
     const seed = 0x51f15e + this.farmSlot * 7919;
     this.woodland = new Woodland({ seed, config: { initialTrees: 5, initialOrchards: 3 } });
     // Keep woodland in the accessible corridor between the road and river.
@@ -95,6 +99,7 @@ export class FarmSystems {
 
   update(dt, climateState = {}, usageByVehicle = {}) {
     if (!Number.isFinite(dt) || dt <= 0) return this.getStatus();
+    if (!this.advancedSystemsEnabled) return this.getStatus();
     const weather = weatherOf(climateState), events = [];
     const send = (source, list) => { for (const event of list || []) { const e = { ...event, source }; events.push(e); this.onEvent(e); } };
     send('woodland', this.woodland.update(dt, weather));
@@ -175,13 +180,22 @@ export class FarmSystems {
   getPrompt(position, vehicleType) {
     if (!position || !Number.isFinite(position.x) || !Number.isFinite(position.z)) return null;
     const limit = vehicleType && vehicleType !== 'foot' ? 9 : 5;
-    const target = this._targets().map(t => ({ ...t, distance: dist(position, t) })).filter(t => t.distance < limit && (t.kind !== 'crossing' || t.action !== 'cross')).sort((a, b) => a.distance - b.distance)[0];
+    const target = this._targets().map(t => ({ ...t, distance: dist(position, t) })).filter(t =>
+      t.distance < limit && (t.kind !== 'crossing' || t.action !== 'cross') &&
+      (this.advancedSystemsEnabled || RECOVERY_ACTIONS.has(t.action)))
+      .sort((a, b) => a.distance - b.distance)[0];
     return target ? { action: target.action, target: target.id, kind: target.kind, distance: target.distance, label: target.kind === 'tree' ? 'hold Chop to collect wood' : target.action.replaceAll('-', ' ') } : null;
   }
 
-  getHarvestTargets() { return this.woodland.getHarvestTargets(); }
+  getHarvestTargets() { return this.advancedSystemsEnabled ? this.woodland.getHarvestTargets() : []; }
+
+  setAdvancedSystemsEnabled(enabled) {
+    this.advancedSystemsEnabled = enabled !== false;
+    return this.advancedSystemsEnabled;
+  }
 
   harvestTree(id, inventory, expectedRevision) {
+    if (!this.advancedSystemsEnabled) return { success: false, reason: 'systems-paused', costs: {}, rewards: {}, events: [], message: PAUSED_SYSTEMS_MESSAGE };
     const result = this.woodland.harvestTree(id, inventory, expectedRevision);
     if (result.success) {
       for (const event of result.events) this.onEvent({ ...event, source: 'woodland' });
@@ -192,7 +206,13 @@ export class FarmSystems {
 
   interact(position, vehicleType = 'foot', resourceBag = {}) {
     const prompt = this.getPrompt(position, vehicleType);
-    if (!prompt) return { success: false, reason: 'no-nearby-target', costs: {}, rewards: {}, events: [], message: 'Nothing nearby to interact with.' };
+    if (!prompt) {
+      const limit = vehicleType && vehicleType !== 'foot' ? 9 : 5;
+      if (!this.advancedSystemsEnabled && position && this._targets().some(target => dist(position, target) < limit)) {
+        return { success: false, reason: 'systems-paused', costs: {}, rewards: {}, events: [], message: PAUSED_SYSTEMS_MESSAGE };
+      }
+      return { success: false, reason: 'no-nearby-target', costs: {}, rewards: {}, events: [], message: 'Nothing nearby to interact with.' };
+    }
     if (prompt.kind === 'tree' || prompt.action === 'fell' || prompt.action === 'clear-tree') {
       return { success: false, reason: 'hold-chop-required', costs: {}, rewards: {}, events: [], target: prompt.target, message: 'Hold Chop while facing the tree to collect wood.' };
     }
@@ -202,7 +222,12 @@ export class FarmSystems {
     else if (prompt.kind === 'sapling-spot') result = this.woodland.interact('plant', prompt.target, resourceBag);
     else if (prompt.kind === 'animal' || prompt.kind === 'escaped-animal') result = this.livestock.interact(prompt.action, prompt.target, resourceBag);
     else if (prompt.kind === 'fence') result = this.livestock.interact(prompt.action, undefined, resourceBag);
-    else if (prompt.kind === 'vehicle') { const v = this.vehicles[prompt.target], b = v?.getState().breakdown; const success = !!b && v.repair(b.part, resourceBag); result = { success, reason: success ? 'repaired' : 'insufficient-resources', costs: {}, rewards: {}, events: success ? [{ type: 'vehicle-repaired', vehicleType: prompt.target }] : [] }; }
+    else if (prompt.kind === 'vehicle') {
+      const v = this.vehicles[prompt.target], b = v?.getState().breakdown;
+      const costs = b?.type === 'flat_tire' ? { spareTire: 1 } : b?.type === 'engine_failure' ? { repairKit: 1, fuel: 1 } : { repairKit: 1 };
+      const success = !!b && v.repair(b.part, resourceBag);
+      result = { success, reason: success ? 'repaired' : 'insufficient-resources', costs, rewards: {}, events: success ? [{ type: 'vehicle-repaired', vehicleType: prompt.target }] : [] };
+    }
     else if (prompt.kind === 'crossing' && prompt.target === 'bridge') result = this.crossings.crossings.find(c => c.type === 'bridge').health <= 0 ? this.crossings.buildBridge(resourceBag) : this.crossings.repairBridge(resourceBag);
     else if (prompt.kind === 'crossing') result = { success: true, reason:'route-available', costs:{}, rewards:{}, events:[], message:'Cross at this lane to reach the other riverbank.' };
     else if (prompt.kind === 'field') result = this.water.interact('irrigate', prompt.target, resourceBag);
@@ -210,8 +235,8 @@ export class FarmSystems {
     const events = result.events || [];
     for (const event of events) this.onEvent({ ...event, source: prompt.kind });
     this._syncVisuals();
-    const output = { ...result, message: result.message || (result.success ? `${prompt.action.replaceAll('-', ' ')} complete.` : `${prompt.action.replaceAll('-', ' ')} failed: ${result.reason}.`), target: prompt.target };
-    if (result.success) {
+    const output = { ...result, action: prompt.action, message: result.message || (result.success ? `${formatGameAction(prompt.action)} complete.` : formatGameReason(result.reason, prompt.action, result.costs)), target: prompt.target };
+    if (result.success && this.advancedSystemsEnabled) {
       const requestType = prompt.kind === 'branch' ? 'clear-branch'
         : prompt.kind === 'vehicle' ? 'repair-breakdown'
         : prompt.kind === 'animal' || prompt.kind === 'escaped-animal' ? 'animal-care'

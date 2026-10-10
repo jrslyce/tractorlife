@@ -18,6 +18,8 @@ export class ShopUI {
     this._getProduce = options.getProduce || function () { return []; };
     this._onSell = options.onSell;
     this._open = false;
+    this._previousFocus = null;
+    this._previousLock = false;
     this._category = null;
     this._style = document.createElement('style');
     this._style.textContent = [
@@ -25,20 +27,20 @@ export class ShopUI {
       '#shop-panel{width:min(760px,100%);max-height:88vh;max-height:88dvh;min-height:0;display:flex;flex-direction:column;background:#1b281f;border:3px solid #a9ca72;border-radius:10px;box-shadow:6px 6px 0 rgba(0,0,0,.45);overflow:hidden}',
       '#shop-head{padding:13px 16px;background:#344a32;border-bottom:2px solid #a9ca72;display:flex;align-items:center;justify-content:space-between;gap:12px}',
       '#shop-head h2{margin:0;font-size:22px;color:#ffe36b}#shop-balance{font-weight:850;font-size:17px;color:#ffe36b;font-variant-numeric:tabular-nums}',
-      '#shop-close{flex:none;border:2px solid #b6d77a;border-radius:6px;background:#202c22;color:#f7f6e9;font-size:20px;font-weight:800;width:44px;height:44px;cursor:pointer}',
-      '#shop-back{display:none;min-width:64px;min-height:44px;border:2px solid #b6d77a;border-radius:6px;background:#202c22;color:#f7f6e9;font-size:15px;font-weight:800;cursor:pointer}#shop-head-actions{display:flex;align-items:center;gap:8px}#shop-head h2{min-width:0;line-height:1.2}',
+      '#shop-close{flex:none;border:2px solid #b6d77a;border-radius:6px;background:#202c22;color:#f7f6e9;font-size:20px;font-weight:800;width:52px;height:52px;cursor:pointer}',
+      '#shop-back{display:none;min-width:64px;min-height:52px;border:2px solid #b6d77a;border-radius:6px;background:#202c22;color:#f7f6e9;font-size:15px;font-weight:800;cursor:pointer}#shop-head-actions{display:flex;align-items:center;gap:8px}#shop-head h2{min-width:0;line-height:1.2}',
       '#shop-greeting{margin:0;padding:12px 20px 4px;font-size:15px}',
-      '#shop-recipient{display:flex;align-items:center;gap:8px;padding:8px 20px;font-weight:700}#shop-recipient select{min-height:42px;max-width:70%;padding:6px 10px;border:2px solid #a9ca72;border-radius:6px;background:#202c22;color:#f7f6e9;font-size:15px}',
+      '#shop-recipient{display:flex;align-items:center;gap:8px;padding:8px 20px;font-weight:700}#shop-recipient select{min-height:48px;max-width:70%;padding:6px 10px;border:2px solid #a9ca72;border-radius:6px;background:#202c22;color:#f7f6e9;font-size:15px}',
       '#shop-list{padding:8px 18px 18px;overflow-y:auto;-webkit-overflow-scrolling:touch;touch-action:pan-y;overscroll-behavior:contain;flex:1;min-height:0}',
       '#shop-menu{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:8px 0}#shop-menu button{display:flex;align-items:center;gap:12px;min-height:70px;padding:12px;border:2px solid #9dbd70;border-radius:9px;background:#293c2c;color:#f7f6e9;text-align:left;font:800 16px system-ui,sans-serif;cursor:pointer;touch-action:manipulation}#shop-menu .shop-menu-icon{font-size:28px;flex:none}#shop-menu button:active,#shop-menu button:hover{background:#405738}',
       '.shop-category{margin:14px 0 6px;font-size:16px;color:#b9e27e;text-transform:uppercase;letter-spacing:.05em}',
       '.shop-row{display:grid;grid-template-columns:42px minmax(0,1fr) auto;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid rgba(169,202,114,.25)}',
       '.shop-emoji{font-size:28px;text-align:center}.shop-name{font-weight:750}.shop-desc{font-size:13px;opacity:.8;margin-top:2px}',
       '#shop-produce h3{margin:10px 0 4px;color:#b9e27e}',
-      '.shop-buy{min-width:96px;min-height:44px;padding:7px 10px;border:2px solid #b6d77a;border-radius:6px;background:#ffe36b;color:#233018;font-weight:850;font-size:14px;cursor:pointer;box-shadow:0 3px 0 #98ad4b}',
+      '.shop-buy{min-width:96px;min-height:52px;padding:7px 10px;border:2px solid #b6d77a;border-radius:6px;background:#ffe36b;color:#233018;font-weight:850;font-size:14px;cursor:pointer;box-shadow:0 3px 0 #98ad4b}',
       '.shop-buy:active{transform:translateY(2px);box-shadow:0 1px 0 #98ad4b}.shop-buy:disabled{opacity:.5;cursor:not-allowed}#shop-msg{min-height:22px;padding:0 20px 12px;font-weight:700;color:#ffe36b}',
       '#shop-panel button:focus-visible,#shop-panel select:focus-visible{outline:3px solid #ffe36b;outline-offset:2px}',
-      '@media(max-width:520px){#shop-panel{max-height:96vh;max-height:96dvh}#shop-head{padding:10px;gap:5px;flex-wrap:wrap}#shop-head h2{font-size:17px;flex:1 1 100%}#shop-head-actions{width:100%;justify-content:space-between}#shop-balance{font-size:14px}#shop-list{padding:6px 12px 12px}#shop-menu{grid-template-columns:1fr}#shop-menu button{min-height:54px}.shop-row{grid-template-columns:34px minmax(0,1fr) 82px;gap:7px}.shop-buy{min-width:82px;font-size:13px}.shop-desc{font-size:12px}}',
+      '@media(max-width:520px){#shop-panel{max-height:96vh;max-height:96dvh}#shop-head{padding:10px;gap:5px;flex-wrap:wrap}#shop-head h2{font-size:17px;flex:1 1 100%}#shop-head-actions{width:100%;justify-content:space-between}#shop-balance{font-size:14px}#shop-list{padding:6px 12px 12px}#shop-menu{grid-template-columns:1fr}#shop-menu button{min-height:56px}.shop-row{grid-template-columns:34px minmax(0,1fr) 82px;gap:7px}.shop-buy{min-width:82px;font-size:13px}.shop-desc{font-size:12px}}',
       '@media(max-height:500px){#shop-panel{max-height:96vh;max-height:96dvh}#shop-greeting{padding:4px 12px}#shop-recipient{padding:4px 12px}}'
     ].join('\n');
     document.head.appendChild(this._style);
@@ -112,6 +114,8 @@ export class ShopUI {
     this._produce.id = 'shop-produce';
     this._message = document.createElement('div');
     this._message.id = 'shop-msg';
+    this._message.setAttribute('role', 'status');
+    this._message.setAttribute('aria-live', 'polite');
     panel.appendChild(head);
     panel.appendChild(greeting);
     this._greeting = greeting;
@@ -221,7 +225,7 @@ export class ShopUI {
     }
     var balance = Number(this._getMoney());
     if (!isFinite(balance) || balance < item.price) {
-      this._message.textContent = 'Not enough coins for ' + item.name + ' yet.';
+      this._message.textContent = item.name + ' costs $' + item.price + '. You have $' + Math.max(0, Math.floor(Number(balance) || 0)) + '.';
       return;
     }
     if (typeof this._onPurchase !== 'function') {
@@ -233,7 +237,7 @@ export class ShopUI {
       this._message.textContent = result && result.error ? result.error : 'Could not complete this purchase.';
       return;
     }
-    this._message.textContent = 'Bought ' + item.name + '!';
+    this._message.textContent = 'Bought ' + item.name + ' for $' + item.price + '.';
     this.refreshBalance();
   }
 
@@ -307,6 +311,10 @@ export class ShopUI {
   }
 
   open() {
+    if (this._open) return;
+    this._previousFocus = document.activeElement;
+    this._previousLock = typeof window !== 'undefined' ? window.VT_LOCKED : false;
+    if (typeof window !== 'undefined') window.VT_LOCKED = true;
     this._open = true;
     this._message.textContent = '';
     this.refreshBalance();
@@ -318,12 +326,24 @@ export class ShopUI {
   close() {
     this._open = false;
     this._overlay.style.display = 'none';
+    if (typeof window !== 'undefined') window.VT_LOCKED = this._previousLock;
+    if (this._previousFocus && typeof this._previousFocus.focus === 'function') this._previousFocus.focus();
+    this._previousFocus = null;
   }
 
   isOpen() { return this._open; }
 
   _onKey(e) {
-    if (this._open && e.key === 'Escape') {
+    if (!this._open) return;
+    if (e.key === 'Tab') {
+      const controls = Array.from(this._overlay.querySelectorAll('button, input, select, [tabindex]:not([tabindex="-1"])')).filter(el => !el.disabled && el.offsetParent !== null);
+      if (!controls.length) { e.preventDefault(); this._close.focus(); return; }
+      const first = controls[0], last = controls[controls.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      return;
+    }
+    if (e.key === 'Escape') {
       e.preventDefault();
       if (this._category) this._showMenu();
       else this.close();

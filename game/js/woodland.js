@@ -110,7 +110,7 @@ export class Woodland {
   // clear-tree, and fell. Targets are IDs; plant takes targetId as {x,z}.
   // Resource costs/rewards are applied atomically only when the action succeeds.
   interact(action, targetId, resources = {}) {
-    const fail = reason => ({ success: false, reason, events: [] });
+    const fail = (reason, requiredCosts = {}) => ({ success: false, reason, costs: { ...requiredCosts }, events: [] });
     const find = list => list.find(item => item.id === targetId);
     const charge = costs => Object.entries(costs).every(([k, n]) => (Number(resources[k]) || 0) >= n);
     const apply = (costs, rewards = {}) => {
@@ -121,7 +121,7 @@ export class Woodland {
     if (action === 'plant') {
       if (!targetId || !Number.isFinite(targetId.x) || !Number.isFinite(targetId.z)) return fail('invalid-location');
       costs = { sapling: 1 };
-      if (!charge(costs)) return fail('insufficient-resources');
+      if (!charge(costs)) return fail('insufficient-resources', costs);
       const sapling = { id: this._id(), x: targetId.x, z: targetId.z, age: 0, radius: 0.3 };
       this.saplings.push(sapling); apply(costs); event = { type: 'sapling-planted', id: sapling.id };
       return { success: true, costs, rewards, target: copy(sapling), events: [event] };
@@ -145,13 +145,13 @@ export class Woodland {
     } else if (action === 'clear-stump' || action === 'clear-tree' || action === 'fell') {
       if (action === 'clear-stump' && item.stage !== 'stump') return fail('not-a-stump');
       costs = action === 'clear-stump' ? { toolUse: 1 } : {};
-      if (!charge(costs)) return fail('insufficient-resources');
+       if (!charge(costs)) return fail('insufficient-resources', costs);
       rewards = action === 'fell' || action === 'clear-tree' ? { firewood: 2 } : {};
       this.trees.splice(this.trees.indexOf(item), 1);
       if (action !== 'clear-stump') this.trees.push({ id: this._id(), x: item.x, z: item.z, stage: 'stump', radius: 0.55 });
       this.wildlife = clamp(this.wildlife - this.config.wildlifeDeclinePerTree, 0, this.config.maxWildlife);
     } else return fail('unknown-action');
-    if (!charge(costs)) return fail('insufficient-resources');
+    if (!charge(costs)) return fail('insufficient-resources', costs);
     apply(costs, rewards);
     event = { type: action, id: item.id };
     return { success: true, costs, rewards, events: [event] };

@@ -39,6 +39,15 @@ import { TerrainActions } from './terrain-actions.js';
 import { moveCharacter as moveTerrainCharacter } from './terrain-physics.js';
 import { TOOL_ORDER, COMBINE_HEAD_ORDER, buildTool, buildCombineHead } from './equipment.js';
 import { login, restoreRememberedSession, rememberedEmail, hasRememberedEmail, forgetRememberedCredentials, startAutosave, tickSave, fetchFarmers, fetchFarmState, fetchSharedWorld, placeSharedRoad, sendGift, sendTerrainEdit, fetchTerrainState } from './net.js';
+import Tutorial from './tutorial.js';
+import { openSettings } from './settings-ui.js';
+import { getPreferences, setPreferences, applyPreferences } from './player-preferences.js';
+import { formatGameAction, formatGameReason } from './game-messages.js';
+import { normalizeFarmExperience, advancedSystemsEnabled } from './farm-experience.js';
+
+const tutorial = new Tutorial();
+applyPreferences(getPreferences());
+let farmExperience = 'full';
 
 // per-vehicle scale; wheel roll radius and tool width read from this table
 const VEHICLE_SCALES = { tractor: 0.5, combine: 0.5, truck: 0.5 };
@@ -235,6 +244,18 @@ let farmSystems = new FarmSystems({
   scene: scene, THREE: THREE, farmSlot: world.getAssignedSlot(),
   onEvent: handleFarmEvent
 });
+function setFarmExperience(modeName, persist = true) {
+  const next = normalizeFarmExperience(modeName);
+  const previous = farmExperience;
+  farmExperience = next;
+  farmSystems.setAdvancedSystemsEnabled(advancedSystemsEnabled(next));
+  if (input && typeof input.setAdvancedSystemsEnabled === 'function') input.setAdvancedSystemsEnabled(advancedSystemsEnabled(next));
+  if (next === 'simple' && buildMode) setBuildMode(false);
+  if (next === 'full' && previous === 'simple') showToast('Full Farm is on. Paused farm systems are resuming.');
+  lastSig = '';
+  updateHUD();
+  if (persist && session) tickSave(function () { return session; }, snapshot);
+}
 for (const machine of MACHINES) farmSystems.setVehicleCondition(machine);
 const inventory = new Inventory();
 inventory.install(document.body);
@@ -285,10 +306,11 @@ var shop = new Shop(scene, SHOP_X, SHOP_Z);
 // distance, so the shop is easy to find from any farm.
 const shopPointer = document.createElement('div');
 shopPointer.id = 'shop-pointer';
-shopPointer.style.cssText = 'position:fixed;left:50%;top:8px;transform:translateX(-50%);z-index:31;' +
+shopPointer.style.cssText = 'position:fixed;left:50%;top:calc(max(10px,env(safe-area-inset-top)) + 64px);transform:translateX(-50%);z-index:31;' +
   'display:none;align-items:center;gap:6px;padding:4px 12px;border:3px solid #2f4d1f;border-radius:999px;' +
   'background:rgba(255,251,232,.94);color:#233018;font:700 15px system-ui,-apple-system,sans-serif;' +
-  'pointer-events:none;box-shadow:0 2px 0 rgba(0,0,0,.2);white-space:nowrap;';
+  'pointer-events:none;box-sizing:border-box;max-width:calc(100vw - 16px);' +
+  'box-shadow:0 2px 0 rgba(0,0,0,.2);white-space:nowrap;';
 shopPointer.innerHTML = '<span>🏪 Shop</span><span id="shop-arrow" style="display:inline-block;font-size:20px;line-height:1">⬆</span><span id="shop-dist"></span>';
 document.body.appendChild(shopPointer);
 const shopArrow = shopPointer.querySelector('#shop-arrow');
@@ -743,6 +765,8 @@ function attachTool(idx) {
   toolGroup.rotation.set(0, 0, 0);
   currentTool = idx;
   toolSelections[vehicleType] = idx;
+  if (vehicleType === 'tractor' && type === 'plow') recordTutorialAction('attach-plow');
+  if (vehicleType === 'tractor' && type === 'planter') recordTutorialAction('equip-planter');
 }
 
 // ---------------------------------------------------------------- livery
@@ -825,16 +849,33 @@ hudStyle.textContent = `
   border-radius:8px; padding:8px 11px; color:#f5f5e8;
   box-shadow:3px 3px 0 rgba(0,0,0,.55); -webkit-user-select:none; user-select:none; }
 #hud-top-left { left:max(10px,env(safe-area-inset-left)); top:max(10px,env(safe-area-inset-top));
-  font-size:13px; line-height:1.35; min-width:150px; }
-#hud-top-left b { color:#ffe36b; font-size:19px; font-variant-numeric:tabular-nums; }
-#hud-top-left div:nth-child(2) { color:#b9e27e; font-weight:800; text-transform:uppercase; font-size:11px; letter-spacing:.06em; }
+   font-size:calc(13px * var(--player-text-scale,1)); line-height:1.35; min-width:150px; }
+#hud-top-left b { color:#ffe36b; font-size:calc(19px * var(--player-text-scale,1)); font-variant-numeric:tabular-nums; }
+#hud-top-left div:nth-child(2) { color:#b9e27e; font-weight:800; text-transform:uppercase; font-size:calc(11px * var(--player-text-scale,1)); letter-spacing:.06em; }
 #hud-top-right { right:max(10px,env(safe-area-inset-right)); top:max(10px,env(safe-area-inset-top));
   display:grid; grid-template-columns:repeat(2,minmax(74px,auto)); gap:3px 10px;
-  font-size:12px; line-height:1.35; text-align:left; max-width:48%; }
+   font-size:calc(12px * var(--player-text-scale,1)); line-height:1.35; text-align:left; max-width:48%; }
 #hud-top-right b { color:#ffe36b; font-variant-numeric:tabular-nums; }
+#hud-top-right details{grid-column:1/-1;margin-top:2px}#hud-top-right summary{min-height:34px;display:flex;align-items:center;cursor:pointer;color:#d9edb0;font-weight:800}
+#hud-top-right .hud-details{display:grid;grid-template-columns:repeat(2,minmax(74px,auto));gap:3px 10px}
 #hud #hud-hint { position:absolute; left:max(12px,env(safe-area-inset-left)); bottom:calc(16px + env(safe-area-inset-bottom));
   width:max-content; max-width:min(360px,calc(100vw - 24px));
-  font-size:11px; line-height:1.3; font-weight:700; text-align:left; color:#fffbe8; padding:6px 9px; }
+   font-size:calc(14px * var(--player-text-scale,1)); line-height:1.3; font-weight:700; text-align:left; color:#fffbe8; padding:8px 11px; }
+#hud #tutorial-card { position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(480px,calc(100vw - 32px));
+  max-height:calc(100vh - 32px);overflow:auto;z-index:70;pointer-events:auto;background:#19271df5;border:3px solid #ffe36b;
+  border-radius:16px;padding:22px;box-shadow:0 12px 45px #000b;font-size:calc(18px * var(--player-text-scale,1));line-height:1.45; }
+#tutorial-card h2{margin:0 0 8px;color:#ffe36b;font-size:1.35em}#tutorial-card p{margin:0 0 14px}
+#tutorial-card button,#onboarding-choice button{min-height:54px;padding:10px 16px;border:2px solid #d7ed9a;border-radius:9px;background:#b9e27e;color:#1b281f;font:800 17px system-ui;cursor:pointer}
+#tutorial-card .secondary,#onboarding-choice .secondary{background:#263a2a;color:#fffbe8}
+#tutorial-actions{display:flex;flex-wrap:wrap;gap:10px}#tutorial-progress{font-size:.85em;color:#d3e4bf;margin-bottom:10px}
+#onboarding-choice{position:fixed;inset:0;z-index:110;display:grid;place-items:center;padding:16px;box-sizing:border-box;background:#071009cc;pointer-events:auto}
+#onboarding-choice[hidden]{display:none}#onboarding-choice section{width:min(500px,100%);padding:24px;box-sizing:border-box;border:3px solid #a9ca72;border-radius:16px;background:#19271d;color:#fffbe8;box-shadow:0 12px 45px #000b;font-size:calc(18px * var(--player-text-scale,1));line-height:1.45}
+#onboarding-choice h2{margin:0 0 8px;color:#ffe36b}#onboarding-choice p{margin:0 0 18px}#onboarding-choice div{display:grid;gap:12px}
+#hud-toolbar{position:fixed;left:50%;top:max(10px,env(safe-area-inset-top));transform:translateX(-50%);z-index:36;display:flex;gap:8px;pointer-events:auto}
+#hud-toolbar button{min-height:48px;padding:8px 12px;border:2px solid #a9ca72;border-radius:9px;background:#19271de8;color:#fffbe8;font:800 14px system-ui;box-shadow:2px 2px 0 #0008;cursor:pointer}
+#hud-toolbar button:focus-visible,#tutorial-card button:focus-visible,#onboarding-choice button:focus-visible{outline:3px solid #fff;outline-offset:3px}
+html[data-high-contrast="true"] #hud .card,html[data-high-contrast="true"] #tutorial-card{background:#000;border-color:#fff;color:#fff}
+html[data-larger-controls="true"] #hud-toolbar button{min-height:58px;font-size:16px}
 body.vt-driving #hud #hud-hint { bottom:calc(clamp(126px,22vw,176px) + 40px + env(safe-area-inset-bottom)); }
 #build-reticle { display:none; position:absolute; left:50%; top:50%; width:18px; height:18px;
   transform:translate(-50%,-50%); filter:drop-shadow(1px 1px 1px #101710); }
@@ -844,9 +885,9 @@ body.vt-build-mode #build-reticle { display:block; }
 .sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px;
   border: 1px solid rgba(0,0,0,.35); vertical-align: -1px; margin-right: 4px; }
 .leg { white-space: nowrap; }
-@media(max-width:640px){#hud-top-left{min-width:0;max-width:43%;font-size:11px;padding:6px 8px}
-  #hud-top-left b{font-size:16px}#hud-top-right{max-width:48%;grid-template-columns:repeat(2,minmax(52px,auto));font-size:10px;padding:6px 8px}
-  #hud #hud-hint{max-width:min(280px,calc(100vw - 24px));font-size:10px;padding:5px 8px}
+@media(max-width:640px){#hud-top-left{min-width:0;max-width:43%;font-size:calc(12px * var(--player-text-scale,1));padding:6px 8px}
+  #hud-top-left b{font-size:calc(16px * var(--player-text-scale,1))}#hud-top-right{max-width:48%;grid-template-columns:repeat(2,minmax(52px,auto));font-size:calc(12px * var(--player-text-scale,1));padding:6px 8px}
+  #hud #hud-hint{max-width:min(280px,calc(100vw - 24px));font-size:calc(14px * var(--player-text-scale,1));padding:6px 8px}
   body.vt-driving #hud #hud-hint{bottom:calc(clamp(126px,25vw,150px) + 30px + env(safe-area-inset-bottom))}}
 @media(max-height:520px){#hud #hud-hint{max-width:min(320px,calc(42vw - 12px));bottom:calc(14px + env(safe-area-inset-bottom))}
   body.vt-driving #hud #hud-hint{bottom:calc(220px + env(safe-area-inset-bottom))}}
@@ -860,6 +901,8 @@ hud.innerHTML = `
   <div class="card" id="hud-top-right"></div>
   <div class="card" id="hud-hint"></div>
   <div class="card" id="hud-exploration" aria-live="polite"></div>
+  <div id="tutorial-card" role="region" aria-live="polite" aria-label="Farm guide" hidden></div>
+  <div id="hud-toolbar"><button id="help-toggle" type="button">Help</button><button id="settings-toggle" type="button">Settings</button></div>
   <button id="world-map-toggle" type="button" aria-expanded="false">🗺️ Map</button>
   <button id="garage-upgrade-toggle" type="button" aria-expanded="false" style="display:none">🔧 Garage</button>
   <section id="world-map-panel" role="dialog" aria-label="World map" aria-modal="true" hidden>
@@ -875,6 +918,79 @@ hud.innerHTML = `
   <div id="build-reticle" aria-hidden="true"></div>
 `;
 document.body.appendChild(hud);
+const onboardingChoice = document.createElement('div');
+onboardingChoice.id = 'onboarding-choice';
+onboardingChoice.hidden = true;
+onboardingChoice.innerHTML = '<section role="dialog" aria-modal="true" aria-labelledby="onboarding-title"><h2 id="onboarding-title">Welcome to your farm!</h2><p>Choose a start. Simple Farm pauses optional advanced systems; crops and weather keep going. Change this any time in Settings.</p><div><button type="button" id="onboarding-start">Show me around · Recommended</button><button type="button" class="secondary" id="onboarding-focused">Simple Farm · no guide</button><button type="button" class="secondary" id="onboarding-explore">Full Farm · all systems</button></div></section>';
+document.body.appendChild(onboardingChoice);
+const tutorialCard = document.getElementById('tutorial-card');
+let tutorialRenderSignature = '';
+let generalHelpOpen = false;
+let farmDetailsOpen = getPreferences().hudDetail === 'full';
+document.getElementById('settings-toggle').addEventListener('click', function () {
+  if (session && !shopUI.isOpen() && wagonPanel.isOpen() === false && !grainSaleUI.isOpen()) {
+    openSettings({
+      experienceMode: farmExperience,
+      onChange: function (value) { farmDetailsOpen = value.hudDetail === 'full'; lastSig = ''; updateHUD(); },
+      onExperienceModeChange: function (modeName) { setFarmExperience(modeName); }
+    });
+  }
+});
+function renderTutorialCard() {
+  const state = tutorial.getState();
+  const signature = JSON.stringify([state, generalHelpOpen]);
+  if (signature === tutorialRenderSignature) return;
+  tutorialRenderSignature = signature;
+  if (generalHelpOpen) {
+    tutorialCard.hidden = false;
+    tutorialCard.innerHTML = '<h2>Quick help</h2><p><b>Move:</b> left stick or WASD. Drag the screen to look around.</p><p><b>Use a vehicle:</b> stand next to it and tap Enter or press E.</p><p><b>Farm tasks:</b> walk near a task and tap Interact or press G. Trees need the Chop action.</p><p><b>Shop:</b> follow the arrow and tap Shop or press T.</p><button type="button" id="quick-help-close">Close help</button>';
+    document.getElementById('quick-help-close').addEventListener('click', function () { generalHelpOpen = false; renderTutorialCard(); document.getElementById('help-toggle').focus(); });
+    return;
+  }
+  const step = state.currentStep;
+  if (!step || state.paused) {
+    tutorialCard.hidden = true;
+    return;
+  }
+  tutorialCard.hidden = false;
+  tutorialCard.innerHTML = '<div id="tutorial-progress">Step ' + (state.stepIndex + 1) + ' of ' + state.totalSteps + '</div><h2>' + step.title + '</h2><p>' + step.text + '</p><p id="tutorial-action-status" role="status" aria-live="polite">' + (state.actionComplete ? 'Done. Continue when you are ready.' : 'Complete this action in the game to continue, or skip the step.') + '</p><div id="tutorial-actions"><button type="button" id="tutorial-next"' + (state.actionComplete ? '' : ' disabled') + '>Next step</button><button type="button" class="secondary" id="tutorial-skip">Skip step</button><button type="button" class="secondary" id="tutorial-pause">Pause guide</button><button type="button" class="secondary" id="tutorial-end">End guide</button></div>';
+  document.getElementById('tutorial-next').addEventListener('click', function () { tutorial.completeStep(); renderTutorialCard(); document.getElementById('tutorial-next')?.focus(); tickSave(function () { return session; }, snapshot); });
+  document.getElementById('tutorial-skip').addEventListener('click', function () { tutorial.skipStep(); renderTutorialCard(); document.getElementById('tutorial-next')?.focus(); tickSave(function () { return session; }, snapshot); });
+  document.getElementById('tutorial-pause').addEventListener('click', function () { tutorial.pause(); renderTutorialCard(); tickSave(function () { return session; }, snapshot); });
+  document.getElementById('tutorial-end').addEventListener('click', function () { tutorial.dismiss(); renderTutorialCard(); tickSave(function () { return session; }, snapshot); });
+}
+function recordTutorialAction(action) {
+  if (!session || !tutorial.recordAction(action)) return;
+  tutorialRenderSignature = '';
+  renderTutorialCard();
+  tickSave(function () { return session; }, snapshot);
+}
+document.getElementById('help-toggle').addEventListener('click', function () {
+  if (!session || shopUI.isOpen() || wagonPanel.isOpen() || grainSaleUI.isOpen()) return;
+  const state = tutorial.getState();
+  if (state.paused) tutorial.resume();
+  else if (!state.started && !state.dismissed && !state.completed) tutorial.start();
+  else if (state.started && !state.completed && !state.dismissed) tutorial.resume();
+  else generalHelpOpen = !generalHelpOpen;
+  renderTutorialCard();
+  tickSave(function () { return session; }, snapshot);
+});
+document.getElementById('onboarding-start').addEventListener('click', function () {
+  farmDetailsOpen = false; applyPreferences(setPreferences({ hudDetail: 'focused' }));
+  setFarmExperience('simple', false);
+  onboardingChoice.hidden = true; window.VT_LOCKED = false; tutorial.start(); renderTutorialCard(); lastSig = ''; updateHUD();
+  tickSave(function () { return session; }, snapshot);
+});
+document.getElementById('onboarding-focused').addEventListener('click', function () {
+  farmDetailsOpen = false; applyPreferences(setPreferences({ hudDetail: 'focused' }));
+  setFarmExperience('simple', false);
+  onboardingChoice.hidden = true; window.VT_LOCKED = false; lastSig = ''; updateHUD(); tickSave(function () { return session; }, snapshot);
+});
+document.getElementById('onboarding-explore').addEventListener('click', function () {
+  farmDetailsOpen = true; applyPreferences(setPreferences({ hudDetail: 'full' }));
+  setFarmExperience('full', false);
+  onboardingChoice.hidden = true; window.VT_LOCKED = false; lastSig = ''; updateHUD(); tickSave(function () { return session; }, snapshot);
+});
 const hudLeft = document.getElementById('hud-top-left');
 const hudRight = document.getElementById('hud-top-right');
 const hudHint = document.getElementById('hud-hint');
@@ -889,6 +1005,7 @@ const worldMapLocations = document.getElementById('world-map-locations');
 const worldMapStyle = document.createElement('style');
 worldMapStyle.textContent = '#world-map-toggle,#garage-upgrade-toggle{position:fixed;right:max(12px,env(safe-area-inset-right));top:50%;transform:translateY(-50%);pointer-events:auto;z-index:35;padding:9px 12px;border:2px solid #a9ca72;border-radius:8px;background:#19271dcc;color:#fffbe8;font:800 13px system-ui;box-shadow:2px 2px 0 #0008}#garage-upgrade-toggle{top:calc(50% + 54px)}#world-map-panel,#garage-upgrade-panel{position:fixed;z-index:100;inset:50% auto auto 50%;transform:translate(-50%,-50%);width:min(390px,calc(100vw - 28px));max-height:min(78vh,580px);overflow:auto;box-sizing:border-box;padding:16px;border:3px solid #a9ca72;border-radius:12px;background:#19271df5;color:#fffbe8;font:14px system-ui;box-shadow:0 12px 45px #000b;pointer-events:auto}#world-map-panel[hidden],#garage-upgrade-panel[hidden]{display:none}#world-map-panel header,#garage-upgrade-panel header{display:flex;justify-content:space-between;align-items:center;font-size:17px}#world-map-panel button,#garage-upgrade-panel button{border:1px solid #a9ca72;border-radius:7px;background:#344b35;color:#fffbe8;padding:8px 10px;font:700 13px system-ui}#world-map-panel #world-map-close,#garage-upgrade-panel #garage-upgrade-close{font-size:20px;padding:2px 10px}#world-map-panel p,#garage-upgrade-panel p{color:#d4dec4;margin:9px 0}#world-map-canvas{display:block;width:100%;height:auto;margin:0 0 9px;border:1px solid #869d6c;border-radius:7px;background:#9ab87e}#world-map-locations,#garage-upgrade-options{display:grid;gap:7px}#world-map-locations button{text-align:left}#world-map-locations button[aria-pressed="true"]{background:#718b3e;border-color:#ffe36b}#garage-upgrade-options button{text-align:left}#garage-upgrade-options button:disabled{opacity:.55}@media(max-width:640px){#world-map-toggle{top:auto;bottom:calc(220px + env(safe-area-inset-bottom));right:10px;font-size:12px;padding:7px 9px}#garage-upgrade-toggle{top:auto;bottom:calc(265px + env(safe-area-inset-bottom));right:10px;font-size:12px;padding:7px 9px}}';
 document.head.appendChild(worldMapStyle);
+worldMapStyle.textContent += '#world-map-toggle,#garage-upgrade-toggle,#world-map-panel button,#garage-upgrade-panel button{min-height:48px}#world-map-panel button:focus-visible,#garage-upgrade-panel button:focus-visible{outline:3px solid #ffe36b;outline-offset:2px}';
 worldMapLocations.innerHTML = '<button type="button" data-waypoint="">Clear waypoint</button>' + worldMap.locations.map(location =>
   '<button type="button" data-waypoint="' + location.id + '">' + (location.type === 'cache' ? '📦' : '📍') + ' ' + location.name + '</button>').join('');
 worldMapToggle.addEventListener('click', function () {
@@ -897,20 +1014,35 @@ worldMapToggle.addEventListener('click', function () {
   worldMapToggle.setAttribute('aria-expanded', 'true');
   window.VT_LOCKED = true;
   refreshWorldMapChoices();
+  document.getElementById('world-map-close').focus();
 });
 document.getElementById('world-map-close').addEventListener('click', function () {
   worldMapPanel.hidden = true;
   worldMapToggle.setAttribute('aria-expanded', 'false');
   window.VT_LOCKED = !(worldMapPanel.hidden && garageUpgradePanel.hidden);
+  worldMapToggle.focus();
 });
 document.addEventListener('keydown', function (event) {
-  if (event.key !== 'Escape' || (worldMapPanel.hidden && garageUpgradePanel.hidden)) return;
+  if (worldMapPanel.hidden && garageUpgradePanel.hidden) return;
+  if (event.key === 'Tab') {
+    const panel = worldMapPanel.hidden ? garageUpgradePanel : worldMapPanel;
+    const controls = Array.from(panel.querySelectorAll('button:not([disabled]),a[href],canvas[tabindex]'));
+    if (controls.length) {
+      const first = controls[0], last = controls[controls.length - 1];
+      if (!panel.contains(document.activeElement)) { event.preventDefault(); first.focus(); }
+      else if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    }
+    return;
+  }
+  if (event.key !== 'Escape') return;
+  const opener = garageUpgradePanel.hidden ? worldMapToggle : garageUpgradeToggle;
   worldMapPanel.hidden = true;
   garageUpgradePanel.hidden = true;
   worldMapToggle.setAttribute('aria-expanded', 'false');
   garageUpgradeToggle.setAttribute('aria-expanded', 'false');
   window.VT_LOCKED = false;
-  worldMapToggle.focus();
+  opener.focus();
 });
 worldMapLocations.addEventListener('click', function (event) {
   const button = event.target.closest('button[data-waypoint]');
@@ -948,11 +1080,13 @@ garageUpgradeToggle.addEventListener('click', function () {
   garageUpgradePanel.hidden = false;
   garageUpgradeToggle.setAttribute('aria-expanded', 'true');
   window.VT_LOCKED = true;
+  document.getElementById('garage-upgrade-close').focus();
 });
 document.getElementById('garage-upgrade-close').addEventListener('click', function () {
   garageUpgradePanel.hidden = true;
   garageUpgradeToggle.setAttribute('aria-expanded', 'false');
   window.VT_LOCKED = !(worldMapPanel.hidden && garageUpgradePanel.hidden);
+  garageUpgradeToggle.focus();
 });
 garageUpgradeOptions.addEventListener('click', function (event) {
   const button = event.target.closest('button[data-upgrade]');
@@ -1226,6 +1360,13 @@ function updateHUD() {
   const farmStatus = farmSystems.getStatus();
   updateAchievementProgress();
   const breakdowns = Object.keys(farmStatus.vehicles).filter(function (type) { return !!farmStatus.vehicles[type].breakdown; });
+  const attentionItems = [];
+  if (farmStatus.livestock.careNeeds.length) attentionItems.push('animal care ' + farmStatus.livestock.careNeeds.length);
+  if (farmStatus.livestock.escaped.length) attentionItems.push('escaped animals ' + farmStatus.livestock.escaped.length);
+  if (breakdowns.length) attentionItems.push('vehicle repairs ' + breakdowns.length);
+  if (farmStatus.water.bankHealth < 0.99) attentionItems.push('riverbank repair');
+  if (farmStatus.requests.length) attentionItems.push('farm requests ' + farmStatus.requests.length + (farmExperience === 'simple' ? ' paused' : ''));
+  const attentionText = attentionItems.length ? attentionItems.join(' · ') : 'nothing urgent';
   const types = attachmentTypes();
   const type = currentTool >= 0 ? types[currentTool] : null;
   const info = type ? TOOL_INFO[type] : null;
@@ -1236,7 +1377,8 @@ function updateHUD() {
     ? MACHINE_ICONS[vehicleType] + ' Driving ' + MACHINE_NAMES[vehicleType]
     : (buildMode ? '🧱 First-person Build' : '🚶 Walking');
   const nearName = near ? MACHINE_NAMES[near.type] : '';
-  garageUpgradeToggle.style.display = session && atGarage() ? '' : 'none';
+  const detailsOpen = farmDetailsOpen;
+  garageUpgradeToggle.style.display = session && farmExperience === 'full' && atGarage() ? '' : 'none';
   // rebuild only when something actually changed
   const sig = vehicleType + '|' + money + '|' + currentTool + '|' + currentColor + '|' +
     s.tilled + '|' + s.planted + '|' + s.sprayed + '|' + s.harvested + '|' + s.weeds + '|' + s.bugs + '|' + s.fertility + '|' +
@@ -1246,7 +1388,7 @@ function updateHUD() {
     farmStatus.livestock.careNeeds.length + '|' + farmStatus.requests.length + '|' +
     breakdowns.join(',') + '|' + achievements.unlocked.size + '|' +
     Math.round(farmStatus.water.riverLevel * 10) + '|' + Math.round(farmStatus.water.pollution * 10) + '|' +
-    mode + '|' + buildMode + '|' + farmSlot + '|' + label + '|' + nearName + '|' + outOfSupply + '|' + seasonBlocked + '|' +
+     mode + '|' + buildMode + '|' + farmExperience + '|' + attentionText + '|' + farmSlot + '|' + label + '|' + nearName + '|' + outOfSupply + '|' + seasonBlocked + '|' +
     wagon.hitched + '|' + wagonNearShown + '|' + (shopNearShown && (wagonAtShop() || truckAtShop()));
   if (sig === lastSig) return;
   lastSig = sig;
@@ -1268,6 +1410,11 @@ function updateHUD() {
   hudRight.innerHTML =
     '<div>📅 <b>Day ' + climateState.day + ' · ' + climateState.season + '</b></div>' +
     '<div>🌤️ <b>' + climateState.weather + '</b></div>' +
+    '<div>🌱 Crops <b>' + s.planted + '</b> · 🌾 Picked <b>' + s.harvested + '</b></div>' +
+    '<div>Farm needs: <b>' + escapeHTML(attentionText) + '</b></div>' +
+    (farmExperience === 'simple' ? '<div>⏸️ Simple Farm · advanced systems paused</div>' : '') +
+    '<details><summary>Farm details</summary><div class="hud-details">' +
+    (farmExperience === 'simple' ? '<div>Saved details below are paused. Change Farm experience in Settings to resume these systems.</div>' : '') +
     '<div>🔭 Tomorrow <b>' + climate.getForecast(1)[0].weather + '</b></div>' +
     '<div>🌳 Trees <b>' + farmStatus.woodland.trees.length + '</b></div>' +
     '<div>🐄 Animals <b>' + farmStatus.livestock.animals.length + '</b></div>' +
@@ -1277,7 +1424,6 @@ function updateHUD() {
     '<div>🔧 Repairs <b>' + breakdowns.length + '</b></div>' +
     '<div>🐟 Fish <b>' + Math.round(farmStatus.water.fishPopulation) + '</b></div>' +
     '<div>🟫 Soil <b>' + s.tilled + '</b></div>' +
-    '<div>🌱 Crops <b>' + s.planted + '</b></div>' +
     '<div>🪴 Soil fertility <b>' + s.fertility + '%</b></div>' +
     '<div>🫧 Treated <b>' + s.sprayed + '</b></div>' +
     (s.weeds || s.bugs ? '<div>🌿 Weeds <b>' + s.weeds + '</b> · 🪰 Bugs <b>' + s.bugs + '</b></div>' : '') +
@@ -1285,13 +1431,21 @@ function updateHUD() {
     (mode === 'driving' && vehicleType === 'combine' ?
       '<div>🛢️ Combine bin: <b>' + combineBinCount() + '/' + COMBINE_BIN_CAPACITY + '</b>' +
       '<div style="height:10px;margin:3px 0 6px;background:rgba(0,0,0,.28);border:1px solid rgba(255,255,255,.55);border-radius:5px;overflow:hidden">' +
-      '<div style="height:100%;width:' + Math.min(100, combineBinCount() * 100 / COMBINE_BIN_CAPACITY) + '%;background:#e5b83e"></div></div></div>' : '');
+      '<div style="height:100%;width:' + Math.min(100, combineBinCount() * 100 / COMBINE_BIN_CAPACITY) + '%;background:#e5b83e"></div></div></div>' : '') + '</div></details>';
+  const detailsElement = hudRight.querySelector('details');
+  if (detailsElement) {
+    detailsElement.open = detailsOpen;
+    detailsElement.addEventListener('toggle', function () {
+      farmDetailsOpen = detailsElement.open;
+      applyPreferences(setPreferences({ hudDetail: farmDetailsOpen ? 'full' : 'focused' }));
+    });
+  }
 
   let hint;
   if (mode === 'walking') {
     hint = buildMode
       ? 'BUILD MODE · Select wood or a pumpkin on your hotbar, aim, then tap to place. Tap Exit Build to leave.'
-      : 'Walk with the left stick. Tap Enter by a vehicle, Interact near farm tasks, or Shop to trade.';
+      : 'Move with the stick or WASD. Use Enter by a vehicle, Interact near a task, or Shop to trade.';
   } else if (vehicleType === 'truck') {
     hint = wagon.hitched
       ? '🛒 Wagon hitched — park by the shop to load purchases · tap Unhitch'
@@ -1339,6 +1493,7 @@ function updateHUD() {
     hint = 'Tap Interact · ' + farmPrompt.label + (farmPrompt.kind === 'crossing' ? ' (cross the river here)' : '');
   }
   hudHint.textContent = hint;
+  renderTutorialCard();
 }
 
 function updateShopPointer() {
@@ -1598,6 +1753,7 @@ function enterVehicle(target) {
   character.setVisible(false); // hidden while driving
   input.setWalkingMode(false);
   mode = 'driving';
+  if (vehicleType === 'tractor') recordTutorialAction('enter-tractor');
   input.setDrivingMode(true);
   lastSig = '';
 }
@@ -1746,6 +1902,8 @@ function stepFieldWork(dt) {
               needsSupply || effect === 'harvest' ? supplyLimit : undefined,
               effect === 'harvest' ? supplyLimit : undefined
             );
+            if (res.affected > 0 && effect === 'plow') recordTutorialAction('till-field');
+            if (res.affected > 0 && effect === 'plant') recordTutorialAction('plant-field');
             if (needsSupply && res.affected > 0) inventory.useFromSlot(supplySlot, res.affected);
             if (res.produce) {
               Object.keys(res.produce).forEach(function (id) {
@@ -1863,6 +2021,10 @@ function interactWithFarm() {
   if (mode !== 'walking' || buildMode || shopUI.isOpen()) return;
   const position = { x: character.group.position.x, z: character.group.position.z };
   if (shop.isNear(position.x, position.z)) {
+    if (farmExperience === 'simple') {
+      showToast('Farm requests are paused in Simple Farm. Switch to Full Farm in Settings to resume them.');
+      return;
+    }
     const delivery = farmSystems.completeDeliveries(requestDeliveryInventory());
     if (delivery.success) { applyRequestRewards(delivery); return; }
     const requests = farmSystems.getRequests();
@@ -1899,9 +2061,9 @@ function interactWithFarm() {
   if (result && result.success) {
     applyFarmResourceBag(before, bag);
     money += Number(result.rewards && result.rewards.money) || 0;
-    showToast(result.message || 'Farm task complete.');
+    showToast(result.message || (result.action ? formatGameAction(result.action) + ' complete.' : 'Farm task complete.'));
   } else {
-    showToast(result && result.message ? result.message : 'Nothing to interact with nearby.');
+    showToast(result && result.message ? result.message : result && result.reason ? formatGameReason(result.reason, result.action) : 'Nothing to interact with nearby.');
   }
   lastSig = '';
   updateHUD();
@@ -1917,7 +2079,7 @@ function drainActions() {
       sellWagonCrops();
     } else if (a === 'farmInteract') {
       interactWithFarm();
-    } else if (a === 'toggleBuildMode' && mode === 'walking') {
+    } else if (a === 'toggleBuildMode' && mode === 'walking' && farmExperience === 'full') {
       setBuildMode(!buildMode);
     } else if (a === 'jump') {
       tryJump();
@@ -1969,7 +2131,7 @@ function drainActions() {
 
 function setBuildMode(active) {
   if (harvestControls) harvestControls.cancel();
-  buildMode = !!active && mode === 'walking';
+  buildMode = !!active && mode === 'walking' && farmExperience === 'full';
   firstPersonArm.visible = buildMode;
   character.setVisible(!buildMode);
   document.body.classList.toggle('vt-build-mode', buildMode);
@@ -2159,6 +2321,8 @@ function snapshot() {
     worldMap: worldMap.serialize(),
     achievements: achievements.serialize(),
     vehicleUpgrades: vehicleUpgrades.serialize(),
+    tutorial: tutorial.exportProgress(),
+    experienceMode: farmExperience,
   };
 }
 
@@ -2166,6 +2330,10 @@ function snapshot() {
 // array of 4 Field serialisations, no `world` key, always driving).
 function applyState(s) {
   if (!s || typeof s !== 'object') return false;
+  farmExperience = normalizeFarmExperience(s.experienceMode);
+  farmSystems.setAdvancedSystemsEnabled(advancedSystemsEnabled(farmExperience));
+  input.setAdvancedSystemsEnabled(advancedSystemsEnabled(farmExperience));
+  if (s.tutorial) tutorial.restoreProgress(s.tutorial);
   giftBalanceAdjustment = Number.isSafeInteger(s.giftBalanceAdjustment) ? s.giftBalanceAdjustment : 0;
   if (s.exploration) exploration.restore(s.exploration);
   if (s.worldMap) worldMap.restore(s.worldMap);
@@ -2701,6 +2869,7 @@ function setupLogin() {
 
   function enterFarm(res) {
     session = { mode: res.mode, email: res.email };
+    tutorial.reset();
     worldMapToggle.style.display = '';
 
     // farm slot: the server's value wins, otherwise hash locally (offline)
@@ -2716,6 +2885,9 @@ function setupLogin() {
 
     farmSystems.dispose();
     farmSystems = new FarmSystems({ scene: scene, THREE: THREE, farmSlot: slot, onEvent: handleFarmEvent });
+    farmExperience = 'full';
+    farmSystems.setAdvancedSystemsEnabled(true);
+    input.setAdvancedSystemsEnabled(true);
     for (const machine of MACHINES) farmSystems.setVehicleCondition(machine);
 
     resetToSpawn();
@@ -2735,7 +2907,13 @@ function setupLogin() {
 
     codeIn.value = '';
     overlay.style.display = 'none';
-    window.VT_LOCKED = false;
+    onboardingChoice.hidden = !!res.state;
+    window.VT_LOCKED = !res.state;
+    if (!res.state) document.getElementById('onboarding-start').focus();
+    if (res.state && tutorial.getState().started && !tutorial.getState().dismissed && !tutorial.getState().completed) {
+      tutorial.resume();
+      renderTutorialCard();
+    }
     lastSig = '';
     updateHUD();
     startFarmerPolling();
@@ -2886,7 +3064,7 @@ renderer.setAnimationLoop(function () {
   const nearExpansion = mode === 'walking' && !buildMode && !shopUI.isOpen() && ownerFarm && ownerFarm.getFields().length <= 4 &&
     Math.hypot(character.group.position.x - expansionCenter.x, character.group.position.z - expansionCenter.z) <= 5;
   if (!farmPrompt && nearExpansion) farmPrompt = { kind: 'field-expansion', action: 'open extra field', label: 'open extra field' };
-  if (!farmPrompt && mode === 'walking' && shopNear) {
+  if (!farmPrompt && mode === 'walking' && shopNear && farmExperience === 'full') {
     farmPrompt = { kind: 'market', action: 'check requests', label: 'check farm requests' };
   }
   input.setInteractVisible(!!farmPrompt && mode === 'walking' && !shopUI.isOpen());

@@ -76,7 +76,7 @@ export class Livestock {
   }
   interact(action, animalId, resources = {}) {
     if (animalId && typeof animalId === 'object' && arguments.length < 3) { resources = animalId; animalId = undefined; }
-    const fail = reason => ({ success: false, reason, costs: {}, rewards: {}, events: [] });
+    const fail = (reason, requiredCosts = {}) => ({ success: false, reason, costs: copy(requiredCosts), rewards: {}, events: [] });
     const a = this.animals.find(x => x.id === animalId) || (Number.isInteger(animalId) ? this.animals[animalId] : null);
     let costs = {}, rewards = {}, mate = null;
     if (action === 'feed' || action === 'water' || action === 'herd') {
@@ -96,7 +96,7 @@ export class Livestock {
       if (this.fenceCondition >= 1) return fail('fence-intact'); costs = this.config.fenceRepairCost;
     } else return fail('unknown-action');
     costs = copy(costs); rewards = copy(rewards);
-    for (const [k, n] of Object.entries(costs)) if (num(resources[k]) < n) return fail('insufficient-resources');
+    for (const [k, n] of Object.entries(costs)) if (num(resources[k]) < n) return fail('insufficient-resources', costs);
     for (const [k, n] of Object.entries(costs)) resources[k] = num(resources[k]) - n;
     for (const [k, n] of Object.entries(rewards)) resources[k] = num(resources[k]) + n;
     if (action === 'feed') { a.feedToday = a.fed = true; a.welfare = clamp(a.welfare + this.config.feedWelfare, 0, 1); }
