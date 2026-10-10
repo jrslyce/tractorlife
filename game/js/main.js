@@ -27,6 +27,9 @@ import { Wagon, WagonPanel, CargoHold, TRUCK_BED_SLOTS } from './wagon.js';
 import { GRAIN_VALUES, quoteGrain, acceptGrainSale, transferBinToWagon } from './grain-commerce.js';
 import { GrainSaleUI } from './grain-sale-ui.js';
 import { Exploration } from './exploration.js';
+import { WorldMap } from './world-map.js';
+import { Achievements } from './achievements.js';
+import { VehicleUpgrades } from './vehicle-upgrades.js';
 import { expansionPlotOccupied, expansionPurchaseState } from './farm-expansion.js';
 import { PerformanceBudget } from './performance.js';
 import { steeringYawDelta } from './vehicle-physics.js';
@@ -237,6 +240,9 @@ const inventory = new Inventory();
 inventory.install(document.body);
 window.vtInventory = inventory;
 const exploration = new Exploration({ seed: 0x4d435f });
+const worldMap = new WorldMap(exploration.list());
+const achievements = new Achievements();
+const vehicleUpgrades = new VehicleUpgrades();
 
 function replaceFarmTerrain(slot, serialized, canonicalEdits, revision) {
   const restored = restoreAuthoritativeFarmTerrain(serialized, canonicalEdits, slot) || createFarmTerrain(slot);
@@ -854,6 +860,18 @@ hud.innerHTML = `
   <div class="card" id="hud-top-right"></div>
   <div class="card" id="hud-hint"></div>
   <div class="card" id="hud-exploration" aria-live="polite"></div>
+  <button id="world-map-toggle" type="button" aria-expanded="false">🗺️ Map</button>
+  <button id="garage-upgrade-toggle" type="button" aria-expanded="false" style="display:none">🔧 Garage</button>
+  <section id="world-map-panel" role="dialog" aria-label="World map" aria-modal="true" hidden>
+    <header><strong>🗺️ World map & waypoints</strong><button type="button" id="world-map-close" aria-label="Close map">×</button></header>
+    <p>Choose a destination to track it from anywhere.</p>
+    <canvas id="world-map-canvas" width="340" height="180" aria-label="Map of farms and discovered sites"></canvas>
+    <div id="world-map-locations"></div>
+  </section>
+  <section id="garage-upgrade-panel" role="dialog" aria-label="Vehicle upgrades" aria-modal="true" hidden>
+    <header><strong>🔧 Vehicle upgrades</strong><button type="button" id="garage-upgrade-close" aria-label="Close upgrades">×</button></header>
+    <p>Permanent upgrades for your current vehicle. Max level: 2.</p><div id="garage-upgrade-options"></div>
+  </section>
   <div id="build-reticle" aria-hidden="true"></div>
 `;
 document.body.appendChild(hud);
@@ -861,6 +879,133 @@ const hudLeft = document.getElementById('hud-top-left');
 const hudRight = document.getElementById('hud-top-right');
 const hudHint = document.getElementById('hud-hint');
 const hudExploration = document.getElementById('hud-exploration');
+const worldMapToggle = document.getElementById('world-map-toggle');
+worldMapToggle.style.display = 'none';
+const garageUpgradeToggle = document.getElementById('garage-upgrade-toggle');
+const garageUpgradePanel = document.getElementById('garage-upgrade-panel');
+const garageUpgradeOptions = document.getElementById('garage-upgrade-options');
+const worldMapPanel = document.getElementById('world-map-panel');
+const worldMapLocations = document.getElementById('world-map-locations');
+const worldMapStyle = document.createElement('style');
+worldMapStyle.textContent = '#world-map-toggle,#garage-upgrade-toggle{position:fixed;right:max(12px,env(safe-area-inset-right));top:50%;transform:translateY(-50%);pointer-events:auto;z-index:35;padding:9px 12px;border:2px solid #a9ca72;border-radius:8px;background:#19271dcc;color:#fffbe8;font:800 13px system-ui;box-shadow:2px 2px 0 #0008}#garage-upgrade-toggle{top:calc(50% + 54px)}#world-map-panel,#garage-upgrade-panel{position:fixed;z-index:100;inset:50% auto auto 50%;transform:translate(-50%,-50%);width:min(390px,calc(100vw - 28px));max-height:min(78vh,580px);overflow:auto;box-sizing:border-box;padding:16px;border:3px solid #a9ca72;border-radius:12px;background:#19271df5;color:#fffbe8;font:14px system-ui;box-shadow:0 12px 45px #000b;pointer-events:auto}#world-map-panel[hidden],#garage-upgrade-panel[hidden]{display:none}#world-map-panel header,#garage-upgrade-panel header{display:flex;justify-content:space-between;align-items:center;font-size:17px}#world-map-panel button,#garage-upgrade-panel button{border:1px solid #a9ca72;border-radius:7px;background:#344b35;color:#fffbe8;padding:8px 10px;font:700 13px system-ui}#world-map-panel #world-map-close,#garage-upgrade-panel #garage-upgrade-close{font-size:20px;padding:2px 10px}#world-map-panel p,#garage-upgrade-panel p{color:#d4dec4;margin:9px 0}#world-map-canvas{display:block;width:100%;height:auto;margin:0 0 9px;border:1px solid #869d6c;border-radius:7px;background:#9ab87e}#world-map-locations,#garage-upgrade-options{display:grid;gap:7px}#world-map-locations button{text-align:left}#world-map-locations button[aria-pressed="true"]{background:#718b3e;border-color:#ffe36b}#garage-upgrade-options button{text-align:left}#garage-upgrade-options button:disabled{opacity:.55}@media(max-width:640px){#world-map-toggle{top:auto;bottom:calc(220px + env(safe-area-inset-bottom));right:10px;font-size:12px;padding:7px 9px}#garage-upgrade-toggle{top:auto;bottom:calc(265px + env(safe-area-inset-bottom));right:10px;font-size:12px;padding:7px 9px}}';
+document.head.appendChild(worldMapStyle);
+worldMapLocations.innerHTML = '<button type="button" data-waypoint="">Clear waypoint</button>' + worldMap.locations.map(location =>
+  '<button type="button" data-waypoint="' + location.id + '">' + (location.type === 'cache' ? '📦' : '📍') + ' ' + location.name + '</button>').join('');
+worldMapToggle.addEventListener('click', function () {
+  worldMapPanel.hidden = false;
+  worldMapToggle.setAttribute('aria-expanded', 'true');
+  window.VT_LOCKED = true;
+  refreshWorldMapChoices();
+});
+document.getElementById('world-map-close').addEventListener('click', function () {
+  worldMapPanel.hidden = true;
+  worldMapToggle.setAttribute('aria-expanded', 'false');
+  window.VT_LOCKED = !(worldMapPanel.hidden && garageUpgradePanel.hidden);
+});
+document.addEventListener('keydown', function (event) {
+  if (event.key !== 'Escape' || (worldMapPanel.hidden && garageUpgradePanel.hidden)) return;
+  worldMapPanel.hidden = true;
+  garageUpgradePanel.hidden = true;
+  worldMapToggle.setAttribute('aria-expanded', 'false');
+  garageUpgradeToggle.setAttribute('aria-expanded', 'false');
+  window.VT_LOCKED = false;
+  worldMapToggle.focus();
+});
+worldMapLocations.addEventListener('click', function (event) {
+  const button = event.target.closest('button[data-waypoint]');
+  if (!button) return;
+  worldMap.setWaypoint(button.dataset.waypoint || null);
+  refreshWorldMapChoices();
+  lastSig = '';
+  updateHUD();
+});
+function refreshWorldMapChoices() {
+  const visibleLocations = exploration.list().filter(location => location.type !== 'cache' || location.discovered);
+  worldMapLocations.innerHTML = '<button type="button" data-waypoint="">Clear waypoint</button>' + visibleLocations.map(location =>
+    '<button type="button" data-waypoint="' + location.id + '">' + (location.type === 'cache' ? '📦' : '📍') + ' ' + location.name + '</button>').join('');
+  worldMapLocations.querySelectorAll('button[data-waypoint]').forEach(button =>
+    button.setAttribute('aria-pressed', String(button.dataset.waypoint === (worldMap.waypointId || ''))));
+  drawWorldMap();
+}
+function atGarage() {
+  return mode === 'walking' && shop.isNear(character.group.position.x, character.group.position.z);
+}
+function refreshGarageUpgrades() {
+  const options = ['engine', 'tires'].map(id => {
+    const quote = vehicleUpgrades.quote(vehicleType, id);
+    const maxed = quote.level >= quote.maxLevel;
+    const label = quote.name + ' · Level ' + quote.level + '/' + quote.maxLevel +
+      (maxed ? ' · MAX' : ' · $' + quote.cost);
+    return '<button type="button" data-upgrade="' + id + '" ' + (maxed || money < quote.cost ? 'disabled' : '') + '>' + label + '</button>';
+  }).join('');
+  garageUpgradeOptions.innerHTML = '<p>For your ' + MACHINE_NAMES[vehicleType] + ' · balance $' + money + '</p>' + options;
+}
+garageUpgradeToggle.addEventListener('click', function () {
+  if (!atGarage()) return;
+  refreshGarageUpgrades();
+  garageUpgradePanel.hidden = false;
+  garageUpgradeToggle.setAttribute('aria-expanded', 'true');
+  window.VT_LOCKED = true;
+});
+document.getElementById('garage-upgrade-close').addEventListener('click', function () {
+  garageUpgradePanel.hidden = true;
+  garageUpgradeToggle.setAttribute('aria-expanded', 'false');
+  window.VT_LOCKED = !(worldMapPanel.hidden && garageUpgradePanel.hidden);
+});
+garageUpgradeOptions.addEventListener('click', function (event) {
+  const button = event.target.closest('button[data-upgrade]');
+  if (!button || !atGarage()) return;
+  const result = vehicleUpgrades.buy(vehicleType, button.dataset.upgrade, money);
+  if (!result.ok) { showToast(result.reason === 'max-level' ? 'That upgrade is already maxed.' : 'Not enough money for that upgrade.'); return; }
+  money = result.money;
+  refreshGarageUpgrades();
+  lastSig = '';
+  tickSave(function () { return session; }, snapshot);
+  updateHUD();
+  showToast('🔧 ' + MACHINE_NAMES[result.vehicle] + ' upgrade installed — level ' + result.level + '.');
+});
+function drawWorldMap() {
+  const canvas = document.getElementById('world-map-canvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height, pad = 15;
+  const mapPoint = (x, z) => ({
+    x: pad + (x - WORLD_MIN_X) / Math.max(1, WORLD_MAX_X - WORLD_MIN_X) * (w - 2 * pad),
+    y: pad + (WORLD_MAX_Z - z) / (WORLD_MAX_Z - WORLD_MIN_Z) * (h - 2 * pad)
+  });
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = '#a8c88b'; ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = '#d2c08a'; ctx.fillRect(0, Math.round(h * 0.58), w, 12);
+  ctx.fillStyle = '#6fa9bd'; ctx.fillRect(0, Math.round(h * 0.79), w, 15);
+  ctx.fillStyle = '#71895a'; ctx.font = 'bold 10px system-ui';
+  ctx.fillText('FARMS', 7, 15); ctx.fillText('SHOP', Math.round(w * 0.5), Math.round(h * 0.56));
+  for (const location of worldMap.locations) {
+    if (location.type === 'cache' && !exploration.list().some(item => item.id === location.id && item.discovered)) continue;
+    const point = mapPoint(location.x, location.z);
+    ctx.beginPath(); ctx.arc(point.x, point.y, location.id === worldMap.waypointId ? 5 : 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = location.id === worldMap.waypointId ? '#ffe36b' : location.type === 'cache' ? '#a44b33' : '#345f36';
+    ctx.fill();
+  }
+  const position = mode === 'driving' ? vehicle.position : character.group.position;
+  const player = mapPoint(position.x, position.z);
+  ctx.beginPath(); ctx.arc(player.x, player.y, 5, 0, Math.PI * 2);
+  ctx.fillStyle = '#fff'; ctx.fill(); ctx.strokeStyle = '#19321e'; ctx.lineWidth = 2; ctx.stroke();
+}
+document.getElementById('world-map-canvas').addEventListener('click', function (event) {
+  const rect = event.currentTarget.getBoundingClientRect();
+  const canvas = event.currentTarget;
+  const x = (event.clientX - rect.left) * canvas.width / rect.width;
+  const y = (event.clientY - rect.top) * canvas.height / rect.height;
+  const mapX = WORLD_MIN_X + (x / canvas.width) * (WORLD_MAX_X - WORLD_MIN_X);
+  const mapZ = WORLD_MAX_Z - (y / canvas.height) * (WORLD_MAX_Z - WORLD_MIN_Z);
+  const discovered = new Set(exploration.list().filter(item => item.discovered).map(item => item.id));
+  const nearest = worldMap.locations.filter(location => location.type !== 'cache' || discovered.has(location.id))
+    .map(location => ({ location, distance: Math.hypot(location.x - mapX, location.z - mapZ) }))
+    .sort((a, b) => a.distance - b.distance)[0];
+  if (nearest && nearest.distance <= 50) {
+    worldMap.setWaypoint(nearest.location.id); refreshWorldMapChoices(); lastSig = ''; updateHUD();
+  }
+});
 hudExploration.style.display = 'none';
 const explorationStyle = document.createElement('style');
 explorationStyle.textContent = '#hud #hud-exploration{top:clamp(128px,20vh,160px);left:50%;transform:translateX(-50%);max-width:min(330px,calc(100vw - 24px));padding:6px 10px;font-size:11px;line-height:1.2;font-weight:800;text-align:center;color:#fffbe8}';
@@ -898,21 +1043,35 @@ function updateExploration(now) {
       showToast('🧭 Found ' + event.name + '! +' + event.reward.qty + ' ' + (rewardItem ? rewardItem.name : event.reward.itemId) + '.');
     } else showToast('🧭 Discovered ' + event.name + '!');
   }
+  updateAchievementProgress();
   if (now - lastExplorationHintAt < 600) return;
   lastExplorationHintAt = now;
   const next = exploration.list().filter(item => !item.discovered)
     .map(item => Object.assign({}, item, { distance: Math.hypot(position.x - item.x, position.z - item.z) }))
     .sort((a, b) => a.distance - b.distance)[0];
+  const waypoint = worldMap.route(position);
+  const target = waypoint || next;
   const facing = mode === 'driving' ? vehicle.rotation.y : character.group.rotation.y;
   const arrows = ['↑', '↗', '→', '↘', '↓', '↙', '←', '↖'];
   let arrow = '';
-  if (next) {
-    const bearing = Math.atan2(next.x - position.x, next.z - position.z) - facing;
+  if (target) {
+    const bearing = (waypoint ? waypoint.bearing : Math.atan2(target.x - position.x, target.z - position.z)) - facing;
     arrow = arrows[((Math.round(bearing / (Math.PI / 4)) % 8) + 8) % 8] + ' ';
   }
-  hudExploration.textContent = next
-    ? '🧭 ' + arrow + (next.type === 'cache' ? 'Search for a supply cache' : next.goal) + ' · ' + Math.round(next.distance) + 'm'
+  hudExploration.textContent = target
+    ? '🧭 ' + arrow + (waypoint ? 'Waypoint: ' + waypoint.name : (next.type === 'cache' ? 'Search for a supply cache' : next.goal)) + ' · ' + Math.round(target.distance) + 'm'
     : '🧭 Every landmark discovered!';
+}
+
+function updateAchievementProgress() {
+  if (!session) return [];
+  const stats = ownFarmStats();
+  const farmStatus = farmSystems.getStatus();
+  const earned = achievements.update({ harvested: stats.harvested,
+    discoveries: exploration.list().filter(item => item.discovered).length,
+    animals: farmStatus.livestock.animals.length, fertility: stats.fertility });
+  for (const achievement of earned) showToast('🏆 Achievement unlocked: ' + achievement.name + ' — ' + achievement.description);
+  return earned;
 }
 const FARM_RESOURCE_ITEMS = {
   wood: 'wood', stone: 'stone', metal: 'metal', feed: 'animal_feed', water: 'water_jug', fuel: 'fuel_can',
@@ -1046,6 +1205,7 @@ function updateHUD() {
   const s = ownFarmStats();
   climateState = climate.getState();
   const farmStatus = farmSystems.getStatus();
+  updateAchievementProgress();
   const breakdowns = Object.keys(farmStatus.vehicles).filter(function (type) { return !!farmStatus.vehicles[type].breakdown; });
   const types = attachmentTypes();
   const type = currentTool >= 0 ? types[currentTool] : null;
@@ -1057,14 +1217,15 @@ function updateHUD() {
     ? MACHINE_ICONS[vehicleType] + ' Driving ' + MACHINE_NAMES[vehicleType]
     : (buildMode ? '🧱 First-person Build' : '🚶 Walking');
   const nearName = near ? MACHINE_NAMES[near.type] : '';
+  garageUpgradeToggle.style.display = session && atGarage() ? '' : 'none';
   // rebuild only when something actually changed
   const sig = vehicleType + '|' + money + '|' + currentTool + '|' + currentColor + '|' +
-    s.tilled + '|' + s.planted + '|' + s.sprayed + '|' + s.harvested + '|' + s.weeds + '|' + s.bugs + '|' +
+    s.tilled + '|' + s.planted + '|' + s.sprayed + '|' + s.harvested + '|' + s.weeds + '|' + s.bugs + '|' + s.fertility + '|' +
     climateState.day + '|' + climateState.season + '|' + climateState.weather + '|' +
     (farmPrompt ? farmPrompt.action + ':' + farmPrompt.target : '') + '|' +
     farmStatus.livestock.day + '|' + farmStatus.livestock.escaped.length + '|' +
     farmStatus.livestock.careNeeds.length + '|' + farmStatus.requests.length + '|' +
-    breakdowns.join(',') + '|' +
+    breakdowns.join(',') + '|' + achievements.unlocked.size + '|' +
     Math.round(farmStatus.water.riverLevel * 10) + '|' + Math.round(farmStatus.water.pollution * 10) + '|' +
     mode + '|' + buildMode + '|' + farmSlot + '|' + label + '|' + nearName + '|' + outOfSupply + '|' + seasonBlocked + '|' +
     wagon.hitched + '|' + wagonNearShown + '|' + (shopNearShown && (wagonAtShop() || truckAtShop()));
@@ -1077,7 +1238,8 @@ function updateHUD() {
     '<div>' + label + '</div>' +
     '<div>' + MACHINE_LABELS[vehicleType] + '</div>' +
     '<div>' + (info ? info.emoji + ' ' + info.name : 'No attachment') + '</div>' +
-    '<div>🎨 ' + (COLOR_NAMES[currentColor] || currentColor) + '</div>';
+    '<div>🎨 ' + (COLOR_NAMES[currentColor] || currentColor) + '</div>' +
+    '<div>🏆 Achievements <b>' + achievements.unlocked.size + '/' + achievements.list().length + '</b></div>';
   if (near) {
     left += '<div style="margin-top:4px;font-weight:700;color:#1c3b12">Press E — hop in the ' +
       nearName + '</div>';
@@ -1234,7 +1396,8 @@ function stepPhysics(dt) {
   if (grainSaleUI.isOpen()) { speed = 0; return; }
   const drive = input.drive;
   // the truck is the fast road machine for hauling the wagon to the shop
-  const maxForward = vehicleType === 'combine' ? 5.5 : (vehicleType === 'truck' ? TRUCK_MAX_FWD : MAX_FWD);
+  const upgradeEffects = vehicleUpgrades.effects(vehicleType);
+  const maxForward = (vehicleType === 'combine' ? 5.5 : (vehicleType === 'truck' ? TRUCK_MAX_FWD : MAX_FWD)) * upgradeEffects.speedMultiplier;
   const maxReverse = vehicleType === 'combine' ? 2.5 : MAX_REV;
   const condition = farmSystems.getVehicleCondition(vehicleType);
   const conditionState = condition ? condition.getState() : null;
@@ -1247,7 +1410,7 @@ function stepPhysics(dt) {
   speed = Math.abs(diff) <= step ? target : speed + (diff > 0 ? step : -step);
 
   // steering only bites while rolling; reversing flips the turn direction
-  const steeringRate = vehicleType === 'combine' ? 0.95 : STEER_RATE;
+  const steeringRate = (vehicleType === 'combine' ? 0.95 : STEER_RATE) * upgradeEffects.steeringMultiplier;
   // A positive input.turn is right; with +X as vehicle forward, rightward yaw
   // is negative around Three.js' Y axis. Keep the same mapping for the truck.
   theta += steeringYawDelta(input.turn, steeringRate, speed, dt);
@@ -1971,6 +2134,9 @@ function snapshot() {
     farmSystems: farmSystems.serialize(),
     appliedGiftIds: appliedGiftIds.slice(-100),
     exploration: exploration.serialize(),
+    worldMap: worldMap.serialize(),
+    achievements: achievements.serialize(),
+    vehicleUpgrades: vehicleUpgrades.serialize(),
   };
 }
 
@@ -1979,6 +2145,10 @@ function snapshot() {
 function applyState(s) {
   if (!s || typeof s !== 'object') return false;
   if (s.exploration) exploration.restore(s.exploration);
+  if (s.worldMap) worldMap.restore(s.worldMap);
+  if (s.achievements) achievements.restore(s.achievements);
+  if (s.vehicleUpgrades) vehicleUpgrades.restore(s.vehicleUpgrades);
+  refreshWorldMapChoices();
   if (s.terrain || s.terrainEdits || Number.isSafeInteger(s.terrainRevision)) {
     replaceFarmTerrain(world.getAssignedSlot(), s.terrain, s.terrainEdits, s.terrainRevision);
   }
@@ -2508,6 +2678,7 @@ function setupLogin() {
 
   function enterFarm(res) {
     session = { mode: res.mode, email: res.email };
+    worldMapToggle.style.display = '';
 
     // farm slot: the server's value wins, otherwise hash locally (offline)
     if (res.email) world.setPlayerEmail(res.email);
