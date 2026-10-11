@@ -91,6 +91,31 @@ test('distinct names reserve all ten slots, reject the eleventh, and keep passwo
   assert.equal(JSON.stringify([...env.farmers]).includes('private-2'), false);
 });
 
+test('reserved account names cannot overwrite another farmer password record', async () => {
+  const env = environment();
+  const owner = { name: 'owner@example.com', password: 'owner-password' };
+  assert.equal((await worker.fetch(request('/api/login', owner), env)).status, 200);
+  const account = env.farmers.get('account:owner@example.com');
+  for (const name of ['account:owner@example.com', ' ACCOUNT:owner@example.com ']) {
+    assert.equal(normalizeFarmerName(name), '');
+    assert.equal((await worker.fetch(request('/api/login', { name, password: 'attacker-password' }), env)).status, 400);
+  }
+  assert.deepEqual(env.farmers.get('account:owner@example.com'), account);
+  assert.equal((await worker.fetch(request('/api/login', owner), env)).status, 200);
+});
+
+test('cookie restore preserves a legacy JSON-string slot before the farm is claimed', async () => {
+  const env = environment();
+  const response = await worker.fetch(request('/api/login', { name: 'Old Farmer', password: 'test-password' }), env);
+  const cookie = response.headers.get('set-cookie').split(';')[0];
+  // Model a still-valid session issued before per-farmer password accounts existed.
+  env.farmers.delete('account:old farmer');
+  env.farmers.set('old farmer', JSON.stringify({ farmSlot: 7, lastSeen: 1 }));
+  const restored = await worker.fetch(request('/api/login', { name: 'Old Farmer' }, cookie), env);
+  assert.equal(restored.status, 200);
+  assert.equal((await restored.json()).farmSlot, 7);
+});
+
 test('existing saved farms need the old passcode to claim their reserved slot', async () => {
   const env = environment();
   env.saves.set('old farmer', { money: 50 });

@@ -549,7 +549,8 @@ export class NameFarmerList {
       const email = normalizeEmail(url.searchParams.get("email"));
       if (!email) return json({ ok: false }, 400);
       const account = await this.ctx.storage.get(ACCOUNT_PREFIX + email);
-      const legacy = account ? null : await this.ctx.storage.get(email);
+      let legacy = account ? null : await this.ctx.storage.get(email);
+      if (typeof legacy === "string") { try { legacy = JSON.parse(legacy); } catch { legacy = null; } }
       return json({ ok: true, farmSlot: account ? account.farmSlot : legacy ? legacy.farmSlot : null });
     }
 
