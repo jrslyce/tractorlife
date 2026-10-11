@@ -48,9 +48,11 @@ and entering an old email creates a fresh farm rather than restoring progress.
 
 ## Explicit reset — October 11, 2026
 
-At the owner's request, migration `v5-name-farm-reset` permanently deletes the
-old `GameSaves` and `FarmerList` namespaces and creates empty `NameGameSaves`
-and `NameFarmerList` namespaces. This is a delete/create operation, **not** a
+At the owner's request, migration `v5-name-farm-reset` creates empty
+`NameGameSaves` and `NameFarmerList` namespaces, then migration
+`v6-delete-old-farms` permanently deletes the old `GameSaves` and `FarmerList`
+namespaces after their bindings have been replaced in production. This required
+two successive deployments. It is a delete/create operation, **not** a
 rename or data transfer. Earlier saved farms and registered farmer records
 are no longer retained. Shared roads/world data are unchanged.
 

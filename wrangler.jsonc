@@ -24,8 +24,11 @@
     { "tag": "v4", "new_sqlite_classes": ["RealtimeRoom"] },
     {
       "tag": "v5-name-farm-reset",
-      "deleted_classes": ["GameSaves", "FarmerList"],
       "new_sqlite_classes": ["NameGameSaves", "NameFarmerList"]
+    },
+    {
+      "tag": "v6-delete-old-farms",
+      "deleted_classes": ["GameSaves", "FarmerList"]
     }
   ],
   "previews": {
