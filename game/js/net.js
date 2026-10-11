@@ -153,9 +153,13 @@ export function login(name, password, remember) {
     })
     .then(function (res) {
       if (generation !== authGeneration) throw new Error('login-cancelled');
-      if (res.status === 401 || res.status === 403) throw new Error('wrong-password');
-      if (res.status >= 400 && res.status < 500) throw new Error('login-rejected');
-      if (!res.ok) throw new Error('server');
+      if (!res.ok) return res.json().catch(function () { return {}; }).then(function (data) {
+        if (res.status === 409 && data.error === 'farms full') throw new Error('farms-full');
+        if (res.status === 401 && data.error === 'existing farm needs its old password') throw new Error('legacy-password');
+        if (res.status === 401 || res.status === 403) throw new Error('wrong-password');
+        if (res.status < 500) throw new Error('login-rejected');
+        throw new Error('server-rejected');
+      });
       return res.json().catch(function () { throw new Error('login-rejected'); }).then(function (data) {
         if (generation !== authGeneration) throw new Error('login-cancelled');
         if (!data || data.ok !== true || normEmail(data.email || data.name) !== em) throw new Error('login-rejected');
@@ -177,7 +181,10 @@ export function login(name, password, remember) {
       if (generation !== authGeneration || (err && err.message === 'login-cancelled')) throw new Error('login-cancelled');
       // Definitive auth/validation failures must never turn into offline entry.
       if (err && err.message === 'wrong-password') throw new Error('That password didn’t work. Try again!');
+      if (err && err.message === 'legacy-password') throw new Error('This farm needs its original shared password to claim it.');
+      if (err && err.message === 'farms-full') throw new Error('All ten farms are taken. New accounts are closed for now.');
       if (err && err.message === 'login-rejected') throw new Error('Could not sign in. Check your farmer name and try again.');
+      if (err && err.message === 'server-rejected') throw new Error('The farm server is unavailable. Please try again shortly.');
       sessionEmail = em;
       if (remember) {
         try { localStorage.setItem(NAME_KEY, display); } catch (storageErr) { /* ignore */ }

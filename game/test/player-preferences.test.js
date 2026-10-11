@@ -30,7 +30,7 @@ test('apply exposes accessible visual state on document root', () => {
   const data = {}; const vars = {};
   const target = { dataset: data, style: { setProperty: (key, value) => vars[key] = value } };
   applyPreferences({ highContrast: true, largerControls: true, reducedMotion: true, textScale: 'large' }, target);
-  assert.deepEqual(data, { textScale: 'large', hudDetail: 'full', highContrast: 'true', largerControls: 'true', reducedMotion: 'true' });
+  assert.deepEqual(data, { textScale: 'large', hudDetail: 'full', highContrast: 'true', largerControls: 'true', reducedMotion: 'true', wordsOnButtons: 'true', steering: 'wheel' });
   assert.equal(vars['--player-text-scale'], '1.12');
 });
 
@@ -43,5 +43,15 @@ test('graphics quality is saved independently and old preferences remain compati
   globalThis.localStorage.setItem(PREFERENCES_STORAGE_KEY, JSON.stringify({ version: 1, preferences: { highContrast: true } }));
   assert.equal(getPreferences().graphicsQuality, 'auto');
   assert.equal(getPreferences().highContrast, true);
+  delete globalThis.localStorage;
+});
+
+test('steering and button words are saved as visual choices', () => {
+  globalThis.localStorage = memoryStorage();
+  assert.equal(setPreferences({ steering: 'joystick', wordsOnButtons: false }).steering, 'joystick');
+  assert.equal(getPreferences().wordsOnButtons, false);
+  assert.equal(setPreferences({ steering: 'invalid' }).steering, 'wheel');
+  resetPreferences();
+  assert.equal(getPreferences().wordsOnButtons, true);
   delete globalThis.localStorage;
 });

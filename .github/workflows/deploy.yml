@@ -23,6 +23,13 @@ jobs:
         if: env.CLOUDFLARE_API_TOKEN != ''
         run: npm run deploy
 
+      - name: Verify deployed game assets
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        run: |
+          for path in / /dist/boot.js /dist/version.js /game-ui.css; do
+            curl --fail --silent --show-error --retry 5 --retry-delay 2 "https://tractorlife.jaredsai96.workers.dev$path" -o /dev/null
+          done
+
       - name: Skipping notice
         if: env.CLOUDFLARE_API_TOKEN == ''
         run: |

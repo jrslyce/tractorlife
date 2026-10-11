@@ -251,6 +251,30 @@ function assignFarmSlot(email) {
   return Math.abs(hash) % 10;
 }
 
+const ACCOUNT_PREFIX = "account:";
+const PASSWORD_ITERATIONS = 120000;
+async function passwordDigest(password, salt) {
+  const key = await crypto.subtle.importKey("raw", encoder.encode(password), "PBKDF2", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt: base64UrlDecode(salt), iterations: PASSWORD_ITERATIONS }, key, 256);
+  return new Uint8Array(bits);
+}
+function equalBytes(a, b) {
+  if (!a || !b || a.length !== b.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < a.length; i++) mismatch |= a[i] ^ b[i];
+  return mismatch === 0;
+}
+function farmerRegistry(env) {
+  return env.FARMERS.get(env.FARMERS.idFromName("farmers"));
+}
+async function farmSlotFor(email, env) {
+  const response = await farmerRegistry(env).fetch("https://farmers/slot?email=" + encodeURIComponent(email));
+  if (!response.ok) throw new Error("farmer registry unavailable");
+  const data = await response.json();
+  return Number.isInteger(data.farmSlot) && data.farmSlot >= 0 && data.farmSlot < 10
+    ? data.farmSlot : assignFarmSlot(email); // old signed sessions retain their original slot
+}
+
 export class NameGameSaves {
   constructor(ctx, env) {
     this.ctx = ctx;
@@ -521,6 +545,55 @@ export class NameFarmerList {
   async fetch(request) {
     const url = new URL(request.url);
 
+    if (request.method === "GET" && url.pathname === "/slot") {
+      const email = normalizeEmail(url.searchParams.get("email"));
+      if (!email) return json({ ok: false }, 400);
+      const account = await this.ctx.storage.get(ACCOUNT_PREFIX + email);
+      const legacy = account ? null : await this.ctx.storage.get(email);
+      return json({ ok: true, farmSlot: account ? account.farmSlot : legacy ? legacy.farmSlot : null });
+    }
+
+    if (request.method === "POST" && url.pathname === "/authenticate") {
+      const body = await request.json();
+      const email = normalizeEmail(body.email);
+      if (!email || typeof body.password !== "string" || !body.password.trim() || body.password.length > 256) {
+        return json({ ok: false, error: "bad credentials" }, 400);
+      }
+      const existing = await this.ctx.storage.get(ACCOUNT_PREFIX + email);
+      if (existing) {
+        const actual = await passwordDigest(body.password.trim(), existing.salt);
+        if (!equalBytes(actual, base64UrlDecode(existing.hash))) return json({ ok: false, error: "wrong password" }, 401);
+        await this.ctx.storage.put(email, JSON.stringify({ lastSeen: Date.now(), farmSlot: existing.farmSlot }));
+        return json({ ok: true, farmSlot: existing.farmSlot });
+      }
+      // Derive outside the transaction; read and reserve the slot together.
+      const salt = base64UrlEncode(crypto.getRandomValues(new Uint8Array(16)));
+      const hash = base64UrlEncode(await passwordDigest(body.password.trim(), salt));
+      return this.ctx.storage.transaction(async storage => {
+        if (await storage.get(ACCOUNT_PREFIX + email)) return json({ ok: false, error: "wrong password" }, 401);
+        const legacyRaw = await storage.get(email);
+        let legacy = legacyRaw;
+        if (typeof legacy === "string") { try { legacy = JSON.parse(legacy); } catch { legacy = {}; } }
+        if ((legacy || body.savedFarm === true) && body.legacyAuthorized !== true) {
+          return json({ ok: false, error: "existing farm needs its old password" }, 401);
+        }
+        const entries = await storage.list();
+        const used = new Set();
+        for (const [key, raw] of entries) {
+          let value = raw;
+          if (typeof value === "string") { try { value = JSON.parse(value); } catch { continue; } }
+          if (key === email || key === ACCOUNT_PREFIX + email) continue;
+          if (value && Number.isInteger(value.farmSlot) && value.farmSlot >= 0 && value.farmSlot < 10) used.add(value.farmSlot);
+        }
+        const preferred = legacy || body.savedFarm === true ? (legacy && legacy.farmSlot) ?? assignFarmSlot(email) : -1;
+        const slot = preferred >= 0 ? preferred : Array.from({ length: 10 }, (_, index) => index).find(index => !used.has(index));
+        if (slot === undefined || used.has(slot)) return json({ ok: false, error: "farms full" }, 409);
+        await storage.put(ACCOUNT_PREFIX + email, { salt, hash, farmSlot: slot });
+        await storage.put(email, JSON.stringify({ lastSeen: Date.now(), farmSlot: slot }));
+        return json({ ok: true, farmSlot: slot });
+      });
+    }
+
     if (request.method === "GET" && url.pathname === "/list") {
       // ctx.storage.list() resolves to a Map<email, json-string>, not an
       // array — iterating `map.keys.length` would silently yield nothing.
@@ -528,6 +601,7 @@ export class NameFarmerList {
       var cutoff = Date.now() - FARMER_RECENT_MS;
       var farmers = [];
       entries.forEach(function (raw, email) {
+        if (email.startsWith(ACCOUNT_PREFIX)) return;
         var parsed = raw;
         try {
           if (typeof parsed === "string") parsed = JSON.parse(parsed);
@@ -659,7 +733,7 @@ export class RealtimeRoom {
     const client = pair[0];
     const server = pair[1];
     this.ctx.acceptWebSocket(server);
-    server.serializeAttachment({ email: email, generation: FARM_GENERATION });
+    server.serializeAttachment({ email: email, farmSlot: Number(url.searchParams.get("farmSlot")), generation: FARM_GENERATION });
     server.send(JSON.stringify({ type: "hello", email: email }));
     this._broadcast({ type: "join", email: email }, server);
     return new Response(null, { status: 101, webSocket: client });
@@ -704,7 +778,7 @@ export class RealtimeRoom {
           entry.x < WORLD_MIN_X || entry.x > WORLD_MAX_X || entry.z < -78 || entry.z > 80) return;
       // Roads go on public land; everything else only on the sender's farm.
       const slot = farmSlotAt(entry.x, entry.z);
-      if (roads.includes(entry.id) ? slot >= 0 : slot !== assignFarmSlot(attachment.email)) return;
+      if (roads.includes(entry.id) ? slot >= 0 : slot !== attachment.farmSlot) return;
        this._broadcast({ type: "build", email: attachment.email, entry: {
          id: entry.id, x: entry.x, y: entry.y || 0, z: entry.z,
          color: typeof entry.color === "string" && /^#[0-9a-fA-F]{6}$/.test(entry.color) ? entry.color : undefined
@@ -788,46 +862,45 @@ export default {
       }
 
       // /api/login
+      if (!await sessionKey(env)) return json({ ok: false, error: "authentication is not configured" }, 503);
       const password = Object.prototype.hasOwnProperty.call(body, "password") ? body.password : body.code;
       const hasCode = Object.prototype.hasOwnProperty.call(body, "password") || Object.prototype.hasOwnProperty.call(body, "code");
+      let farmSlot;
+      const id = env.SAVES.idFromName(email);
+      const stub = env.SAVES.get(id);
       if (hasCode) {
         if (typeof password !== "string" || !password.trim() || password.length > 256) {
           return json({ ok: false, error: "bad password" }, 400);
         }
-        if (typeof env.AUTH_CODE !== "string" || !env.AUTH_CODE.trim()) {
-          return json({ ok: false, error: "authentication is not configured" }, 503);
-        }
-        if (!await checkCode(password, env)) {
-          return json({ ok: false, error: "wrong password" }, 401);
-        }
+        const saved = await stub.fetch("https://saves/load");
+        const savedData = await saved.json();
+        const auth = await farmerRegistry(env).fetch("https://farmers/authenticate", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ email, password, savedFarm: savedData.state != null,
+            legacyAuthorized: await checkCode(password, env) }),
+        });
+        if (!auth.ok) return auth;
+        farmSlot = (await auth.json()).farmSlot;
       } else {
         const session = await readSession(request, env);
         if (!session || session.email !== email) {
           return json({ ok: false, error: "unauthorized" }, 401);
         }
+        farmSlot = await farmSlotFor(email, env);
       }
       const setCookie = await issueSession(email, body.remember === true, env);
       if (!setCookie) {
         return json({ ok: false, error: "authentication is not configured" }, 503);
       }
-      const id = env.SAVES.idFromName(email);
-      const stub = env.SAVES.get(id);
       const res = await stub.fetch("https://saves/load");
       const data = await res.json();
-      const farmSlot = assignFarmSlot(email);
       // Update farmer list. A DurableObjectNamespace has no .fetch() of its
       // own — you must resolve an instance first. The list is a singleton
       // keyed by a fixed name so every player reads the same record.
-      // A farmer-list failure must never fail the login itself.
-      try {
-        await env.FARMERS.get(env.FARMERS.idFromName("farmers")).fetch("https://farmers/update", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ email: email, farmSlot: farmSlot }),
-        });
-      } catch (err) {
-        console.log("farmer-list update failed: " + (err && err.message));
-      }
+      await farmerRegistry(env).fetch("https://farmers/update", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, farmSlot }),
+      });
       return json({ ok: true, name: formatFarmerName(suppliedName), email: email, farmSlot: farmSlot, state: data.state }, 200, { "set-cookie": setCookie });
     }
 
@@ -852,7 +925,7 @@ export default {
       let body;
       try { body = await readJsonBody(request); } catch (err) { return json({ ok: false, error: "bad request" }, 400); }
       if (!isPlainObject(body)) return json({ ok: false, error: "bad request" }, 400);
-      const payload = Object.assign({}, body, { farmSlot: assignFarmSlot(session.email) });
+       const payload = Object.assign({}, body, { farmSlot: await farmSlotFor(session.email, env) });
       const saves = env.SAVES.get(env.SAVES.idFromName(session.email));
       const response = await saves.fetch("https://saves/terrain-edit", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
       const data = await response.clone().json();
@@ -1028,7 +1101,7 @@ export default {
       const session = await readSession(request, env);
       if (!session) return json({ ok: false, error: "unauthorized" }, 401);
       const room = env.REALTIME.get(env.REALTIME.idFromName("map-room"));
-      const target = "https://realtime/connect?email=" + encodeURIComponent(session.email);
+      const target = "https://realtime/connect?email=" + encodeURIComponent(session.email) + "&farmSlot=" + await farmSlotFor(session.email, env);
       return room.fetch(new Request(target, request));
     }
 

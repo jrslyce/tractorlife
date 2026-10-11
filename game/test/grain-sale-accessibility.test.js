@@ -91,3 +91,14 @@ test('Tab and Shift+Tab cycle only through available dialog controls', () => {
   assert.equal(doc.activeElement, ui._cancel);
   ui.close();
 });
+
+test('successful sale confirms the amount without offering a second sale', () => {
+  const { ui } = setup();
+  ui.open(quote);
+  ui._collect();
+  assert.equal(ui._confirmation.textContent, 'Sold! +$6');
+  assert.equal(ui._accept.hidden, true);
+  assert.equal(ui._cancel.textContent, 'Keep playing');
+  assert.equal(ui.isOpen(), true);
+  ui.close();
+});

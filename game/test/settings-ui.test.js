@@ -12,6 +12,7 @@ class Element {
   remove() { this.removed = true; this.parentNode?.children.splice(this.parentNode.children.indexOf(this), 1); }
   querySelectorAll() { return this.children.filter(e => ['button', 'input', 'select'].includes(e.tag)); }
 }
+function descendants(node) { return (node.children || []).flatMap(child => [child, ...descendants(child)]); }
 
 test('settings dialog locks input, supports Escape, restores focus and lock state', () => {
   const body = new Element('body');
@@ -28,14 +29,14 @@ test('settings dialog locks input, supports Escape, restores focus and lock stat
   assert.ok(instance);
   assert.equal(doc.defaultView.VT_LOCKED, true);
   assert.equal(instance.element.getAttribute('role'), 'dialog');
-  const experience = instance.element.children.flatMap(child => child.children || []).find(child => child.tag === 'select' && child.getAttribute('aria-label') === 'Farm experience');
+  const experience = descendants(instance.element).find(child => child.tag === 'select' && child.getAttribute('aria-label') === 'Farm experience');
   assert.ok(experience);
   assert.equal(experience.value, 'simple');
   assert.equal(experience.getAttribute('aria-describedby'), 'farm-experience-help');
   experience.value = 'full';
   experience.listeners.change();
   assert.deepEqual(changedModes, ['full']);
-  const graphics = instance.element.children.flatMap(child => child.children || []).find(child => child.tag === 'select' && child.getAttribute('aria-label') === 'Graphics quality');
+  const graphics = descendants(instance.element).find(child => child.tag === 'select' && child.getAttribute('aria-label') === 'Graphics quality');
   assert.ok(graphics);
   assert.equal(graphics.getAttribute('aria-describedby'), 'graphics-settings-help');
   doc.listeners.keydown({ key: 'Escape', preventDefault() {} });
@@ -57,8 +58,8 @@ test('graphics reload is explicit and a failed save keeps the dialog usable', as
   };
   let calls = 0;
   const instance = openSettings({ document: doc, onGraphicsReload: async () => { calls++; throw new Error('save-failed'); } });
-  const graphics = instance.element.children.flatMap(child => child.children || []).find(child => child.tag === 'select' && child.getAttribute('aria-label') === 'Graphics quality');
-  const reload = instance.element.children.find(child => child.textContent === 'Save game & reload graphics');
+  const graphics = descendants(instance.element).find(child => child.tag === 'select' && child.getAttribute('aria-label') === 'Graphics quality');
+  const reload = descendants(instance.element).find(child => child.textContent === 'Save game & reload graphics');
   assert.equal(reload.hidden, true);
   graphics.value = 'balanced'; graphics.listeners.change();
   assert.equal(calls, 0);
@@ -66,6 +67,6 @@ test('graphics reload is explicit and a failed save keeps the dialog usable', as
   await reload.listeners.click();
   assert.equal(calls, 1);
   assert.equal(reload.disabled, false);
-  assert.ok(instance.element.children.some(child => child.textContent?.startsWith('Could not save.')));
+  assert.ok(descendants(instance.element).some(child => child.textContent?.startsWith('Could not save.')));
   instance.close();
 });

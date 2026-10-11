@@ -20,7 +20,7 @@ export var ITEMS = [
   { id: 'crop_spray', name: 'Crop Spray', emoji: '🧴', price: 20, pack: 200, category: 'Farm supplies', description: 'Optional: use on crops affected by weeds or bugs to clear them and protect crops for 45 seconds. Healthy crops do not need spray.' },
   { id: 'animal_feed', name: 'Animal Feed', emoji: '🌾', price: 12, pack: 10, category: 'Farm supplies', description: 'Feed livestock for ten daily care actions.' },
   { id: 'water_jug', name: 'Water Jug', emoji: '💧', price: 6, pack: 10, category: 'Farm supplies', description: 'Use water for orchards, animals, or irrigation. One purchase gives 10 uses.' },
-  { id: 'fuel_can', name: 'Fuel Can', emoji: '⛽', price: 18, pack: 5, category: 'Farm supplies', description: 'Refuel pumps or use to repair serious tractor engine trouble. One purchase gives 5 cans.' },
+  { id: 'fuel_can', name: 'Fuel Can', emoji: '⛽', price: 18, pack: 5, category: 'Farm supplies', description: 'Tap the fuel meter to refill a vehicle. Also fuels pumps or helps repair serious tractor engine trouble. Pack of 5.' },
   { id: 'spare_tire', name: 'Spare Tire', emoji: '🛞', price: 35, category: 'Farm supplies', description: 'Needed to replace a tractor tire after it gets a flat.' },
   { id: 'repair_kit', name: 'Repair Kit', emoji: '🧰', price: 28, category: 'Farm supplies', description: 'Use to fix tractor engine smoke or other mechanical failures.' },
   { id: 'cleanup_kit', name: 'River Cleanup Kit', emoji: '🧹', price: 10, category: 'Farm supplies', description: 'Clean pollution from the river and restore fish health.' },

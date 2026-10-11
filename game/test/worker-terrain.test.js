@@ -14,13 +14,13 @@ async function workerModule() {
     .replace('export class NameFarmerList', 'class FarmerList')
     .replace('export class SharedWorld', 'class SharedWorld')
     .replace('export class RealtimeRoom', 'class RealtimeRoom')
-    .replace('export default {', 'const worker = {') + '\nexport { GameSaves, worker };';
+    .replace('export default {', 'const worker = {') + '\nexport { GameSaves, FarmerList, worker };';
   return import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
 }
 
 function memoryStorage() {
   const values = new Map();
-  return { get: async k => values.get(k), put: async (k, v) => {
+  return { values, get: async k => values.get(k), put: async (k, v) => {
     if (typeof k === 'object') for (const [key, value] of Object.entries(k)) values.set(key, value);
     else values.set(k, v);
   }, transaction: async fn => fn(this) };
@@ -113,18 +113,21 @@ test('terrain operation ledger has a bounded lifetime', async () => {
 });
 
 test('authenticated Worker route derives the owner and broadcasts only a committed edit', async () => {
-  const { GameSaves, worker } = await workerModule();
+  const { GameSaves, worker, FarmerList } = await workerModule();
   const storage = memoryStorage(); storage.transaction = fn => fn(storage);
   await storage.put('state', JSON.stringify({ v: 3, inventory: { selectedSlot: 0, slots: [
     { itemId: 'dirt', qty: 2 }, null, null, null, null, null, null, null, null
   ] } }));
   const saveDO = new GameSaves({ storage }, {});
+  const farmerStorage = memoryStorage(); farmerStorage.transaction = fn => fn(farmerStorage);
+  farmerStorage.list = async () => new Map(farmerStorage.values);
+  const farmerDO = new FarmerList({ storage: farmerStorage }, {});
   const broadcasts = [];
   const asRequest = (request, init) => request instanceof Request ? request : new Request(request, init);
   const env = {
     AUTH_CODE: 'demo-code', SESSION_SECRET: 'terrain-test-secret-which-is-long-enough',
     SAVES: { idFromName: name => name, get: () => ({ fetch: (request, init) => saveDO.fetch(asRequest(request, init)) }) },
-    FARMERS: { idFromName: () => 'farmers', get: () => ({ fetch: async () => new Response(JSON.stringify({ ok: true, farmers: [] })) }) },
+    FARMERS: { idFromName: () => 'farmers', get: () => ({ fetch: (request, init) => farmerDO.fetch(asRequest(request, init)) }) },
     REALTIME: { idFromName: () => 'map-room', get: () => ({ fetch: async (request, init) => { broadcasts.push(await asRequest(request, init).json()); return new Response(JSON.stringify({ ok: true })); } }) },
   };
   const login = await worker.fetch(new Request('https://game.test/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'owner@example.com', code: 'demo-code', remember: true }) }), env);

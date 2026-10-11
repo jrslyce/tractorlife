@@ -30,6 +30,7 @@ import { Exploration } from './exploration.js';
 import { WorldMap } from './world-map.js';
 import { Achievements } from './achievements.js';
 import { VehicleUpgrades } from './vehicle-upgrades.js';
+import { VehicleFuel, FUEL_CAPACITY } from './vehicle-fuel.js';
 import { expansionPlotOccupied, expansionPurchaseState } from './farm-expansion.js';
 import { PerformanceBudget } from './performance.js';
 import { steeringYawDelta } from './vehicle-physics.js';
@@ -274,6 +275,7 @@ const exploration = new Exploration({ seed: 0x4d435f });
 const worldMap = new WorldMap(exploration.list());
 const achievements = new Achievements();
 const vehicleUpgrades = new VehicleUpgrades();
+const vehicleFuel = new VehicleFuel();
 
 function replaceFarmTerrain(slot, serialized, canonicalEdits, revision) {
   const restored = restoreAuthoritativeFarmTerrain(serialized, canonicalEdits, slot) || createFarmTerrain(slot);
@@ -849,6 +851,21 @@ const COLOR_NAMES = {
 const MACHINE_NAMES = { tractor: 'Tractor', combine: 'Combine', truck: 'Truck' };
 const MACHINE_ICONS = { tractor: '🚜', combine: '🌾', truck: '🚚' };
 const MACHINE_LABELS = { tractor: '🚜 Tractor', combine: '🌾 Combine', truck: '🚚 Truck' };
+const organicIconPaths = {
+  menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
+  map: '<path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3zM9 3v15M15 6v15"/>',
+  build: '<path d="m6 13 7-7 5 5-7 7-5 2zM14 5l5 5M3 21l4-4"/>',
+  farm: '<path d="M12 21v-9m0 4c-4 0-7-2-7-7 4 0 7 2 7 7Zm0-5c0-5 3-8 7-8 0 5-3 8-7 8Z"/>',
+  color: '<circle cx="12" cy="12" r="9"/><circle cx="8" cy="9" r="1"/><circle cx="14" cy="7" r="1"/><circle cx="17" cy="12" r="1"/><path d="M12 21c-2-1-2-4 0-5 1-1 3 0 3 1"/>',
+  awards: '<path d="M8 21h8M12 17v4M7 3h10v8a5 5 0 0 1-10 0V3ZM7 5H4v3a3 3 0 0 0 3 3m10-6h3v3a3 3 0 0 1-3 3"/>',
+  help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 2-2.5 2.5-2.5 4.5M12 17h.01"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M10 2h4l.6 2.2 1.5.8 2.1-.7 2 3.4-1.6 1.5v1.6l1.6 1.5-2 3.4-2.1-.7-1.5.8L14 22h-4l-.6-2.2-1.5-.8-2.1.7-2-3.4 1.6-1.5v-1.6l-1.6-1.5 2-3.4 2.1.7 1.5-.8z"/>',
+  shop: '<path d="M3 10h18l-2-6H5l-2 6ZM5 10v10h14V10M9 20v-6h6v6"/>',
+  garage: '<path d="M4 21V8l8-5 8 5v13H4ZM8 21v-8h8v8M3 10h18"/>',
+};
+function organicIcon(name) {
+  return '<svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + organicIconPaths[name] + '</svg>';
+}
 
 const hudStyle = document.createElement('style');
 hudStyle.textContent = `
@@ -908,26 +925,60 @@ const hud = document.createElement('div');
 hud.id = 'hud';
 hud.innerHTML = `
   <div class="card" id="hud-top-left"></div>
+  <button id="hud-fuel" type="button" title="Use a Fuel Can to refuel" hidden><span aria-hidden="true">⛽</span><span class="fuel-track"><span id="fuel-fill"></span></span></button>
+  <div id="hud-selected-item" hidden></div>
+  <div id="hud-harvesting" role="status" aria-live="polite" hidden></div>
   <div class="card" id="hud-top-right"></div>
   <div class="card" id="hud-hint"></div>
   <div class="card" id="hud-exploration" aria-live="polite"></div>
   <div id="tutorial-card" role="region" aria-live="polite" aria-label="Farm guide" hidden></div>
-  <div id="hud-toolbar"><button id="help-toggle" type="button">Help</button><button id="settings-toggle" type="button">Settings</button></div>
-  <button id="world-map-toggle" type="button" aria-expanded="false">🗺️ Map</button>
-  <button id="garage-upgrade-toggle" type="button" aria-expanded="false" style="display:none">🔧 Garage</button>
+  <div id="hud-toolbar"><button id="menu-toggle" type="button" aria-label="Open menu" aria-expanded="false"><span aria-hidden="true">${organicIcon('menu')}</span><small>Menu</small></button><button id="help-toggle" type="button">Help</button><button id="settings-toggle" type="button">Settings</button></div>
+  <button id="farm-day-toggle" type="button" aria-label="Open farm report">Day 1</button>
+  <div id="farm-ui-scrim" hidden></div>
+  <section id="farm-menu" class="organic-panel" role="dialog" aria-modal="true" aria-labelledby="farm-menu-title" hidden>
+    <header><h2 id="farm-menu-title">Menu</h2><button type="button" class="panel-close" data-menu-close aria-label="Close menu">×</button></header>
+    <div class="farm-menu-grid">
+      <button type="button" data-menu-action="map"><span>${organicIcon('map')}</span>Map</button>
+      <button type="button" data-menu-action="build"><span>${organicIcon('build')}</span>Build</button>
+      <button type="button" data-menu-action="farm"><span>${organicIcon('farm')}</span>Farm</button>
+      <button type="button" data-menu-action="color"><span>${organicIcon('color')}</span>Color</button>
+      <button type="button" data-menu-action="awards"><span>${organicIcon('awards')}</span>Awards <small id="menu-awards-count"></small></button>
+      <button type="button" data-menu-action="help"><span>${organicIcon('help')}</span>Help</button>
+      <button type="button" data-menu-action="settings"><span>${organicIcon('settings')}</span>Settings</button>
+    </div><button type="button" class="organic-primary" data-menu-close>Keep playing</button>
+  </section>
+  <section id="farm-report" class="organic-panel" role="dialog" aria-modal="true" aria-labelledby="farm-report-title" hidden>
+    <header><button type="button" id="farm-report-back" aria-label="Back to menu">←</button><h2 id="farm-report-title">Your farm</h2><button type="button" class="panel-close" data-menu-close aria-label="Close farm report">×</button></header>
+    <div id="farm-report-content"></div>
+  </section>
+  <section id="awards-panel" class="organic-panel" role="dialog" aria-modal="true" aria-labelledby="awards-title" hidden>
+    <header><h2 id="awards-title">Awards</h2><button type="button" class="panel-close" data-menu-close aria-label="Close awards">×</button></header><div id="awards-content"></div>
+  </section>
+  <button id="world-map-toggle" type="button" aria-label="Open map" aria-expanded="false">${organicIcon('map')}<small>Map</small></button>
+  <button id="driving-shop-toggle" type="button" aria-label="Open shop">${organicIcon('shop')}<small>Shop</small></button>
+  <button id="driving-settings-toggle" type="button" aria-label="Open settings">${organicIcon('settings')}<small>Settings</small></button>
+  <button id="garage-upgrade-toggle" type="button" aria-label="Open garage" aria-expanded="false" style="display:none">${organicIcon('garage')}<small>Garage</small></button>
   <section id="world-map-panel" role="dialog" aria-label="World map" aria-modal="true" hidden>
-    <header><strong>🗺️ World map & waypoints</strong><button type="button" id="world-map-close" aria-label="Close map">×</button></header>
-    <p>Choose a destination to track it from anywhere.</p>
+     <header><strong>🗺️ Map</strong><button type="button" id="world-map-close" aria-label="Close map">×</button></header>
+     <p>Tap a place to find your way.</p>
     <canvas id="world-map-canvas" width="340" height="180" aria-label="Map of farms and discovered sites"></canvas>
     <div id="world-map-locations"></div>
   </section>
   <section id="garage-upgrade-panel" role="dialog" aria-label="Vehicle upgrades" aria-modal="true" hidden>
     <header><strong>🔧 Vehicle upgrades</strong><button type="button" id="garage-upgrade-close" aria-label="Close upgrades">×</button></header>
-    <p>Permanent upgrades for your current vehicle. Max level: 2.</p><div id="garage-upgrade-options"></div>
+    <nav id="garage-vehicle-tabs" aria-label="Choose a vehicle"><button type="button" data-vehicle="tractor">🚜 Tractor</button><button type="button" data-vehicle="combine">🌾 Combine</button><button type="button" data-vehicle="truck">🚚 Truck</button></nav><div id="garage-upgrade-options"></div>
   </section>
   <div id="build-reticle" aria-hidden="true"></div>
 `;
 document.body.appendChild(hud);
+// Dialogs must escape the HUD stacking context so touch controls cannot sit above them.
+for (const id of ['farm-ui-scrim', 'farm-menu', 'farm-report', 'awards-panel', 'world-map-panel', 'garage-upgrade-panel']) {
+  document.body.appendChild(document.getElementById(id));
+}
+const mapGarageScrim = document.createElement('div');
+mapGarageScrim.id = 'map-garage-scrim';
+mapGarageScrim.hidden = true;
+document.body.appendChild(mapGarageScrim);
 const onboardingChoice = document.createElement('div');
 onboardingChoice.id = 'onboarding-choice';
 onboardingChoice.hidden = true;
@@ -968,7 +1019,7 @@ function renderTutorialCard() {
     return;
   }
   tutorialCard.hidden = false;
-  tutorialCard.innerHTML = '<div id="tutorial-progress">Step ' + (state.stepIndex + 1) + ' of ' + state.totalSteps + '</div><h2>' + step.title + '</h2><p>' + step.text + '</p><p id="tutorial-action-status" role="status" aria-live="polite">' + (state.actionComplete ? 'Done. Continue when you are ready.' : 'Complete this action in the game to continue, or skip the step.') + '</p><div id="tutorial-actions"><button type="button" id="tutorial-next"' + (state.actionComplete ? '' : ' disabled') + '>Next step</button><button type="button" class="secondary" id="tutorial-skip">Skip step</button><button type="button" class="secondary" id="tutorial-pause">Pause guide</button><button type="button" class="secondary" id="tutorial-end">End guide</button></div>';
+  tutorialCard.innerHTML = '<div id="tutorial-progress" aria-label="Step ' + (state.stepIndex + 1) + ' of ' + state.totalSteps + '">' + Array.from({ length: state.totalSteps }, (_, i) => '<span class="' + (i === state.stepIndex ? 'current' : '') + '"></span>').join('') + '</div><div class="tutorial-icon" aria-hidden="true">' + ['🚜', '⚒', '▤', '🌱', '🌾'][state.stepIndex] + '</div><h2>' + step.title + '</h2><p>' + step.text + '</p><p id="tutorial-action-status" role="status" aria-live="polite">' + (state.actionComplete ? 'Done! Ready for the next step.' : 'Try it in the game, or skip for now.') + '</p><div id="tutorial-actions"><button type="button" class="secondary" id="tutorial-skip">Skip</button><button type="button" id="tutorial-next"' + (state.actionComplete ? '' : ' disabled') + '>' + (state.stepIndex === state.totalSteps - 1 ? 'Let’s farm!' : 'Got it') + '</button><button type="button" class="secondary" id="tutorial-pause">Pause guide</button><button type="button" class="secondary" id="tutorial-end">End guide</button></div>';
   document.getElementById('tutorial-next').addEventListener('click', function () { tutorial.completeStep(); renderTutorialCard(); document.getElementById('tutorial-next')?.focus(); tickSave(function () { return session; }, snapshot); });
   document.getElementById('tutorial-skip').addEventListener('click', function () { tutorial.skipStep(); renderTutorialCard(); document.getElementById('tutorial-next')?.focus(); tickSave(function () { return session; }, snapshot); });
   document.getElementById('tutorial-pause').addEventListener('click', function () { tutorial.pause(); renderTutorialCard(); tickSave(function () { return session; }, snapshot); });
@@ -984,7 +1035,13 @@ document.getElementById('help-toggle').addEventListener('click', function () {
   if (!session || shopUI.isOpen() || wagonPanel.isOpen() || grainSaleUI.isOpen()) return;
   const state = tutorial.getState();
   if (state.paused) tutorial.resume();
-  else if (!state.started && !state.dismissed && !state.completed) tutorial.start();
+  else if (!state.started && !state.dismissed && !state.completed) {
+    tutorial.start();
+    if (mode === 'driving') {
+      tutorial.recordAction('enter-tractor');
+      tutorial.completeStep();
+    }
+  }
   else if (state.started && !state.completed && !state.dismissed) tutorial.resume();
   else generalHelpOpen = !generalHelpOpen;
   renderTutorialCard();
@@ -1007,10 +1064,81 @@ document.getElementById('onboarding-explore').addEventListener('click', function
   onboardingChoice.hidden = true; window.VT_LOCKED = false; lastSig = ''; updateHUD(); tickSave(function () { return session; }, snapshot);
 });
 const hudLeft = document.getElementById('hud-top-left');
+const fuelButton = document.getElementById('hud-fuel');
+let fuelEmptyNotified = false;
+fuelButton.addEventListener('click', () => {
+  if (!session || mode !== 'driving') return;
+  if (vehicleFuel.level(vehicleType) >= FUEL_CAPACITY) { showToast('The tank is full.'); return; }
+  if (inventory.getCount('fuel_can') < 1) { showToast('Get a Fuel Can at the shop to fill this tank.'); return; }
+  if (inventory.consumeItem('fuel_can', 1) !== 1) return;
+  vehicleFuel.refill(vehicleType);
+  fuelEmptyNotified = false;
+  lastSig = '';
+  updateHUD();
+  tickSave(() => session, snapshot);
+  showToast('⛽ Filled up the ' + MACHINE_NAMES[vehicleType] + '!');
+});
 const hudRight = document.getElementById('hud-top-right');
 const hudHint = document.getElementById('hud-hint');
 const hudExploration = document.getElementById('hud-exploration');
+const farmScrim = document.getElementById('farm-ui-scrim');
+const menuPanel = document.getElementById('farm-menu');
+const reportPanel = document.getElementById('farm-report');
+const awardsPanel = document.getElementById('awards-panel');
+let farmPanelReturnFocus = null;
+function closeFarmPanels() {
+  if (farmScrim.hidden) return;
+  farmScrim.hidden = menuPanel.hidden = reportPanel.hidden = awardsPanel.hidden = true;
+  document.getElementById('menu-toggle').setAttribute('aria-expanded', 'false');
+  window.VT_LOCKED = false;
+  farmPanelReturnFocus?.focus();
+}
+function openFarmPanel(panel) {
+  if (farmScrim.hidden) farmPanelReturnFocus = document.activeElement;
+  farmScrim.hidden = false;
+  menuPanel.hidden = panel !== menuPanel;
+  reportPanel.hidden = panel !== reportPanel;
+  awardsPanel.hidden = panel !== awardsPanel;
+  window.VT_LOCKED = true;
+  document.getElementById('menu-toggle').setAttribute('aria-expanded', String(panel === menuPanel));
+  panel.querySelector('button')?.focus();
+}
+document.getElementById('menu-toggle').addEventListener('click', () => {
+  document.getElementById('menu-toggle').classList.remove('has-message');
+  openFarmPanel(menuPanel);
+});
+document.getElementById('farm-day-toggle').addEventListener('click', () => openFarmPanel(reportPanel));
+document.getElementById('farm-report-back').addEventListener('click', () => openFarmPanel(menuPanel));
+farmScrim.addEventListener('click', closeFarmPanels);
+document.querySelectorAll('[data-menu-close]').forEach(button => button.addEventListener('click', closeFarmPanels));
+menuPanel.addEventListener('click', event => {
+  const action = event.target.closest('[data-menu-action]')?.dataset.menuAction;
+  if (!action) return;
+  if (action === 'farm') { openFarmPanel(reportPanel); return; }
+  if (action === 'awards') { openFarmPanel(awardsPanel); return; }
+  closeFarmPanels();
+  if (action === 'map') worldMapToggle.click();
+  else if (action === 'settings') document.getElementById('settings-toggle').click();
+  else if (action === 'help') document.getElementById('help-toggle').click();
+  else if (action === 'build' || action === 'color') input.queueAction(action === 'build' ? 'toggleBuildMode' : 'cycleColor');
+});
+document.addEventListener('keydown', event => {
+  if (farmScrim.hidden) return;
+  if (event.key === 'Escape') { event.preventDefault(); closeFarmPanels(); return; }
+  if (event.key !== 'Tab') return;
+  const panel = [menuPanel, reportPanel, awardsPanel].find(item => !item.hidden);
+  const buttons = [...panel.querySelectorAll('button:not(:disabled)')];
+  if (event.shiftKey && document.activeElement === buttons[0]) { event.preventDefault(); buttons.at(-1).focus(); }
+  else if (!event.shiftKey && document.activeElement === buttons.at(-1)) { event.preventDefault(); buttons[0].focus(); }
+});
 const worldMapToggle = document.getElementById('world-map-toggle');
+document.getElementById('driving-shop-toggle').addEventListener('click', () => {
+  if (!session) return;
+  const position = mode === 'driving' ? vehicle.position : character.group.position;
+  if (shop.isNear(position.x, position.z)) shopUI.open();
+  else showToast('Drive to the shop to trade. Follow the compass!');
+});
+document.getElementById('driving-settings-toggle').addEventListener('click', () => document.getElementById('settings-toggle').click());
 worldMapToggle.style.display = 'none';
 const garageUpgradeToggle = document.getElementById('garage-upgrade-toggle');
 const garageUpgradePanel = document.getElementById('garage-upgrade-panel');
@@ -1026,6 +1154,7 @@ worldMapLocations.innerHTML = '<button type="button" data-waypoint="">Clear wayp
 worldMapToggle.addEventListener('click', function () {
   if (!session || shopUI.isOpen() || wagonPanel.isOpen() || grainSaleUI.isOpen()) return;
   worldMapPanel.hidden = false;
+  mapGarageScrim.hidden = false;
   worldMapToggle.setAttribute('aria-expanded', 'true');
   window.VT_LOCKED = true;
   refreshWorldMapChoices();
@@ -1033,6 +1162,7 @@ worldMapToggle.addEventListener('click', function () {
 });
 document.getElementById('world-map-close').addEventListener('click', function () {
   worldMapPanel.hidden = true;
+  mapGarageScrim.hidden = true;
   worldMapToggle.setAttribute('aria-expanded', 'false');
   window.VT_LOCKED = !(worldMapPanel.hidden && garageUpgradePanel.hidden);
   worldMapToggle.focus();
@@ -1054,6 +1184,7 @@ document.addEventListener('keydown', function (event) {
   const opener = garageUpgradePanel.hidden ? worldMapToggle : garageUpgradeToggle;
   worldMapPanel.hidden = true;
   garageUpgradePanel.hidden = true;
+  mapGarageScrim.hidden = true;
   worldMapToggle.setAttribute('aria-expanded', 'false');
   garageUpgradeToggle.setAttribute('aria-expanded', 'false');
   window.VT_LOCKED = false;
@@ -1077,36 +1208,48 @@ function refreshWorldMapChoices() {
   drawWorldMap();
 }
 function atGarage() {
-  return mode === 'walking' && shop.isNear(character.group.position.x, character.group.position.z);
+  const position = mode === 'driving' ? vehicle.position : character.group.position;
+  return shop.isNear(position.x, position.z);
 }
+let garageVehicle = 'tractor';
+document.getElementById('garage-vehicle-tabs').addEventListener('click', event => {
+  const button = event.target.closest('button[data-vehicle]');
+  if (!button) return;
+  garageVehicle = button.dataset.vehicle;
+  refreshGarageUpgrades();
+});
 function refreshGarageUpgrades() {
+  document.querySelectorAll('#garage-vehicle-tabs button').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.vehicle === garageVehicle)));
   const options = ['engine', 'tires'].map(id => {
-    const quote = vehicleUpgrades.quote(vehicleType, id);
+    const quote = vehicleUpgrades.quote(garageVehicle, id);
     const maxed = quote.level >= quote.maxLevel;
-    const label = quote.name + ' · Level ' + quote.level + '/' + quote.maxLevel +
-      (maxed ? ' · MAX' : ' · $' + quote.cost);
-    return '<button type="button" data-upgrade="' + id + '" ' + (maxed || money < quote.cost ? 'disabled' : '') + '>' + label + '</button>';
+    return '<div class="garage-upgrade-card"><div class="garage-upgrade-icon">' + (id === 'engine' ? '⚙' : '◉') + '</div><div><b>' + (id === 'engine' ? 'Engine' : 'Big tires') + '</b><small>' + (id === 'engine' ? 'Go faster' : 'Turn better') + '</small><span>' + '●'.repeat(quote.level) + '○'.repeat(quote.maxLevel - quote.level) + '</span></div><button type="button" data-upgrade="' + id + '" ' + (maxed || money < quote.cost ? 'disabled' : '') + '>' + (maxed ? 'All done!' : 'Upgrade · $' + quote.cost) + '</button></div>';
   }).join('');
-  garageUpgradeOptions.innerHTML = '<p>For your ' + MACHINE_NAMES[vehicleType] + ' · balance $' + money + '</p>' + options;
+  garageUpgradeOptions.innerHTML = '<p>Balance $' + money.toLocaleString() + '</p>' + options;
 }
 garageUpgradeToggle.addEventListener('click', function () {
-  if (!session || !atGarage() || shopUI.isOpen() || wagonPanel.isOpen() || grainSaleUI.isOpen()) return;
+  if (!session || shopUI.isOpen() || wagonPanel.isOpen() || grainSaleUI.isOpen()) return;
+  if (!atGarage()) { showToast('Drive to the shop garage for upgrades.'); return; }
+  garageVehicle = vehicleType;
   refreshGarageUpgrades();
   garageUpgradePanel.hidden = false;
+  mapGarageScrim.hidden = false;
   garageUpgradeToggle.setAttribute('aria-expanded', 'true');
   window.VT_LOCKED = true;
   document.getElementById('garage-upgrade-close').focus();
 });
 document.getElementById('garage-upgrade-close').addEventListener('click', function () {
   garageUpgradePanel.hidden = true;
+  mapGarageScrim.hidden = true;
   garageUpgradeToggle.setAttribute('aria-expanded', 'false');
   window.VT_LOCKED = !(worldMapPanel.hidden && garageUpgradePanel.hidden);
   garageUpgradeToggle.focus();
 });
+mapGarageScrim.addEventListener('click', () => document.getElementById(worldMapPanel.hidden ? 'garage-upgrade-close' : 'world-map-close').click());
 garageUpgradeOptions.addEventListener('click', function (event) {
   const button = event.target.closest('button[data-upgrade]');
   if (!button || !atGarage()) return;
-  const result = vehicleUpgrades.buy(vehicleType, button.dataset.upgrade, money);
+  const result = vehicleUpgrades.buy(garageVehicle, button.dataset.upgrade, money);
   if (!result.ok) { showToast(result.reason === 'max-level' ? 'That upgrade is already maxed.' : 'Not enough money for that upgrade.'); return; }
   money = result.money;
   refreshGarageUpgrades();
@@ -1133,11 +1276,15 @@ function drawWorldMap() {
     ctx.beginPath(); ctx.arc(point.x, point.y, location.id === worldMap.waypointId ? 5 : 3.5, 0, Math.PI * 2);
     ctx.fillStyle = location.id === worldMap.waypointId ? '#ffe36b' : location.type === 'cache' ? '#a44b33' : '#345f36';
     ctx.fill();
+    ctx.fillStyle = '#272e1b'; ctx.font = 'bold 10px Figtree, sans-serif';
+    ctx.fillText(location.name, Math.min(w - 80, Math.max(7, point.x + 6)), Math.max(16, point.y - 6));
   }
   const position = mode === 'driving' ? vehicle.position : character.group.position;
   const player = mapPoint(position.x, position.z);
   ctx.beginPath(); ctx.arc(player.x, player.y, 5, 0, Math.PI * 2);
   ctx.fillStyle = '#fff'; ctx.fill(); ctx.strokeStyle = '#19321e'; ctx.lineWidth = 2; ctx.stroke();
+  ctx.fillStyle = '#272e1b'; ctx.font = 'bold 11px Figtree, sans-serif';
+  ctx.fillText('You', Math.min(w - 35, player.x + 7), Math.max(15, player.y - 7));
 }
 function mapBounds() {
   return { minX: WORLD_MIN_X, maxX: WORLD_MAX_X, minZ: WORLD_MIN_Z, maxZ: WORLD_MAX_Z };
@@ -1161,6 +1308,9 @@ explorationStyle.textContent = '#hud #hud-exploration{top:clamp(128px,20vh,160px
 document.head.appendChild(explorationStyle);
 
 const toast = document.createElement('div');
+toast.id = 'game-toast';
+toast.setAttribute('role', 'status');
+toast.setAttribute('aria-live', 'polite');
 toast.style.cssText = 'position:fixed;left:50%;top:18%;transform:translateX(-50%);z-index:90;' +
   'display:none;max-width:90vw;padding:10px 15px;border:2px solid #b9e27e;border-radius:8px;' +
   'background:rgba(19,27,21,.96);color:#f7f6e9;font:750 15px system-ui,-apple-system,sans-serif;' +
@@ -1172,11 +1322,13 @@ let giftBalanceAdjustment = 0;
 function showToast(text) {
   toast.textContent = text;
   toast.style.display = 'block';
+  if (document.body.classList.contains('vt-walking') || mode === 'walking') document.getElementById('menu-toggle').classList.add('has-message');
   if (toastTimer !== null) clearTimeout(toastTimer);
   toastTimer = setTimeout(function () { toast.style.display = 'none'; toastTimer = null; }, 4200);
 }
 
 let money = 0;
+let repairsCompleted = 0;
 let lastSig = '';
 let lastExplorationHintAt = 0;
 function updateExploration(now) {
@@ -1370,6 +1522,10 @@ function escapeHTML(value) {
 }
 
 function updateHUD() {
+  const selectedItem = inventory.getSelectedItem();
+  const selectedLabel = document.getElementById('hud-selected-item');
+  selectedLabel.hidden = mode !== 'driving' || !selectedItem;
+  selectedLabel.textContent = selectedItem ? (ITEM_BY_ID[selectedItem.itemId]?.name || selectedItem.itemId) : '';
   const s = ownFarmStats();
   climateState = climate.getState();
   const farmStatus = farmSystems.getStatus();
@@ -1392,10 +1548,13 @@ function updateHUD() {
     ? MACHINE_ICONS[vehicleType] + ' Driving ' + MACHINE_NAMES[vehicleType]
     : (buildMode ? '🧱 First-person Build' : '🚶 Walking');
   const nearName = near ? MACHINE_NAMES[near.type] : '';
+  const fuelLevel = vehicleFuel.level(vehicleType);
+  const roundedFuel = Math.ceil(fuelLevel);
   const detailsOpen = farmDetailsOpen;
-  garageUpgradeToggle.style.display = session && farmExperience === 'full' && atGarage() ? '' : 'none';
+  garageUpgradeToggle.style.display = session && (mode === 'driving' || atGarage()) ? '' : 'none';
+  if (session) worldMapToggle.style.display = mode === 'driving' ? '' : 'none';
   // rebuild only when something actually changed
-  const sig = vehicleType + '|' + money + '|' + currentTool + '|' + currentColor + '|' +
+  const sig = vehicleType + '|' + roundedFuel + '|' + money + '|' + currentTool + '|' + currentColor + '|' +
     s.tilled + '|' + s.planted + '|' + s.sprayed + '|' + s.harvested + '|' + s.weeds + '|' + s.bugs + '|' + s.fertility + '|' +
     climateState.day + '|' + climateState.season + '|' + climateState.weather + '|' +
     (farmPrompt ? farmPrompt.action + ':' + farmPrompt.target : '') + '|' +
@@ -1420,7 +1579,25 @@ function updateHUD() {
     left += '<div style="margin-top:4px;font-weight:700;color:#1c3b12">Press E — hop in the ' +
       nearName + '</div>';
   }
-  hudLeft.innerHTML = left;
+  hudLeft.innerHTML = '<span class="coin-badge" aria-hidden="true">◎</span><b>$' + money.toLocaleString() + '</b>';
+  fuelButton.hidden = mode !== 'driving';
+  fuelButton.setAttribute('aria-label', roundedFuel + '% fuel. Tap to use one Fuel Can.');
+  fuelButton.classList.toggle('low', fuelLevel < FUEL_CAPACITY * 0.25);
+  document.getElementById('fuel-fill').style.width = fuelLevel + '%';
+  document.getElementById('farm-day-toggle').textContent = '☁ Day ' + climateState.day;
+  document.getElementById('menu-awards-count').textContent = achievements.unlocked.size + '/' + achievements.list().length;
+  document.getElementById('farm-report-content').innerHTML =
+    '<div class="report-weather"><div>☀ Today <b>' + escapeHTML(climateState.weather) + '</b></div><div>☁ Tomorrow <b>' + escapeHTML(climate.getForecast(1)[0].weather) + '</b></div></div>' +
+    '<h3>The farm needs</h3><div class="report-needs">' + attentionItems.map(item => '<span>' + escapeHTML(item) + '</span>').join('') + (attentionItems.length ? '' : '<span>All good!</span>') + '</div>' +
+    '<h3>Farm at a glance</h3><div class="report-stats">' + [
+      ['🌳 Trees', farmStatus.woodland.trees.length], ['🐄 Animals', farmStatus.livestock.animals.length],
+      ['🌊 River', Math.round(farmStatus.water.riverLevel * 100) + '%'], ['🐟 Fish', Math.round(farmStatus.water.fishPopulation)],
+      ['🌱 Soil health', s.fertility + '%'], ['🟫 Dug soil', s.tilled], ['🌿 Crops', s.planted],
+      ['🌾 Picked', s.harvested], ['🔧 Fixed', repairsCompleted], ['💧 Sprayed', s.sprayed]
+    ].map(([name, value]) => '<div>' + name + '<b>' + value + '</b></div>').join('') + '</div>';
+  document.getElementById('awards-content').innerHTML = achievements.list().map(item => '<div class="award-row">★ ' + escapeHTML(item.name) + ' <small>' + escapeHTML(item.description) + '</small></div>').join('');
+  document.body.classList.toggle('vt-driving', mode === 'driving');
+  document.getElementById('farm-day-toggle').hidden = mode === 'driving';
 
   hudRight.innerHTML =
     '<div>📅 <b>Day ' + climateState.day + ' · ' + climateState.season + '</b></div>' +
@@ -1507,7 +1684,9 @@ function updateHUD() {
   if (farmPrompt && mode === 'walking' && !shopUI.isOpen()) {
     hint = 'Tap Interact · ' + farmPrompt.label + (farmPrompt.kind === 'crossing' ? ' (cross the river here)' : '');
   }
-  hudHint.textContent = hint;
+  hudHint.textContent = mode === 'driving'
+    ? (vehicleType === 'combine' ? 'Harvest the crops' : s.tilled === 0 ? 'Hook up the plow' : s.planted === 0 ? 'Plant seeds' : 'Grow your farm')
+    : hint;
   renderTutorialCard();
 }
 
@@ -1584,7 +1763,12 @@ function stepPhysics(dt) {
   if (window.VT_LOCKED !== false) { speed = 0; return; }
   if (mode !== 'driving') return;
   if (grainSaleUI.isOpen()) { speed = 0; return; }
-  const drive = input.drive;
+  const drive = vehicleFuel.level(vehicleType) > 0 && !input.brake ? input.drive : 0;
+  if (drive && vehicleFuel.consume(vehicleType, dt, drive) <= 0 && !fuelEmptyNotified) {
+    fuelEmptyNotified = true;
+    showToast('⛽ Out of fuel! Use a Fuel Can or find one at the shop.');
+    lastSig = '';
+  }
   // the truck is the fast road machine for hauling the wagon to the shop
   const upgradeEffects = vehicleUpgrades.effects(vehicleType);
   const maxForward = (vehicleType === 'combine' ? 5.5 : (vehicleType === 'truck' ? TRUCK_MAX_FWD : MAX_FWD)) * upgradeEffects.speedMultiplier;
@@ -1861,6 +2045,7 @@ function canPlantCrop(cropType, season) {
 }
 
 let cropTickElapsed = 0;
+let harvestingUntil = 0;
 const cropLastTick = farms.map(() => 0);
 const cropNextTick = farms.map((farm, i) => 0.25 + i * 0.025);
 let floodStressElapsed = [0, 0, 0, 0];
@@ -1923,6 +2108,13 @@ function stepFieldWork(dt) {
             if (res.affected > 0 && effect === 'plant') recordTutorialAction('plant-field');
             if (needsSupply && res.affected > 0) inventory.useFromSlot(supplySlot, res.affected);
             if (res.produce) {
+              const gained = Object.values(res.produce).reduce((total, count) => total + count, 0);
+              if (gained > 0) {
+                const badge = document.getElementById('hud-harvesting');
+                badge.textContent = 'Harvesting! +' + gained;
+                badge.hidden = false;
+                harvestingUntil = performance.now() + 1400;
+              }
               Object.keys(res.produce).forEach(function (id) {
                 combineBin[id] = (combineBin[id] || 0) + res.produce[id];
               });
@@ -2075,6 +2267,7 @@ function interactWithFarm() {
   const bag = Object.assign({}, before);
   const result = farmSystems.interact(position, 'foot', bag);
   if (result && result.success) {
+    if (/^(repair-|build-bridge)/.test(result.action || '')) repairsCompleted++;
     applyFarmResourceBag(before, bag);
     money += Number(result.rewards && result.rewards.money) || 0;
     showToast(result.message || (result.action ? formatGameAction(result.action) + ' complete.' : 'Farm task complete.'));
@@ -2337,6 +2530,8 @@ function snapshot() {
     worldMap: worldMap.serialize(),
     achievements: achievements.serialize(),
     vehicleUpgrades: vehicleUpgrades.serialize(),
+    vehicleFuel: vehicleFuel.serialize(),
+    repairsCompleted,
     tutorial: tutorial.exportProgress(),
     experienceMode: farmExperience,
   };
@@ -2355,6 +2550,8 @@ function applyState(s) {
   if (s.worldMap) worldMap.restore(s.worldMap);
   if (s.achievements) achievements.restore(s.achievements);
   if (s.vehicleUpgrades) vehicleUpgrades.restore(s.vehicleUpgrades);
+  if (s.vehicleFuel) vehicleFuel.restore(s.vehicleFuel);
+  repairsCompleted = Number.isSafeInteger(s.repairsCompleted) && s.repairsCompleted >= 0 ? s.repairsCompleted : 0;
   refreshWorldMapChoices();
   if (s.terrain || s.terrainEdits || Number.isSafeInteger(s.terrainRevision)) {
     replaceFarmTerrain(world.getAssignedSlot(), s.terrain, s.terrainEdits, s.terrainRevision);
@@ -2892,9 +3089,12 @@ function setupLogin() {
     farmSystems.setAdvancedSystemsEnabled(true);
     input.setAdvancedSystemsEnabled(true);
     for (const machine of MACHINES) farmSystems.setVehicleCondition(machine);
+    vehicleFuel.restore(new VehicleFuel().serialize());
+    fuelEmptyNotified = false;
 
     resetToSpawn();
     money = 0;
+    repairsCompleted = 0;
     wagon.restoreCargo([]); // a fresh login never inherits the last player's cargo
     truckBed.restoreCargo([]);
     applyState(res.state);
@@ -3036,6 +3236,10 @@ renderer.setAnimationLoop(function () {
   stepCharacter(dt);
   updateExploration(now);
   stepFieldWork(dt);
+  if (harvestingUntil && now > harvestingUntil) {
+    harvestingUntil = 0;
+    document.getElementById('hud-harvesting').hidden = true;
+  }
   maybeFetchForeignState();
 
   if (performanceBudget.shouldUpdateControls(now)) {
@@ -3117,6 +3321,10 @@ document.addEventListener('visibilitychange', function () {
 });
 
 // Opt-in diagnostics for reproducible device testing, never gameplay state.
+document.body.classList.toggle('vt-debug', new URLSearchParams(location.search).has('debug'));
+// Runtime controls install legacy styles; keep the shared handoff stylesheet last.
+const gameUIStyle = document.querySelector('link[href="./game-ui.css"]');
+if (gameUIStyle) document.head.appendChild(gameUIStyle);
 if (new URLSearchParams(location.search).has('perf')) {
   window.__THREE_GAME_DIAGNOSTICS__ = {
     renderer: renderer.info,

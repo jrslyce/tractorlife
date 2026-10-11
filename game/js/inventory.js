@@ -329,10 +329,12 @@ export class Inventory {
       }
       // Highlight selected
       if (i === this._selectedSlot) {
+        btn.setAttribute('aria-selected', 'true');
         btn.style.borderColor = '#ffe36b';
         btn.style.background = '#4a5b2d';
         btn.style.transform = 'translateY(-3px)';
       } else {
+        btn.setAttribute('aria-selected', 'false');
         btn.style.borderColor = '#68735d';
         btn.style.background = '#283329';
         btn.style.transform = 'none';

@@ -1,9 +1,10 @@
 import { getPreferences, setPreferences, applyPreferences } from './player-preferences.js';
 
 const fields = [
-  ['highContrast', 'High contrast'],
-  ['largerControls', 'Larger controls'],
-  ['reducedMotion', 'Reduced motion'],
+  ['wordsOnButtons', 'Words on buttons'],
+  ['largerControls', 'Bigger buttons'],
+  ['highContrast', 'Strong colors'],
+  ['reducedMotion', 'Less moving'],
 ];
 
 export function openSettings(options = {}) {
@@ -21,6 +22,8 @@ export function openSettings(options = {}) {
   dialog.setAttribute('aria-labelledby', 'player-settings-title');
   dialog.tabIndex = -1;
   dialog.className = 'player-settings-dialog';
+  const scrim = doc.createElement('div');
+  scrim.className = 'settings-scrim';
   if (doc.head && (!doc.getElementById || !doc.getElementById('player-settings-style'))) {
     const style = doc.createElement('style');
     style.id = 'player-settings-style';
@@ -41,8 +44,28 @@ export function openSettings(options = {}) {
   const heading = doc.createElement('h2');
   heading.id = 'player-settings-title';
   heading.textContent = 'Settings';
-  dialog.append(heading);
+  const header = doc.createElement('header');
+  const closeButton = doc.createElement('button'); closeButton.type = 'button'; closeButton.textContent = '×';
+  closeButton.setAttribute('aria-label', 'Close settings'); closeButton.className = 'settings-close';
+  header.append(heading, closeButton); dialog.append(header);
   let value = getPreferences();
+  function segments(name, choices, selected, onSelect) {
+    const section = doc.createElement('div'); section.className = 'settings-choice';
+    const title = doc.createElement('h3'); title.textContent = name;
+    const group = doc.createElement('div'); group.className = 'settings-segments';
+    group.setAttribute('role', 'group'); group.setAttribute('aria-label', name);
+    for (const [key, label] of choices) {
+      const button = doc.createElement('button'); button.type = 'button'; button.textContent = label;
+      button.setAttribute('aria-label', name === 'Text size' ? { standard: 'Standard text', large: 'Large text', larger: 'Largest text' }[key] : label);
+      button.setAttribute('aria-pressed', String(selected === key));
+      button.addEventListener('click', () => {
+        for (const child of group.children) child.setAttribute('aria-pressed', String(child === button));
+        onSelect(key);
+      });
+      group.append(button);
+    }
+    section.append(title, group); dialog.append(section);
+  }
 
   const graphicsLabel = doc.createElement('label');
   graphicsLabel.append(doc.createTextNode('Graphics quality '));
@@ -68,7 +91,7 @@ export function openSettings(options = {}) {
     catch { graphicsHelp.textContent = 'Could not save. Your game is still open; reconnect and try again.'; }
     finally { reloadGraphics.disabled = false; }
   });
-  graphicsLabel.append(graphics); dialog.append(graphicsLabel, graphicsHelp, reloadGraphics);
+  graphicsLabel.append(graphics);
 
   const scaleLabel = doc.createElement('label');
   scaleLabel.textContent = 'Text size ';
@@ -79,7 +102,24 @@ export function openSettings(options = {}) {
   }
   scale.value = value.textScale;
   scale.addEventListener('change', () => { value = setPreferences({ textScale: scale.value }); applyPreferences(value); options.onChange?.(value); });
-  scaleLabel.append(scale); dialog.append(scaleLabel);
+  scaleLabel.append(scale); scaleLabel.hidden = true; dialog.append(scaleLabel);
+  segments('Text size', [['standard', 'A'], ['large', 'A'], ['larger', 'A']], value.textScale, key => {
+    scale.value = key; value = setPreferences({ textScale: key }); applyPreferences(value); options.onChange?.(value);
+  });
+
+  const steerLabel = doc.createElement('label');
+  steerLabel.append(doc.createTextNode('Steering '));
+  const steer = doc.createElement('select');
+  steer.setAttribute('aria-label', 'Steering');
+  for (const [v, text] of [['wheel', 'Wheel'], ['joystick', 'Joystick']]) {
+    const option = doc.createElement('option'); option.value = v; option.textContent = text; steer.append(option);
+  }
+  steer.value = value.steering;
+  steer.addEventListener('change', () => { value = setPreferences({ steering: steer.value }); applyPreferences(value); options.onChange?.(value); });
+  steerLabel.append(steer); steerLabel.hidden = true; dialog.append(steerLabel);
+  segments('Steering', [['wheel', 'Wheel'], ['joystick', 'Joystick']], value.steering, key => {
+    steer.value = key; value = setPreferences({ steering: key }); applyPreferences(value); options.onChange?.(value);
+  });
 
   const detailLabel = doc.createElement('label');
   detailLabel.append(doc.createTextNode('Farm information '));
@@ -90,7 +130,7 @@ export function openSettings(options = {}) {
   }
   detail.value = value.hudDetail;
   detail.addEventListener('change', () => { value = setPreferences({ hudDetail: detail.value }); applyPreferences(value); options.onChange?.(value); });
-  detailLabel.append(detail); dialog.append(detailLabel);
+  detailLabel.append(detail);
 
   const experienceLabel = doc.createElement('label');
   experienceLabel.append(doc.createTextNode('Farm experience '));
@@ -107,11 +147,16 @@ export function openSettings(options = {}) {
       : 'Full Farm resumes livestock, woodland, river systems, vehicle wear, and contracts immediately.';
     options.onExperienceModeChange?.(experience.value);
   });
-  experienceLabel.append(experience); dialog.append(experienceLabel);
+  experienceLabel.append(experience); experienceLabel.hidden = true; dialog.append(experienceLabel);
+  segments('Farm', [['simple', 'Simple'], ['full', 'Full']], experience.value, key => {
+    experience.value = key;
+    experienceHelp.textContent = key === 'simple' ? 'Crops and weather keep going. Other farm jobs rest.' : 'All farm jobs are on.';
+    options.onExperienceModeChange?.(key);
+  });
   const experienceHelp = doc.createElement('p');
   experienceHelp.id = 'farm-experience-help';
   experienceHelp.setAttribute('aria-live', 'polite');
-  experienceHelp.textContent = 'Simple Farm pauses livestock, woodland, river systems, vehicle wear, and contracts. Crops and weather continue. Your saved advanced-system state is kept. Full Farm resumes it.';
+  experienceHelp.textContent = experience.value === 'simple' ? 'Crops and weather keep going. Other farm jobs rest.' : 'All farm jobs are on.';
   dialog.append(experienceHelp);
 
   for (const [key, text] of fields) {
@@ -120,22 +165,25 @@ export function openSettings(options = {}) {
     input.addEventListener('change', () => { value = setPreferences({ [key]: input.checked }); applyPreferences(value); options.onChange?.(value); });
     label.append(input, doc.createTextNode(` ${text}`)); dialog.append(label);
   }
-  const closeButton = doc.createElement('button'); closeButton.type = 'button'; closeButton.textContent = 'Close';
-  dialog.append(closeButton); doc.body.append(dialog);
+  const advanced = doc.createElement('details'); advanced.className = 'settings-advanced';
+  const advancedTitle = doc.createElement('summary'); advancedTitle.textContent = 'More settings · graphics';
+  advanced.append(advancedTitle, detailLabel, graphicsLabel, graphicsHelp, reloadGraphics);
+  dialog.append(advanced); doc.body.append(scrim, dialog);
+  scrim.addEventListener('click', close);
   applyPreferences(value);
 
   let closed = false;
   function close() {
     if (closed) return; closed = true;
     doc.removeEventListener('keydown', onKeyDown);
-    dialog.remove();
+    dialog.remove(); scrim.remove();
     if (win) win.VT_LOCKED = hadLock ? previousLock : false;
     if (previousFocus?.focus) previousFocus.focus();
   }
   function onKeyDown(event) {
     if (event.key === 'Escape') { event.preventDefault(); close(); return; }
     if (event.key !== 'Tab') return;
-    const controls = [...dialog.querySelectorAll('button, input, select, [tabindex]:not([tabindex="-1"])')].filter(el => !el.disabled);
+    const controls = [...dialog.querySelectorAll('button, input, select, summary, [tabindex]:not([tabindex="-1"])')].filter(el => !el.disabled && (!el.closest || (!el.closest('[hidden]') && (!el.closest('details') || el.closest('details').open || el.tagName === 'SUMMARY'))));
     if (!controls.length) { event.preventDefault(); dialog.focus(); return; }
     const first = controls[0], last = controls[controls.length - 1];
     if (event.shiftKey && doc.activeElement === first) { event.preventDefault(); last.focus(); }
@@ -143,6 +191,7 @@ export function openSettings(options = {}) {
   }
   closeButton.addEventListener('click', close);
   doc.addEventListener('keydown', onKeyDown);
-  closeButton.focus();
+  dialog.focus({ preventScroll: true });
+  dialog.scrollTop = 0;
   return { element: dialog, close };
 }

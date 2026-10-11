@@ -2,12 +2,10 @@
 import { ITEMS } from './items.js';
 
 var CATEGORIES = [
-  { name: 'Building materials', icon: '🧱', includes: function (item) { return item.category === 'Roads' || item.category === 'Building'; } },
   { name: 'Seeds', icon: '🌱', includes: function (item) { return /_seeds$/.test(item.id); } },
-  { name: 'Farm supplies', icon: '🧰', includes: function (item) { return item.category === 'Farm supplies' && !/_seeds$/.test(item.id); } },
-  { name: 'Lighting', icon: '💡', includes: function (item) { return item.category === 'Lighting'; } },
-  { name: 'Decorating', icon: '🎨', includes: function (item) { return item.category === 'Decorating'; } },
-  { name: 'Autumn decor', icon: '🍂', includes: function (item) { return item.category === 'Autumn decor'; } }
+  { name: 'Farm', icon: '🧰', includes: function (item) { return item.category === 'Farm supplies' && !/_seeds$/.test(item.id); } },
+  { name: 'Build', icon: '🧱', includes: function (item) { return item.category === 'Roads' || item.category === 'Building'; } },
+  { name: 'Decor', icon: '🎨', includes: function (item) { return ['Lighting', 'Decorating', 'Autumn decor'].includes(item.category); } }
 ];
 
 export class ShopUI {
@@ -64,7 +62,7 @@ export class ShopUI {
     head.id = 'shop-head';
     var title = document.createElement('h2');
     title.id = 'shop-title';
-    title.textContent = '🍂 Harvest & Home Shop';
+    title.textContent = 'Shop';
     this._balance = document.createElement('div');
     this._balance.id = 'shop-balance';
     this._close = document.createElement('button');
@@ -104,6 +102,7 @@ export class ShopUI {
         var price = buttons[bi].textContent.substring(buttons[bi].textContent.indexOf('$'));
         buttons[bi].textContent = (self._recipient.value ? 'Gift · ' : 'Buy · ') + price;
       }
+      self.refreshBalance();
     });
     this._recipientWrap.appendChild(this._recipient);
     this._list = document.createElement('div');
@@ -120,6 +119,10 @@ export class ShopUI {
     panel.appendChild(greeting);
     this._greeting = greeting;
     panel.appendChild(this._recipientWrap);
+    this._tabs = document.createElement('nav');
+    this._tabs.id = 'shop-menu';
+    this._tabs.setAttribute('aria-label', 'Shop sections');
+    panel.appendChild(this._tabs);
     panel.appendChild(this._list);
     panel.appendChild(this._message);
     overlay.appendChild(panel);
@@ -131,15 +134,9 @@ export class ShopUI {
 
   _showMenu() {
     var self = this;
-    var returning = !!this._category;
-    this._category = null;
-    this._list.textContent = '';
-    this._list.scrollTop = 0;
     this._back.style.display = 'none';
-    this._greeting.style.display = '';
-    this._recipientWrap.style.display = 'none';
-    var menu = document.createElement('div');
-    menu.id = 'shop-menu';
+    this._greeting.style.display = 'none';
+    this._tabs.textContent = '';
     var categories = CATEGORIES.slice();
     if ((this._getProduce() || []).length) categories.push({ name: 'Sell harvest', icon: '📦', sell: true });
     for (var i = 0; i < categories.length; i++) {
@@ -151,22 +148,21 @@ export class ShopUI {
         var label = document.createElement('span'); label.textContent = category.name;
         button.appendChild(icon); button.appendChild(label);
         button.addEventListener('click', function () { self._showCategory(category); });
-        menu.appendChild(button);
+        self._tabs.appendChild(button);
       })(categories[i]);
     }
-    this._list.appendChild(menu);
-    if (returning) menu.querySelector('button').focus();
+    this._showCategory(categories[0]);
   }
 
   _showCategory(category) {
     var self = this;
     this._category = category;
     this._list.textContent = '';
+    this._message.textContent = '';
     this._list.scrollTop = 0;
-    this._back.style.display = 'block';
-    this._back.focus();
+    Array.from(this._tabs.children).forEach(button => button.setAttribute('aria-pressed', String(button.textContent.includes(category.name))));
     this._greeting.style.display = 'none';
-    this._recipientWrap.style.display = category.sell ? 'none' : 'flex';
+    this._recipientWrap.style.display = category.sell || this._recipient.options.length < 2 ? 'none' : 'flex';
     var heading = document.createElement('h3');
     heading.className = 'shop-category';
     heading.textContent = category.icon + ' ' + category.name;
@@ -197,6 +193,7 @@ export class ShopUI {
           button.className = 'shop-buy';
           button.setAttribute('data-purchase', item.id);
           button.textContent = (self._recipient.value ? 'Gift · $' : 'Buy · $') + item.price;
+          button.disabled = !self._recipient.value && self._getMoney() < item.price;
           button.addEventListener('click', function () { self._purchase(item); });
           row.appendChild(emoji);
           row.appendChild(info);
@@ -246,10 +243,13 @@ export class ShopUI {
     if (!this._produce) return;
     this._produce.textContent = '';
     var produce = this._getProduce() || [];
-    if (!produce.length) return;
-    var heading = document.createElement('h3');
-    heading.textContent = '📦 Sell your harvest';
-    this._produce.appendChild(heading);
+    if (!produce.length) {
+      var empty = document.createElement('p');
+      empty.className = 'shop-empty';
+      empty.textContent = 'No harvest to sell yet. Bring crops here when they are ready.';
+      this._produce.appendChild(empty);
+      return;
+    }
     for (var i = 0; i < produce.length; i++) {
       (function (entry, ui) {
         var row = document.createElement('div'); row.className = 'shop-row';
@@ -267,8 +267,6 @@ export class ShopUI {
           }
           ui._message.textContent = 'Sold ' + entry.qty + ' ' + entry.name + ' for $' + (entry.qty * entry.value) + '!';
           ui.refreshBalance();
-          ui._renderProduce();
-          if (!(ui._getProduce() || []).length) ui._showMenu();
         });
         row.appendChild(icon); row.appendChild(info); row.appendChild(button); ui._produce.appendChild(row);
       })(produce[i], this);
@@ -299,6 +297,7 @@ export class ShopUI {
       this._recipient.appendChild(option);
     }
     this._recipient.value = selected;
+    if (this._category) this._recipientWrap.style.display = this._category.sell || this._recipient.options.length < 2 ? 'none' : 'flex';
     var buttons = this._list.querySelectorAll('.shop-buy[data-purchase]');
     for (var b = 0; b < buttons.length; b++) {
       var label = buttons[b].textContent.split(' · $').pop();
@@ -308,6 +307,10 @@ export class ShopUI {
 
   refreshBalance() {
     if (this._balance) this._balance.textContent = '💰 $' + Math.max(0, Math.floor(Number(this._getMoney()) || 0));
+    if (this._list && this._category && !this._category.sell) this._list.querySelectorAll('.shop-buy[data-purchase]').forEach(button => {
+      const item = ITEMS.find(entry => entry.id === button.dataset.purchase);
+      button.disabled = !!item && !this._recipient.value && this._getMoney() < item.price;
+    });
     if (this._category && this._category.sell) this._renderProduce();
   }
 
@@ -348,8 +351,7 @@ export class ShopUI {
     }
     if (e.key === 'Escape') {
       e.preventDefault();
-      if (this._category) this._showMenu();
-      else this.close();
+      this.close();
     }
   }
 
