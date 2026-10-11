@@ -9,8 +9,9 @@ async function workerModule() {
   let source = fs.readFileSync(path.resolve(__dirname, '../../worker.js'), 'utf8');
   source = source.replace("'./game/js/items.js'", JSON.stringify(new URL('../js/items.js', import.meta.url).href));
   source = source.replace("'./game/js/farmer-identity.js'", JSON.stringify(new URL('../js/farmer-identity.js', import.meta.url).href));
-  source = source.replace('export class GameSaves', 'class GameSaves')
-    .replace('export class FarmerList', 'class FarmerList')
+  source = source.replace("'./game/js/farm-generation.js'", JSON.stringify(new URL('../js/farm-generation.js', import.meta.url).href));
+  source = source.replace('export class NameGameSaves', 'class GameSaves')
+    .replace('export class NameFarmerList', 'class FarmerList')
     .replace('export class SharedWorld', 'class SharedWorld')
     .replace('export class RealtimeRoom', 'class RealtimeRoom')
     .replace('export default {', 'const worker = {') + '\nexport { GameSaves, worker };';

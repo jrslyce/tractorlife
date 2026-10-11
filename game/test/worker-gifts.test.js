@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { GameSaves, SharedWorld, RealtimeRoom } from '../../worker.js';
+import { NameGameSaves as GameSaves, SharedWorld, RealtimeRoom } from '../../worker.js';
 import { ITEMS } from '../js/items.js';
+import { FARM_GENERATION } from '../js/farm-generation.js';
 
 function fixture(initial) {
   const values = new Map([['state', JSON.stringify(initial)]]);
@@ -94,7 +95,7 @@ test('shared roads reject farm land and out-of-world coordinates', async () => {
 
 test('realtime room preserves authenticated identity and independently throttles pose/build', () => {
   const messages = [];
-  let attachment = { email: 'owner@example.com' };
+  let attachment = { email: 'owner@example.com', generation: FARM_GENERATION };
   const socket = { deserializeAttachment: () => attachment, serializeAttachment: data => { attachment = data; } };
   const room = new RealtimeRoom({ getWebSockets: () => [{ send: raw => messages.push(JSON.parse(raw)) }] }, {});
   room.webSocketMessage(socket, JSON.stringify({ type: 'pose', email: 'spoof@example.com', pose: { x: 1, z: 35, theta: 0, mode: 'walking', machine: null } }));

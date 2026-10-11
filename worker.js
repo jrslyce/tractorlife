@@ -2,6 +2,7 @@
 // Static game assets are served by env.ASSETS; all /api/* routes are handled here.
 import { ITEMS } from './game/js/items.js';
 import { formatFarmerName, normalizeFarmerName } from './game/js/farmer-identity.js';
+import { FARM_GENERATION } from './game/js/farm-generation.js';
 
 const MAX_STATE_LENGTH = 524288;
 const MAX_REQUEST_LENGTH = MAX_STATE_LENGTH + 4096;
@@ -189,6 +190,7 @@ async function readSession(request, env) {
   if (!valid) return null;
   try {
     const payload = JSON.parse(new TextDecoder().decode(payloadBytes));
+    if (payload.generation !== FARM_GENERATION) return null;
     if (!normalizeEmail(payload.email)) return null;
     if (payload.exp !== 0 && (!Number.isSafeInteger(payload.exp) || payload.exp <= Date.now())) return null;
     return { email: payload.email, exp: payload.exp };
@@ -201,7 +203,7 @@ async function issueSession(email, remember, env) {
   const key = await sessionKey(env);
   if (!key) return null;
   const exp = remember ? Date.now() + SESSION_MAX_AGE * 1000 : 0;
-  const payload = encoder.encode(JSON.stringify({ email: email, exp: exp }));
+  const payload = encoder.encode(JSON.stringify({ email: email, exp: exp, generation: FARM_GENERATION }));
   const signature = new Uint8Array(await crypto.subtle.sign("HMAC", key, payload));
   const token = base64UrlEncode(payload) + "." + base64UrlEncode(signature);
   const maxAge = remember ? "; Max-Age=" + SESSION_MAX_AGE : "";
@@ -249,7 +251,7 @@ function assignFarmSlot(email) {
   return Math.abs(hash) % 10;
 }
 
-export class GameSaves {
+export class NameGameSaves {
   constructor(ctx, env) {
     this.ctx = ctx;
     this.env = env;
@@ -510,7 +512,7 @@ export class GameSaves {
   }
 }
 
-export class FarmerList {
+export class NameFarmerList {
   constructor(ctx, env) {
     this.ctx = ctx;
     this.env = env;
@@ -657,7 +659,7 @@ export class RealtimeRoom {
     const client = pair[0];
     const server = pair[1];
     this.ctx.acceptWebSocket(server);
-    server.serializeAttachment({ email: email });
+    server.serializeAttachment({ email: email, generation: FARM_GENERATION });
     server.send(JSON.stringify({ type: "hello", email: email }));
     this._broadcast({ type: "join", email: email }, server);
     return new Response(null, { status: 101, webSocket: client });
@@ -665,6 +667,10 @@ export class RealtimeRoom {
 
   webSocketMessage(socket, raw) {
     const attachment = socket.deserializeAttachment() || {};
+    if (attachment.generation !== FARM_GENERATION) {
+      try { socket.close(1008, "Farm reset; please sign in again."); } catch (err) { /* already closed */ }
+      return;
+    }
     if ((typeof raw === "string" ? raw.length : raw.byteLength) > 8192) return;
     let msg;
     try { msg = JSON.parse(typeof raw === "string" ? raw : new TextDecoder().decode(raw)); }

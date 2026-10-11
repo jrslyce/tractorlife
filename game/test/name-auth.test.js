@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../../worker.js';
 import { World } from '../js/world.js';
+import { FARM_GENERATION, OFFLINE_SAVE_PREFIX } from '../js/farm-generation.js';
 import { formatFarmerName, normalizeFarmerName } from '../js/farmer-identity.js';
 import { login, rememberedName, hasRememberedName, restoreRememberedSession, forgetRememberedCredentials, tickSave } from '../js/net.js';
 
@@ -83,6 +84,17 @@ test('legacy email login and cookie restore continue to load the original save k
   assert.deepEqual((await newer.json()).state, { money: 999 });
 });
 
+test('correctly signed pre-reset sessions cannot restore or save into the fresh farm namespace', async () => {
+  const env = environment();
+  const payload = Buffer.from(JSON.stringify({ email: 'old farmer', exp: Date.now() + 60000 })).toString('base64url');
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(env.SESSION_SECRET), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const signature = Buffer.from(await crypto.subtle.sign('HMAC', key, Buffer.from(payload, 'base64url'))).toString('base64url');
+  const cookie = '__Host-vt-session=' + payload + '.' + signature;
+  assert.equal((await worker.fetch(request('/api/login', { name: 'Old Farmer', remember: true }, cookie), env)).status, 401);
+  assert.equal((await worker.fetch(request('/api/save', { name: 'Old Farmer', state: { money: 999 } }, cookie), env)).status, 401);
+  assert.equal(env.saves.size, 0);
+});
+
 test('client posts name/password, preserves name casing, and never stores the password', async () => {
   const originalFetch = globalThis.fetch; const originalStorage = globalThis.localStorage;
   const local = storage(); globalThis.localStorage = local;
@@ -101,7 +113,7 @@ test('client posts name/password, preserves name casing, and never stores the pa
     assert.equal(JSON.stringify(Array.from(local.values)).includes('test-password'), false);
     await tickSave(() => result, () => ({ money: 9 }));
     assert.equal(calls.at(-1).body.name, 'farmer jo');
-    assert.equal(local.values.has('vt-offline:farmer jo'), true);
+    assert.equal(local.values.has(OFFLINE_SAVE_PREFIX + 'farmer jo'), true);
   } finally { globalThis.fetch = originalFetch; globalThis.localStorage = originalStorage; }
 });
 
@@ -125,6 +137,7 @@ test('remembered email migrates safely to Name and forgetting removes both old a
   globalThis.fetch = async () => new Response('{}');
   try {
     local.setItem('vt-email', 'owner@example.com'); local.setItem('vt-code', 'legacy-secret');
+    local.setItem('vt-farm-generation', FARM_GENERATION);
     assert.equal(rememberedName(), 'owner@example.com');
     assert.equal(local.getItem('vt-name'), 'owner@example.com');
     assert.equal(local.getItem('vt-code'), null);
