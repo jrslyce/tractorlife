@@ -196,7 +196,8 @@ export function getLoginScreen(options = {}) {
           password.focus();
         } else {
           const text = error && error.message || '';
-          if (/password|code|unauthorized|401/i.test(text)) invalid(password, 'That password didn’t work. Try again!');
+          if (text === 'That password didn’t work. Try again!') invalid(password, text);
+          else if (text === 'This farm needs its original shared password to claim it.') invalid(password, text);
           else if (/name/i.test(text)) invalid(name, text);
           else status(text || 'Could not open your farm. Please try again.');
         }

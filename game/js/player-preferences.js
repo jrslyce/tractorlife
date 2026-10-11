@@ -8,6 +8,8 @@ export const DEFAULT_PREFERENCES = Object.freeze({
   highContrast: false,
   largerControls: false,
   reducedMotion: false,
+  wordsOnButtons: true,
+  steering: 'wheel',
   graphicsQuality: 'auto',
 });
 
@@ -22,6 +24,8 @@ function normalize(value) {
     highContrast: value.highContrast === true,
     largerControls: value.largerControls === true,
     reducedMotion: value.reducedMotion === true,
+    wordsOnButtons: value.wordsOnButtons !== false,
+    steering: value.steering === 'joystick' ? 'joystick' : 'wheel',
     graphicsQuality: ['auto', 'low', 'balanced', 'high'].includes(value.graphicsQuality) ? value.graphicsQuality : 'auto',
   };
 }
@@ -63,6 +67,8 @@ export function applyPreferences(preferences = getPreferences(), target = global
   target.dataset.highContrast = String(value.highContrast);
   target.dataset.largerControls = String(value.largerControls);
   target.dataset.reducedMotion = String(value.reducedMotion);
+  target.dataset.wordsOnButtons = String(value.wordsOnButtons);
+  target.dataset.steering = value.steering;
   target.style?.setProperty('--player-text-scale', value.textScale === 'larger' ? '1.25' : value.textScale === 'large' ? '1.12' : '1');
   return value;
 }

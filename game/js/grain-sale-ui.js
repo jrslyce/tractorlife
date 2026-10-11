@@ -70,7 +70,7 @@ export class GrainSaleUI {
     this._panel.setAttribute('aria-keyshortcuts', 'Escape');
     var head = element('header', 'grain-sale-head');
     head.appendChild(element('p', 'grain-sale-depot', 'Store grain depot'));
-    var title = element('h2', '', 'Grain delivery');
+    var title = element('h2', '', 'Sell crops');
     title.id = id + '-title';
     head.appendChild(title);
     this._panel.appendChild(head);
@@ -103,6 +103,10 @@ export class GrainSaleUI {
     this._error = element('p', 'grain-sale-error');
     this._error.setAttribute('role', 'alert');
     this._body.appendChild(this._error);
+    this._confirmation = element('p', 'grain-sale-confirmation');
+    this._confirmation.setAttribute('role', 'status');
+    this._confirmation.setAttribute('aria-live', 'polite');
+    this._body.appendChild(this._confirmation);
     this._panel.appendChild(this._body);
     var actions = element('footer', 'grain-sale-actions');
     this._accept = element('button', 'grain-sale-accept');
@@ -130,6 +134,9 @@ export class GrainSaleUI {
     this._quote = quote;
     this._attempted = false;
     this._error.textContent = '';
+    this._confirmation.textContent = '';
+    this._accept.hidden = false;
+    this._cancel.textContent = 'Not now';
     this._lines.textContent = '';
     var lines = quote && Array.isArray(quote.lines) ? quote.lines : [];
     for (var i = 0; i < lines.length; i++) {
@@ -151,7 +158,7 @@ export class GrainSaleUI {
     this._quantity.textContent = quantity.toLocaleString() + (quantity === 1 ? ' crop delivered' : ' crops delivered');
     this._total.textContent = money(value);
     this._balance.textContent = money(this._getMoney());
-    this._accept.textContent = 'Accept & collect ' + money(value);
+    this._accept.textContent = 'Sell all · ' + money(value);
     this._accept.disabled = !lines.length || quantity <= 0 || value < 0;
     this._open = true;
     window.VT_LOCKED = true;
@@ -189,7 +196,11 @@ export class GrainSaleUI {
       result = { ok: false, error: 'Could not complete this delivery. Please reopen the offer to try again.' };
     }
     if (result && result.ok === true) {
-      this.close();
+      this._confirmation.textContent = 'Sold! +' + money(this._quote.value);
+      this._balance.textContent = money(this._getMoney());
+      this._accept.hidden = true;
+      this._cancel.textContent = 'Keep playing';
+      this._cancel.focus({ preventScroll: true });
       return;
     }
     this._error.textContent = result && result.error ? result.error : 'This offer is no longer available. Reopen the delivery to get a fresh offer.';

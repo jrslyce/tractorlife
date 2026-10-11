@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import worker from '../../worker.js';
-import { World } from '../js/world.js';
+import worker, { NameFarmerList } from '../../worker.js';
 import { FARM_GENERATION, OFFLINE_SAVE_PREFIX } from '../js/farm-generation.js';
 import { formatFarmerName, normalizeFarmerName } from '../js/farmer-identity.js';
 import { login, rememberedName, hasRememberedName, restoreRememberedSession, forgetRememberedCredentials, tickSave } from '../js/net.js';
@@ -12,6 +11,9 @@ function storage() {
 }
 function environment() {
   const saves = new Map(), farmers = new Map();
+  const registryStorage = { get: key => Promise.resolve(farmers.get(key)), put: async (key, value) => { farmers.set(key, value); },
+    list: () => Promise.resolve(new Map(farmers)), transaction: fn => fn(registryStorage) };
+  const registry = new NameFarmerList({ storage: registryStorage }, {});
   return {
     saves, farmers,
     AUTH_CODE: 'test-password', SESSION_SECRET: 'name-auth-test-signing-key-with-32-characters',
@@ -19,10 +21,7 @@ function environment() {
       if (url.endsWith('/save')) saves.set(name, JSON.parse(options.body).state);
       return new Response(JSON.stringify({ ok: true, state: saves.get(name) || null }));
     } }) },
-    FARMERS: { idFromName: name => name, get: () => ({ fetch: async (url, options) => {
-      if (options) { const farmer = JSON.parse(options.body); farmers.set(farmer.email, farmer); }
-      return new Response(JSON.stringify({ ok: true, farmers: Array.from(farmers.values()) }));
-    } }) },
+    FARMERS: { idFromName: name => name, get: () => ({ fetch: (url, options) => registry.fetch(new Request(url, options)) }) },
   };
 }
 function request(path, body, cookie = '') {
@@ -48,7 +47,7 @@ test('Worker logs in with a name/password and uses the same identity for session
   const result = await response.json();
   assert.equal(result.name, 'Farmer Jo');
   assert.equal(result.email, 'farmer jo');
-  assert.equal(result.farmSlot, World.prototype.slotFromEmail(result.email));
+  assert.equal(result.farmSlot, 0);
   assert.ok(env.farmers.has('farmer jo'));
   const cookie = response.headers.get('set-cookie').split(';')[0];
   assert.match(response.headers.get('set-cookie'), /HttpOnly; Secure; SameSite=Strict/);
@@ -65,6 +64,7 @@ test('Worker logs in with a name/password and uses the same identity for session
 
 test('Worker rejects wrong/invalid passwords and invalid names; explicit password wins over legacy aliases', async () => {
   const env = environment();
+  assert.equal((await worker.fetch(request('/api/login', { name: 'Jo', password: 'test-password' }), env)).status, 200);
   assert.equal((await worker.fetch(request('/api/login', { name: 'Jo', password: 'wrong' }), env)).status, 401);
   for (const password of ['', {}, null, 'a'.repeat(257)]) {
     assert.equal((await worker.fetch(request('/api/login', { name: 'Jo', password }), env)).status, 400);
@@ -72,6 +72,59 @@ test('Worker rejects wrong/invalid passwords and invalid names; explicit passwor
   assert.equal((await worker.fetch(request('/api/login', { name: '<Jo>', password: 'test-password' }), env)).status, 400);
   assert.equal((await worker.fetch(request('/api/login', { name: 'Jo', password: 'wrong', code: 'test-password' }), env)).status, 401);
   assert.equal((await worker.fetch(request('/api/login', { name: '', email: 'valid@example.com', password: 'test-password' }), env)).status, 400);
+});
+
+test('distinct names reserve all ten slots, reject the eleventh, and keep passwords private', async () => {
+  const env = environment();
+  const slots = [];
+  for (let i = 0; i < 10; i++) {
+    const response = await worker.fetch(request('/api/login', { name: 'Farmer ' + i, password: 'private-' + i }), env);
+    assert.equal(response.status, 200);
+    slots.push((await response.json()).farmSlot);
+  }
+  assert.deepEqual(slots, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  const full = await worker.fetch(request('/api/login', { name: 'Eleventh', password: 'new-password' }), env);
+  assert.equal(full.status, 409);
+  assert.equal((await full.json()).error, 'farms full');
+  assert.equal((await worker.fetch(request('/api/login', { name: 'Farmer 2', password: 'private-2' }), env)).status, 200);
+  assert.equal((await worker.fetch(request('/api/login', { name: 'Farmer 2', password: 'private-3' }), env)).status, 401);
+  assert.equal(JSON.stringify([...env.farmers]).includes('private-2'), false);
+});
+
+test('reserved account names cannot overwrite another farmer password record', async () => {
+  const env = environment();
+  const owner = { name: 'owner@example.com', password: 'owner-password' };
+  assert.equal((await worker.fetch(request('/api/login', owner), env)).status, 200);
+  const account = env.farmers.get('account:owner@example.com');
+  for (const name of ['account:owner@example.com', ' ACCOUNT:owner@example.com ']) {
+    assert.equal(normalizeFarmerName(name), '');
+    assert.equal((await worker.fetch(request('/api/login', { name, password: 'attacker-password' }), env)).status, 400);
+  }
+  assert.deepEqual(env.farmers.get('account:owner@example.com'), account);
+  assert.equal((await worker.fetch(request('/api/login', owner), env)).status, 200);
+});
+
+test('cookie restore preserves a legacy JSON-string slot before the farm is claimed', async () => {
+  const env = environment();
+  const response = await worker.fetch(request('/api/login', { name: 'Old Farmer', password: 'test-password' }), env);
+  const cookie = response.headers.get('set-cookie').split(';')[0];
+  // Model a still-valid session issued before per-farmer password accounts existed.
+  env.farmers.delete('account:old farmer');
+  env.farmers.set('old farmer', JSON.stringify({ farmSlot: 7, lastSeen: 1 }));
+  const restored = await worker.fetch(request('/api/login', { name: 'Old Farmer' }, cookie), env);
+  assert.equal(restored.status, 200);
+  assert.equal((await restored.json()).farmSlot, 7);
+});
+
+test('existing saved farms need the old passcode to claim their reserved slot', async () => {
+  const env = environment();
+  env.saves.set('old farmer', { money: 50 });
+  env.farmers.set('old farmer', JSON.stringify({ farmSlot: 7, lastSeen: 1 }));
+  assert.equal((await worker.fetch(request('/api/login', { name: 'Old Farmer', password: 'someone-else' }), env)).status, 401);
+  assert.equal((await worker.fetch(request('/api/login', { name: 'Old Farmer', password: 'test-password' }), env)).status, 200);
+  assert.equal((await (await worker.fetch(request('/api/login', { name: 'Old Farmer', password: 'test-password' }), env)).json()).farmSlot, 7);
+  assert.equal((await worker.fetch(request('/api/login', { name: 'New Farmer', password: 'anything' }), env)).status, 200);
+  assert.equal(env.farmers.get('account:new farmer').farmSlot, 0);
 });
 
 test('legacy email login and cookie restore continue to load the original save key', async () => {
@@ -125,6 +178,12 @@ test('client rejects definitive auth/input failures instead of entering offline 
       globalThis.fetch = async () => new Response('{}', { status });
       await assert.rejects(login('Farmer Jo', 'wrong', true));
     }
+    globalThis.fetch = async () => new Response(JSON.stringify({ error: 'farms full' }), { status: 409 });
+    await assert.rejects(login('Farmer Jo', 'another-pass', true), /All ten farms are taken/);
+    globalThis.fetch = async () => new Response(JSON.stringify({ error: 'existing farm needs its old password' }), { status: 401 });
+    await assert.rejects(login('Farmer Jo', 'another-pass', true), /original shared password/);
+    globalThis.fetch = async () => new Response('{}', { status: 503 });
+    await assert.rejects(login('Farmer Jo', 'another-pass', true), /server is unavailable/);
     assert.equal(hasRememberedName(), false);
     globalThis.fetch = async () => { throw new Error('offline'); };
     assert.equal((await login('Farmer Jo', 'test-password', true)).mode, 'offline');

@@ -3,11 +3,11 @@
 const VERSION = 2;
 
 const STEPS = [
-  { id: 'move-to-tractor', title: 'Get to the tractor', text: 'Move with WASD or the left stick. Walk up to the tractor until the Enter control appears, then press E or tap Enter.', action: 'enter-tractor' },
-  { id: 'attach-plow', title: 'Attach the plow', text: 'While driving the tractor, tap Attach. The tractor starts without an implement; attaching equips the plow.', action: 'attach-plow' },
-  { id: 'plow-field', title: 'Prepare a field', text: 'Drive the tractor across a field with the plow attached. Cover the soil until the field is tilled.', action: 'till-field' },
-  { id: 'switch-to-planter', title: 'Fit the planter', text: 'Tap Next tool to switch the tractor from the plow to the planter. If it has no seeds, buy seeds at the shop first.', action: 'equip-planter' },
-  { id: 'plant-field', title: 'Plant the tilled soil', text: 'Drive over the tilled soil with the planter. Crops grow over time; once they turn golden, harvest them with the appropriate machine.', action: 'plant-field' }
+  { id: 'move-to-tractor', title: 'Get to the tractor', text: 'Use the left stick or WASD to walk up, then press E or tap Enter.', action: 'enter-tractor' },
+  { id: 'attach-plow', title: 'Hook up the plow', text: 'While driving, tap Attach to put the plow on.', action: 'attach-plow' },
+  { id: 'plow-field', title: 'Dig a field', text: 'Drive over a field with the plow attached.', action: 'till-field' },
+  { id: 'switch-to-planter', title: 'Switch to the planter', text: 'Tap Next tool. Get seeds from the shop if you need them.', action: 'equip-planter' },
+  { id: 'plant-field', title: 'Plant seeds', text: 'Drive over dug soil with the planter to plant seeds.', action: 'plant-field' }
 ];
 
 const copy = value => JSON.parse(JSON.stringify(value));

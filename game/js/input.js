@@ -255,6 +255,9 @@ export class Input {
     if (this._pending.length === 0) return null;
     return this._pending.shift();
   }
+  queueAction(action) {
+    if (!locked() && BUTTONS.some(button => button.action === action)) this._pending.push(action);
+  }
 
   // walking/driving mode
   setWalkingMode(walking) { this._walkingMode = walking; }
@@ -281,6 +284,7 @@ export class Input {
       this._joyDrive = 0;
       this._joyTurn = 0;
       if (this._joy) this._joy.style.display = 'none';
+      if (document.body) document.body.classList.remove('vt-joy-active');
     } else if (changed) {
       this._clearVehicleControls();
     }
@@ -359,6 +363,9 @@ export class Input {
 
   update(dt) {
     if (locked()) {
+      this._joyId = null;
+      if (this._joy) this._joy.style.display = 'none';
+      if (typeof document !== 'undefined' && document.body) document.body.classList.remove('vt-joy-active');
       this._held = {};
       this._syncKeyAxes();
       this._clearVehicleControls();
@@ -379,9 +386,10 @@ export class Input {
       this._charTurn = approach(this._charTurn, tt, dt);
     } else {
       // vehicle driving mode
+      var joystickSteering = this._drivingMode && typeof document !== 'undefined' && document.documentElement.dataset.steering === 'joystick';
       var pedalDrive = this._drivingMode ? this._pedalDrive : this._joyDrive;
       var vtd = this._pedalBrake ? 0 : clamp(this._keyDrive + pedalDrive, -1, 1);
-      var vtt = clamp(this._keyTurn + (this._drivingMode ? this._wheelTurn : this._joyTurn), -1, 1);
+      var vtt = clamp(this._keyTurn + (this._drivingMode ? (joystickSteering ? this._joyTurn : this._wheelTurn) : this._joyTurn), -1, 1);
       this._drive = approach(this._drive, vtd, dt);
       this._turn = approach(this._turn, vtt, dt);
     }
@@ -476,6 +484,7 @@ export class Input {
       self._brake = false;
       self._charJump = false;
       self._clearVehicleControls();
+      if (document.body) document.body.classList.remove('vt-joy-active');
     };
     this._listen(this._target, 'keydown', this._onKeyDown, false);
     this._listen(this._target, 'keyup', this._onKeyUp, false);
@@ -567,6 +576,7 @@ export class Input {
       // reserve the right 30% of the screen for the buttons
       var cx = ct ? ct.clientX : (typeof e.clientX === 'number' ? e.clientX : 0);
       var cy = ct ? ct.clientY : (typeof e.clientY === 'number' ? e.clientY : 0);
+      if (self._drivingMode && (document.documentElement.dataset.steering !== 'joystick' || cx > window.innerWidth * 0.4 || cy < window.innerHeight * 0.55)) return;
       if (cx > window.innerWidth * 0.7) return;
       self._joyId = ct ? ct.identifier : 'mouse';
       self._joyX = cx;
@@ -575,6 +585,7 @@ export class Input {
       self._joy.style.left = cx + 'px';
       self._joy.style.top = cy + 'px';
       self._joy.style.display = 'block';
+      document.body.classList.add('vt-joy-active');
       self._knob.style.left = '50%';
       self._knob.style.top = '50%';
       if (e.cancelable) e.preventDefault();
@@ -633,6 +644,7 @@ export class Input {
       self._joyDrive = 0;
       self._joyTurn = 0;
       self._joy.style.display = 'none';
+      document.body.classList.remove('vt-joy-active');
     };
 
     this._listen(document, 'touchstart', this._onJoyStart, { passive: false });
@@ -733,9 +745,9 @@ export class Input {
     var pedals = document.createElement('div');
     pedals.id = 'vt-pedals';
     var brake = document.createElement('button');
-    brake.type = 'button'; brake.id = 'vt-brake'; brake.className = 'vt-pedal'; brake.textContent = 'BRAKE';
+    brake.type = 'button'; brake.id = 'vt-brake'; brake.className = 'vt-pedal'; brake.textContent = 'Stop';
     var gas = document.createElement('button');
-    gas.type = 'button'; gas.id = 'vt-gas'; gas.className = 'vt-pedal'; gas.textContent = 'GAS';
+    gas.type = 'button'; gas.id = 'vt-gas'; gas.className = 'vt-pedal'; gas.textContent = 'Go';
     var exit = document.createElement('button');
     exit.type = 'button'; exit.id = 'vt-exit-vehicle'; exit.textContent = '↗ EXIT';
     var reverse = document.createElement('button');

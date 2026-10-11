@@ -36,3 +36,23 @@ test('farmer roster refresh updates purchase labels without rewriting sell butto
   assert.equal(buy.textContent, 'Buy · $12');
   assert.equal(sell.textContent, 'Sell all');
 });
+
+test('selling the last crop keeps the receipt visible in the Sell harvest section', () => {
+  const previousDocument = globalThis.document;
+  let crops = [{ id: 'wheat', name: 'Wheat', emoji: '🌾', qty: 2, value: 4 }];
+  const element = () => ({ children: [], appendChild(child) { this.children.push(child); },
+    set textContent(value) { this.value = value; this.children = []; }, get textContent() { return this.value || ''; },
+    addEventListener(type, callback) { this[type] = callback; } });
+  try {
+    globalThis.document = { createElement: element };
+    const shop = Object.create(ShopUI.prototype);
+    Object.assign(shop, { _produce: element(), _message: element(), _category: { sell: true },
+      _getProduce: () => crops, _onSell: () => { crops = []; return { ok: true }; },
+      refreshBalance() { this._renderProduce(); }, _showMenu() { throw new Error('Sale confirmation was lost'); } });
+    shop._renderProduce();
+    shop._produce.children[0].children[2].click();
+    assert.equal(shop._message.textContent, 'Sold 2 Wheat for $8!');
+    assert.equal(shop._category.sell, true);
+    assert.match(shop._produce.children[0].textContent, /No harvest to sell yet/);
+  } finally { globalThis.document = previousDocument; }
+});

@@ -252,7 +252,7 @@ export class HarvestControls {
       mode: this.getBuildMode() ? 'build' : 'walk'
     });
     this.panel.style.display = enabled ? 'block' : 'none';
-    this.buttons.style.display = this.touch || this.getBuildMode() ? 'flex' : 'none';
+    this.buttons.style.display = 'flex';
     this.placeButton.style.display = this.getBuildMode() ? 'block' : 'none';
     this.lookUp.style.display = this.lookDown.style.display = this.getBuildMode() ? 'block' : 'none';
     const indicator = aimIndicatorState({ enabled, buildMode: this.getBuildMode(), touch: this.touch, target: this.target });
@@ -273,9 +273,11 @@ export class HarvestControls {
       : (selected && selected.itemId === 'axe' ? 'Chop' : 'Punch') + (this.target.kind === 'tree' ? ' tree' : ' wood block') : '';
     this.caption.textContent = label ? label + ' · hold ' + (this.touch ? 'action' : this.getBuildMode() ? 'right mouse' : 'left mouse')
       : this.getBuildMode() ? 'Place wood · hold Break to reclaim · ' + (this.touch ? 'tap arrows to aim' : 'scroll to aim') : 'Aim at a grove tree to gather wood';
-    this.breakButton.textContent = label ? 'Hold to ' + label.toLowerCase() : 'Hold to punch';
+    this.breakButton.textContent = this.target?.kind === 'tree' ? '♣ Gather' : '✊ Punch';
+    this.breakButton.setAttribute('aria-label', label ? 'Hold to ' + label.toLowerCase() : 'Punch');
     this.breakButton.disabled = !this.target;
     this.meter.value = state.progress;
+    this.breakButton.style.setProperty('--harvest-progress', Math.round(state.progress * 100) + '%');
     this.meter.style.visibility = this.target ? 'visible' : 'hidden';
     this.outline.visible = !!this.target;
     if (this.target && this.target.kind === 'terrain') {
