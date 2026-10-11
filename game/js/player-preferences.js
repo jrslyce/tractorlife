@@ -8,6 +8,7 @@ export const DEFAULT_PREFERENCES = Object.freeze({
   highContrast: false,
   largerControls: false,
   reducedMotion: false,
+  graphicsQuality: 'auto',
 });
 
 const textScales = new Set(['standard', 'large', 'larger']);
@@ -21,6 +22,7 @@ function normalize(value) {
     highContrast: value.highContrast === true,
     largerControls: value.largerControls === true,
     reducedMotion: value.reducedMotion === true,
+    graphicsQuality: ['auto', 'low', 'balanced', 'high'].includes(value.graphicsQuality) ? value.graphicsQuality : 'auto',
   };
 }
 

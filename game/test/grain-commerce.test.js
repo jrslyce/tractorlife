@@ -9,10 +9,11 @@ const source = await readFile(new URL('../js/field.js', import.meta.url), 'utf8'
 const { Field, TileState } = await import('data:text/javascript;base64,' +
   Buffer.from(source.replace("import * as THREE from 'three';", 'const THREE = {};')
     .replaceAll("'./crop-problems.js'", JSON.stringify(new URL('../js/crop-problems.js', import.meta.url).href))
+    .replaceAll("'./field-save.js'", JSON.stringify(new URL('../js/field-save.js', import.meta.url).href))
     .replaceAll("'./soil-health.js'", JSON.stringify(new URL('../js/soil-health.js', import.meta.url).href))).toString('base64'));
 function readyField(crop = 'generic', count = 4) {
   const field = Object.create(Field.prototype);
-  Object.assign(field, { count, tile: 2, _tx: new Array(count).fill(0),
+  Object.assign(field, { count, tile: 2, cols: 1, rows: count, originX: 0, originZ: 0, _tx: new Array(count).fill(0),
     _tz: Array.from({ length: count }, (_, i) => i * 2),
     _states: new Array(count).fill(TileState.READY), _cropTypes: new Array(count).fill(crop),
     _lastCropTypes: new Array(count).fill(''), _soilFertility: new Uint8Array(count).fill(72), _rotated: new Uint8Array(count),

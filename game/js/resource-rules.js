@@ -12,7 +12,7 @@ export function getBreakRule(material, toolId, targetKind) {
     };
   }
   if (targetKind === 'tree') return null;
-  if (material === 'dirt') {
+  if (material === 'dirt' || material === 'grass') {
     return { duration: toolId === 'shovel' ? 0.35 : 1, itemId: 'dirt', quantity: 1, label: 'Dig dirt' };
   }
   if (material === 'stone' && toolId === 'pickaxe') {

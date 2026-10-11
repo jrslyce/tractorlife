@@ -38,7 +38,8 @@ import { createTerrainRenderer } from './terrain-renderer.js';
 import { TerrainActions } from './terrain-actions.js';
 import { moveCharacter as moveTerrainCharacter } from './terrain-physics.js';
 import { TOOL_ORDER, COMBINE_HEAD_ORDER, buildTool, buildCombineHead } from './equipment.js';
-import { login, restoreRememberedSession, rememberedEmail, hasRememberedEmail, forgetRememberedCredentials, startAutosave, tickSave, fetchFarmers, fetchFarmState, fetchSharedWorld, placeSharedRoad, sendGift, sendTerrainEdit, fetchTerrainState } from './net.js';
+import { startAutosave, tickSave, fetchFarmers, fetchFarmState, fetchSharedWorld, placeSharedRoad, sendGift, sendTerrainEdit, fetchTerrainState } from './net.js';
+import { getLoginScreen } from './login-screen.js';
 import Tutorial from './tutorial.js';
 import { openSettings } from './settings-ui.js';
 import { getPreferences, setPreferences, applyPreferences } from './player-preferences.js';
@@ -67,9 +68,11 @@ const perfNavigator = {
   deviceMemory: navigator.deviceMemory,
   hardwareConcurrency: navigator.hardwareConcurrency,
   userAgent: navigator.userAgent,
-  reducedMotion: window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  platform: navigator.platform,
+  maxTouchPoints: navigator.maxTouchPoints,
+  reducedMotion: getPreferences().reducedMotion || (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches)
 };
-const performanceBudget = new PerformanceBudget(perfNavigator, innerWidth, innerHeight);
+const performanceBudget = new PerformanceBudget(perfNavigator, innerWidth, innerHeight, getPreferences().graphicsQuality);
 const perfProfile = performanceBudget.profile;
 
 // ---------------------------------------------------------------- scene
@@ -85,7 +88,7 @@ const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, pe
 scene.add(camera); // include camera-mounted first-person arm/item in the scene graph
 
 const renderer = new THREE.WebGLRenderer({
-  antialias: !perfProfile.constrained,
+  antialias: perfProfile.antialias,
   powerPreference: 'low-power',
   precision: perfProfile.constrained ? 'mediump' : 'highp',
   alpha: false,
@@ -167,10 +170,16 @@ scene.add(road);
 
 // Road center line dashes
 var dashMat = new THREE.MeshStandardMaterial({ color: '#e6c34a', roughness: 0.9 });
-for (var di = 0; di < ROAD_LEN / 10; di++) {
-  var dash = new THREE.Mesh(new THREE.BoxGeometry(2, 0.06, 0.3), dashMat);
-  dash.position.set(-10 + di * 10, 0.03, 35);
-  scene.add(dash);
+const dashGeometry = new THREE.BoxGeometry(2, 0.06, 0.3);
+const dashTransform = new THREE.Matrix4();
+for (let start = 0; start < Math.ceil(ROAD_LEN / 10); start += 18) {
+  const count = Math.min(18, Math.ceil(ROAD_LEN / 10) - start);
+  const dashes = new THREE.InstancedMesh(dashGeometry, dashMat, count);
+  for (let i = 0; i < count; i++) {
+    dashTransform.makeTranslation(-10 + (start + i) * 10, 0.03, 35);
+    dashes.setMatrixAt(i, dashTransform);
+  }
+  scene.add(dashes);
 }
 
 // decorative crop rows (south of farm 0, cheap boxes)
@@ -205,13 +214,13 @@ hayBale(57, 0.8, -13, 0.7);
 
 // ---------------------------------------------------------------- world (10 farms)
 // All field work / stats / serialize / restore go through world.getFarms().
-const world = new World(scene, '');
+const world = new World(scene, '', perfProfile);
 setTerrainGroundCutout(world.getAssignedSlot());
 // Bounded terrain is scoped strictly to the assigned farm slot. Terrain visuals
 // are added separately; the legacy global ground remains a known hole-covering
 // limitation until its surface is replaced by a terrain-aware ground mesh.
 let farmTerrain = createFarmTerrain(world.getAssignedSlot());
-let terrainRenderer = farmTerrain ? createTerrainRenderer(THREE, scene, farmTerrain, { maxFaces: 30000 }) : null;
+let terrainRenderer = farmTerrain ? createTerrainRenderer(THREE, scene, farmTerrain, { maxFaces: 30000, deferred: true }) : null;
 if (terrainRenderer) terrainRenderer.rebuildAll();
 let terrainRevision = 0;
 let terrainActions = null;
@@ -224,7 +233,8 @@ const farms = world.getFarms();
 const farmFields = farms.map(function (farm) { return farm.getFields(); });
 const cropProblemVisuals = new CropProblemVisuals(scene);
 const environment = buildEnvironment(scene, {
-  minX: WORLD_MIN_X, maxX: WORLD_MAX_X, minZ: WORLD_MIN_Z, maxZ: WORLD_MAX_Z
+  minX: WORLD_MIN_X, maxX: WORLD_MAX_X, minZ: WORLD_MIN_Z, maxZ: WORLD_MAX_Z,
+  cheapMaterials: perfProfile.cheapMaterials
 });
 const climate = new Climate({ seed: 0x41f29a7 });
 let climateState = climate.getState();
@@ -270,7 +280,7 @@ function replaceFarmTerrain(slot, serialized, canonicalEdits, revision) {
   if (!restored) return false;
   if (terrainRenderer) terrainRenderer.dispose();
   farmTerrain = restored;
-  terrainRenderer = createTerrainRenderer(THREE, scene, farmTerrain, { maxFaces: 30000 });
+  terrainRenderer = createTerrainRenderer(THREE, scene, farmTerrain, { maxFaces: 30000, deferred: true });
   terrainRenderer.rebuildAll();
   terrainActions = new TerrainActions({ terrain: farmTerrain, inventory: inventory });
   terrainRevision = Number.isSafeInteger(revision) && revision >= 0 ? revision : 0;
@@ -932,7 +942,12 @@ document.getElementById('settings-toggle').addEventListener('click', function ()
     openSettings({
       experienceMode: farmExperience,
       onChange: function (value) { farmDetailsOpen = value.hudDetail === 'full'; lastSig = ''; updateHUD(); },
-      onExperienceModeChange: function (modeName) { setFarmExperience(modeName); }
+      onExperienceModeChange: function (modeName) { setFarmExperience(modeName); },
+      onGraphicsReload: async function () {
+        const saved = await tickSave(function () { return session; }, snapshot);
+        if (session && saved !== true) throw new Error('Save failed');
+        location.reload();
+      }
     });
   }
 });
@@ -1846,6 +1861,8 @@ function canPlantCrop(cropType, season) {
 }
 
 let cropTickElapsed = 0;
+const cropLastTick = farms.map(() => 0);
+const cropNextTick = farms.map((farm, i) => 0.25 + i * 0.025);
 let floodStressElapsed = [0, 0, 0, 0];
 function stepFieldWork(dt) {
   if (window.VT_LOCKED !== false) return;
@@ -1917,42 +1934,41 @@ function stepFieldWork(dt) {
       }
     }
   }
-  // Crop stages are visually coarse. Accumulate time and tick the cached field
-  // list at 4 Hz instead of scanning every tile in all farms every render.
+  // Stagger each farm's 4 Hz scan to avoid a whole-world spike every 250 ms.
+  // Each farm receives its actual accumulated time, including invisible farms.
   cropTickElapsed += dt;
-  if (cropTickElapsed >= 0.25) {
-    const cropDt = Math.min(cropTickElapsed, 1);
-    cropTickElapsed = 0;
-    const ownedSlot = world.getAssignedSlot();
-    const waterFields = farmSystems.water.fields;
-    for (let i = 0; i < farmFields.length; i++) {
-      for (let j = 0; j < farmFields[i].length; j++) {
-        let growthRate = 1;
-        const seasonalRate = { spring: 1, summer: 1.1, autumn: 0.85, winter: 0.3 }[climateState.season] || 1;
-        growthRate *= seasonalRate;
-        if (i === ownedSlot && waterFields[j]) {
-          const waterField = waterFields[j];
-          if (climateState.weather === 'drought' && waterField.water < 0.3) growthRate = 0.35;
-          else if (farmSystems.water.sprinkler && waterField.water >= 0.7) growthRate *= 1.12;
-          if (waterField.flooded) {
-            growthRate = 0.15;
-            floodStressElapsed[j] += cropDt;
-            if (floodStressElapsed[j] >= 12) {
-              const damaged = farmFields[i][j].damageCrops(1);
-              floodStressElapsed[j] %= 12;
-              if (damaged) showToast('🌊 Floodwater ruined a crop tile. Reinforce the riverbank or wait for the level to fall.');
-            }
-          } else if (climateState.weather === 'frost') {
-            floodStressElapsed[j] += cropDt;
-            if (floodStressElapsed[j] >= 24) {
-              const damaged = farmFields[i][j].damageCrops(1);
-              floodStressElapsed[j] %= 24;
-              if (damaged) showToast('❄️ Frost damaged a crop. Wait for milder weather or plant in season.');
-            }
-          } else floodStressElapsed[j] = 0;
-        }
-        farmFields[i][j].update(cropDt, { growthRate: growthRate, problems: i === ownedSlot });
+  const ownedSlot = world.getAssignedSlot();
+  const waterFields = farmSystems.water.fields;
+  const seasonalRate = { spring: 1, summer: 1.1, autumn: 0.85, winter: 0.3 }[climateState.season] || 1;
+  for (let i = 0; i < farmFields.length; i++) {
+    if (cropTickElapsed < cropNextTick[i]) continue;
+    const cropDt = cropTickElapsed - cropLastTick[i];
+    cropLastTick[i] = cropTickElapsed;
+    cropNextTick[i] = cropTickElapsed + 0.25;
+    for (let j = 0; j < farmFields[i].length; j++) {
+      let growthRate = seasonalRate;
+      if (i === ownedSlot && waterFields[j]) {
+        const waterField = waterFields[j];
+        if (climateState.weather === 'drought' && waterField.water < 0.3) growthRate = 0.35;
+        else if (farmSystems.water.sprinkler && waterField.water >= 0.7) growthRate *= 1.12;
+        if (waterField.flooded) {
+          growthRate = 0.15;
+          floodStressElapsed[j] += cropDt;
+          if (floodStressElapsed[j] >= 12) {
+            const damaged = farmFields[i][j].damageCrops(1);
+            floodStressElapsed[j] %= 12;
+            if (damaged) showToast('🌊 Floodwater ruined a crop tile. Reinforce the riverbank or wait for the level to fall.');
+          }
+        } else if (climateState.weather === 'frost') {
+          floodStressElapsed[j] += cropDt;
+          if (floodStressElapsed[j] >= 24) {
+            const damaged = farmFields[i][j].damageCrops(1);
+            floodStressElapsed[j] %= 24;
+            if (damaged) showToast('❄️ Frost damaged a crop. Wait for milder weather or plant in season.');
+          }
+        } else floodStressElapsed[j] = 0;
       }
+      farmFields[i][j].update(cropDt, { growthRate: growthRate, problems: i === ownedSlot });
     }
   }
 }
@@ -2787,7 +2803,7 @@ function updateFarmerCharacters(dt) {
         proxy.rotation.y = target.theta;
       }
     }
-    ch.update(dt);
+    if (!culled && !driving) ch.update(dt);
   }
 }
 
@@ -2822,7 +2838,7 @@ function installRemoteFarmState(slot, data) {
   remoteTerrainSlot = slot;
   remoteTerrainOwner = incomingOwner;
   remoteTerrainRevision = incomingRevision;
-  remoteTerrainRenderer = createTerrainRenderer(THREE, scene, remoteTerrain, { maxFaces: 30000 });
+  remoteTerrainRenderer = createTerrainRenderer(THREE, scene, remoteTerrain, { maxFaces: 30000, deferred: true });
   remoteTerrainRenderer.rebuildAll();
   setTerrainGroundCutout(slot);
 }
@@ -2851,21 +2867,8 @@ function maybeFetchForeignState() {
 // ---------------------------------------------------------------- login gate
 function setupLogin() {
   const overlay = document.getElementById('login');
-  const form = document.getElementById('login-form');
-  const emailIn = document.getElementById('login-email');
   const codeIn = document.getElementById('login-code');
-  const go = document.getElementById('login-go');
-  const msg = document.getElementById('login-msg');
-  const rememberCheck = document.getElementById('login-remember-check');
-  if (!overlay || !form || !emailIn || !codeIn || !go || !msg) return;
-
-  const remembered = rememberedEmail();
-  if (remembered) emailIn.value = remembered;
-  if (rememberCheck) {
-    rememberCheck.addEventListener('change', function () {
-      if (!rememberCheck.checked) forgetRememberedCredentials();
-    });
-  }
+  if (!overlay || !codeIn) return;
 
   function enterFarm(res) {
     session = { mode: res.mode, email: res.email };
@@ -2946,34 +2949,7 @@ function setupLogin() {
     }
   }
 
-  form.addEventListener('submit', function (e) {
-    e.preventDefault();
-    go.disabled = true;
-    msg.textContent = 'Loading the farm…';
-    const remember = rememberCheck && rememberCheck.checked;
-    login(emailIn.value, codeIn.value, remember)
-      .then(function (res) {
-        enterFarm(res);
-      })
-      .catch(function (err) {
-        msg.textContent = err && err.message ? err.message : 'Try again';
-        go.disabled = false;
-      });
-  });
-
-  // Resume a cookie session without saving the passcode in browser storage.
-  if (hasRememberedEmail() && rememberCheck && rememberCheck.checked) {
-    go.disabled = true;
-    msg.textContent = 'Loading the farm…';
-    restoreRememberedSession(emailIn.value)
-      .then(enterFarm)
-      .catch(function (err) {
-        msg.textContent = err && err.message === 'session-expired'
-          ? 'Please enter the secret code to sign in again.'
-          : 'Could not reconnect. Enter the code to try again or play offline.';
-        go.disabled = false;
-      });
-  }
+  getLoginScreen().connect(enterFarm);
 }
 
 resetToSpawn(); // park everything behind the login overlay
@@ -2991,12 +2967,18 @@ startAutosave(
 // ---------------------------------------------------------------- loop
 let last = performance.now();
 let enterVisible = false;
+let loginBackdropRendered = false;
+let farmSimulationElapsed = 0;
+let decorationElapsed = 0;
+const accumulatedUsage = Object.fromEntries(MACHINES.map(machine => [machine, { driving: 0, work: 0, roughness: 1, heat: 0 }]));
 renderer.setAnimationLoop(function () {
   const now = performance.now();
   if (document.hidden) {
     last = now;
     return;
   }
+  // Login has no moving gameplay: draw its backdrop once, not 30/60 times a second.
+  if (!session && loginBackdropRendered) { last = now; return; }
   if (!performanceBudget.shouldRender(now)) return;
   const frameStart = performance.now();
   updateFps(now);
@@ -3012,7 +2994,9 @@ renderer.setAnimationLoop(function () {
   // the controls while changing between tractor, combine, and truck.
   input.setDrivingMode(mode === 'driving');
   climateState = window.VT_LOCKED === false ? climate.update(dt) : climate.getState();
-  const usageByVehicle = {};
+  const usageByVehicle = accumulatedUsage;
+  const simulationActive = window.VT_LOCKED === false;
+  if (simulationActive) farmSimulationElapsed += dt;
   for (const machine of MACHINES) {
     const machineObject = vehicles[machine];
     farmSystems.setVehiclePosition(machine, machineObject.position);
@@ -3021,83 +3005,104 @@ renderer.setAnimationLoop(function () {
     const wheels = machineObject.userData.wheels || [];
     for (let wi = 0; wi < wheels.length; wi++) wheels[wi].pivot.scale.y = flat ? 0.72 : 1;
     const activeMachine = mode === 'driving' && vehicleType === machine;
-    usageByVehicle[machine] = {
-      driving: activeMachine ? Math.min(1, Math.abs(speed) / (machine === 'truck' ? TRUCK_MAX_FWD : machine === 'combine' ? 5.5 : MAX_FWD)) : 0,
-      work: activeMachine && toolGroup ? 1 : 0,
-      roughness: 1,
-      heat: activeMachine && Math.abs(speed) > 0.1 ? 1.1 : 1
-    };
+    if (simulationActive) {
+      const usage = usageByVehicle[machine];
+      usage.driving += (activeMachine ? Math.min(1, Math.abs(speed) / (machine === 'truck' ? TRUCK_MAX_FWD : machine === 'combine' ? 5.5 : MAX_FWD)) : 0) * dt;
+      usage.work += (activeMachine && toolGroup ? 1 : 0) * dt;
+      usage.heat += (activeMachine && Math.abs(speed) > 0.1 ? 1.1 : 1) * dt;
+    }
   }
-  if (window.VT_LOCKED === false) farmSystems.update(dt, climateState, usageByVehicle);
-  environment.update(dt, Object.assign({}, climateState, { riverLevel: farmSystems.water.riverLevel }));
+  if (simulationActive && farmSimulationElapsed >= perfProfile.simulationInterval) {
+    for (const machine of MACHINES) {
+      const usage = usageByVehicle[machine];
+      usage.driving /= farmSimulationElapsed; usage.work /= farmSimulationElapsed; usage.heat /= farmSimulationElapsed;
+    }
+    farmSystems.update(farmSimulationElapsed, climateState, usageByVehicle);
+    farmSimulationElapsed = 0;
+    for (const machine of MACHINES) {
+      const usage = usageByVehicle[machine]; usage.driving = usage.work = usage.heat = 0;
+    }
+  }
+  decorationElapsed += dt;
+  if (decorationElapsed >= perfProfile.decorationInterval) {
+    environment.update(decorationElapsed, { riverLevel: farmSystems.water.riverLevel });
+    const cropFields = farmFields[world.getAssignedSlot()] || [];
+    cropProblemVisuals.update(decorationElapsed, cropFields, mode === 'driving' ? vehicle.position : character.group.position, !!session);
+    decorationElapsed = 0;
+  }
   stepPhysics(dt);
   stepWagon();
   checkGrainDelivery();
   stepCharacter(dt);
   updateExploration(now);
   stepFieldWork(dt);
-  const cropFields = farmFields[world.getAssignedSlot()] || [];
-  cropProblemVisuals.update(dt, cropFields, mode === 'driving' ? vehicle.position : character.group.position, !!session);
   maybeFetchForeignState();
 
-  // mobile Enter button follows the entry prompt
-  const wantEnter = mode === 'walking' && nearestVehicleInfo() !== null;
-  if (wantEnter !== enterVisible) {
-    enterVisible = wantEnter;
-    input.setEnterVisible(wantEnter);
-  }
-  input.setToolControl(mode === 'driving' && (!!vehicle.userData.mounts || vehicleType === 'truck'),
-    mode === 'driving' && (vehicleType === 'truck' ? wagon.hitched : currentTool >= 0),
-    vehicleType === 'truck' ? (wagon.hitched ? 'Unhitch' : 'Hitch') : (currentTool >= 0 ? 'Next tool' : 'Attach'),
-    vehicleType === 'truck');
-  input.setUnloadVisible(mode === 'driving' && vehicleType === 'combine' && Object.keys(combineBin).length > 0);
-  input.setSellGrainVisible(wagonAtGrainBin() && hasSaleableWagonCargo() &&
-    (mode === 'driving' || reachableHold() === wagon));
+  if (performanceBudget.shouldUpdateControls(now)) {
+    // mobile Enter button follows the entry prompt
+    const wantEnter = mode === 'walking' && nearestVehicleInfo() !== null;
+    if (wantEnter !== enterVisible) {
+      enterVisible = wantEnter;
+      input.setEnterVisible(wantEnter);
+    }
+    input.setToolControl(mode === 'driving' && (!!vehicle.userData.mounts || vehicleType === 'truck'),
+      mode === 'driving' && (vehicleType === 'truck' ? wagon.hitched : currentTool >= 0),
+      vehicleType === 'truck' ? (wagon.hitched ? 'Unhitch' : 'Hitch') : (currentTool >= 0 ? 'Next tool' : 'Attach'),
+      vehicleType === 'truck');
+    input.setUnloadVisible(mode === 'driving' && vehicleType === 'combine' && Object.keys(combineBin).length > 0);
+    input.setSellGrainVisible(wagonAtGrainBin() && hasSaleableWagonCargo() &&
+      (mode === 'driving' || reachableHold() === wagon));
 
-  // M1: shop proximity check — show "Talk to shopkeeper" when near
-  const shopNear = shop.isNear(character.group.position.x, character.group.position.z);
-  farmPrompt = mode === 'walking' && !buildMode
-    ? farmSystems.getPrompt({ x: character.group.position.x, z: character.group.position.z }, 'foot')
-    : null;
-  const ownerFarm = world.getFarms()[world.getAssignedSlot()];
-  const expansionCenter = ownerFarm && ownerFarm.getExpansionCenter();
-  const nearExpansion = mode === 'walking' && !buildMode && !shopUI.isOpen() && ownerFarm && ownerFarm.getFields().length <= 4 &&
-    Math.hypot(character.group.position.x - expansionCenter.x, character.group.position.z - expansionCenter.z) <= 5;
-  if (!farmPrompt && nearExpansion) farmPrompt = { kind: 'field-expansion', action: 'open extra field', label: 'open extra field' };
-  if (!farmPrompt && mode === 'walking' && shopNear && farmExperience === 'full') {
-    farmPrompt = { kind: 'market', action: 'check requests', label: 'check farm requests' };
-  }
-  input.setInteractVisible(!!farmPrompt && mode === 'walking' && !shopUI.isOpen());
-  if (mode === 'walking' && shopNear && !shopNearShown) {
-    input.setShopNear(true);
-    shopNearShown = true;
-  } else if (!shopNear && shopNearShown) {
-    input.setShopNear(false);
-    shopNearShown = false;
-  }
-  if (shopNear) shop.facePlayer(character.group.position.x, character.group.position.z);
+    // M1: shop proximity check — show "Talk to shopkeeper" when near
+    const shopNear = shop.isNear(character.group.position.x, character.group.position.z);
+    farmPrompt = mode === 'walking' && !buildMode
+      ? farmSystems.getPrompt({ x: character.group.position.x, z: character.group.position.z }, 'foot')
+      : null;
+    const ownerFarm = world.getFarms()[world.getAssignedSlot()];
+    const expansionCenter = ownerFarm && ownerFarm.getExpansionCenter();
+    const nearExpansion = mode === 'walking' && !buildMode && !shopUI.isOpen() && ownerFarm && ownerFarm.getFields().length <= 4 &&
+      Math.hypot(character.group.position.x - expansionCenter.x, character.group.position.z - expansionCenter.z) <= 5;
+    if (!farmPrompt && nearExpansion) farmPrompt = { kind: 'field-expansion', action: 'open extra field', label: 'open extra field' };
+    if (!farmPrompt && mode === 'walking' && shopNear && farmExperience === 'full') {
+      farmPrompt = { kind: 'market', action: 'check requests', label: 'check farm requests' };
+    }
+    input.setInteractVisible(!!farmPrompt && mode === 'walking' && !shopUI.isOpen());
+    if (mode === 'walking' && shopNear && !shopNearShown) {
+      input.setShopNear(true);
+      shopNearShown = true;
+    } else if (!shopNear && shopNearShown) {
+      input.setShopNear(false);
+      shopNearShown = false;
+    }
+    if (shopNear) shop.facePlayer(character.group.position.x, character.group.position.z);
 
-  const wagonNear = reachableHold() !== null;
-  if (wagonNear !== wagonNearShown) {
-    wagonNearShown = wagonNear;
-    input.setWagonNear(wagonNear);
+    const wagonNear = reachableHold() !== null;
+    if (wagonNear !== wagonNearShown) {
+      wagonNearShown = wagonNear;
+      input.setWagonNear(wagonNear);
+    }
+    updateShopPointer();
   }
-  updateShopPointer();
 
   updateCamera(dt);
   if (harvestControls) harvestControls.update(dt);
   world.updateCulling(camera.position.x, camera.position.z);
+  environment.updateCulling(camera.position.x, camera.position.z, perfProfile.fogFar);
   updateFarmerCharacters(dt);
   if (performanceBudget.shouldUpdateSun(now)) updateSun();
   if (performanceBudget.shouldUpdateHud(now)) updateHUD();
   if (performanceBudget.shouldUpdateLabels(now)) updateFarmLabels();
   // the hotbar stays up while driving too, so you can see seeds/spray running low
   inventory.setVisible(window.VT_LOCKED === false && !wagonPanel.isOpen());
+  if (terrainRenderer) terrainRenderer.flush(1, 3);
+  if (remoteTerrainRenderer) remoteTerrainRenderer.flush(1, 3);
   renderer.render(scene, camera);
+  loginBackdropRendered = true;
   performanceBudget.observeFrame(performance.now() - frameStart, now, applyPixelRatio);
 });
 
 addEventListener('resize', function () {
+  loginBackdropRendered = false;
   camera.aspect = innerWidth / innerHeight;
   camera.far = perfProfile.maxView;
   camera.updateProjectionMatrix();
@@ -3108,4 +3113,23 @@ addEventListener('resize', function () {
 
 document.addEventListener('visibilitychange', function () {
   last = performance.now();
+  performanceBudget.resetTiming();
 });
+
+// Opt-in diagnostics for reproducible device testing, never gameplay state.
+if (new URLSearchParams(location.search).has('perf')) {
+  window.__THREE_GAME_DIAGNOSTICS__ = {
+    renderer: renderer.info,
+    get profile() { return perfProfile; },
+    get pixelRatio() { return performanceBudget.pixelRatio; },
+    get canvasSize() { return { width: renderer.domElement.width, height: renderer.domElement.height }; },
+    get fieldBuffers() {
+      return farmFields.flat().reduce((totals, field) => {
+        totals.cropInstances += field._cropMesh.count;
+        totals.cropCapacity += field._cropMesh.instanceMatrix.count;
+        totals.cropBytes += field._cropMesh.instanceMatrix.array.byteLength + field._cropMesh.instanceColor.array.byteLength;
+        return totals;
+      }, { cropInstances: 0, cropCapacity: 0, cropBytes: 0 });
+    }
+  };
+}

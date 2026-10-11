@@ -33,3 +33,15 @@ test('apply exposes accessible visual state on document root', () => {
   assert.deepEqual(data, { textScale: 'large', hudDetail: 'full', highContrast: 'true', largerControls: 'true', reducedMotion: 'true' });
   assert.equal(vars['--player-text-scale'], '1.12');
 });
+
+test('graphics quality is saved independently and old preferences remain compatible', () => {
+  globalThis.localStorage = memoryStorage();
+  setPreferences({ graphicsQuality: 'low', hudDetail: 'focused' });
+  assert.equal(getPreferences().graphicsQuality, 'low');
+  setPreferences({ graphicsQuality: 'invalid' });
+  assert.equal(getPreferences().graphicsQuality, 'auto');
+  globalThis.localStorage.setItem(PREFERENCES_STORAGE_KEY, JSON.stringify({ version: 1, preferences: { highContrast: true } }));
+  assert.equal(getPreferences().graphicsQuality, 'auto');
+  assert.equal(getPreferences().highContrast, true);
+  delete globalThis.localStorage;
+});

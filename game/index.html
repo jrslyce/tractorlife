@@ -4,8 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Tractor Farm</title>
+<link rel="preload" href="./fonts/caprasimo-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="./fonts/figtree-latin.woff2" as="font" type="font/woff2" crossorigin>
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #87ceeb;
     touch-action: manipulation; -webkit-user-select: none; user-select: none;
@@ -16,39 +19,7 @@
   html[data-text-scale="large"] { font-size: 112.5%; }
   html[data-text-scale="larger"] { font-size: 125%; }
   html[data-high-contrast="true"] { filter: contrast(1.15); }
-  #login { position: fixed; left: 0; right: 0; top: 0; bottom: 0; z-index: 60;
-    display: -webkit-flex; display: flex; -webkit-flex-direction: column;
-    flex-direction: column; -webkit-align-items: center; align-items: center;
-    -webkit-justify-content: center; justify-content: center;
-    background: rgba(13, 22, 16, .94); color: #f5f5e8; padding: 24px;
-    text-align: center; box-sizing: border-box; }
-  #login h1 { font-size: clamp(30px,7vw,42px); margin: 0 0 6px; color: #ffe36b; letter-spacing: 1px;
-    text-shadow:3px 3px 0 #52672f; }
-  #login .sub { font-size: 16px; margin: 0 0 22px; color: #b9e27e; }
-  #login-form { display: -webkit-flex; display: flex; -webkit-flex-direction: column;
-    flex-direction: column; width: 100%; max-width: 360px; }
-  #login-form input { font-size: 20px; min-height: 56px; padding: 10px 16px;
-    margin-bottom: 14px; border: 3px solid #2f4d1f; border-radius: 14px;
-    background: #1b281f; color: #f5f5e8; border-color:#a9ca72; -webkit-appearance: none; appearance: none;
-    box-sizing: border-box; width: 100%; text-align: center; }
-  #login-go { min-height: 64px; padding: 0 32px; font-size: 24px; font-weight: 700;
-    border: 2px solid #d7ed9a; border-radius: 8px; background: #b9e27e; color: #1b281f;
-    box-shadow: 0 4px 0 #637d39; cursor: pointer; touch-action: manipulation;
-    -webkit-tap-highlight-color: transparent; }
-  #login-go:active { -webkit-transform: translateY(3px); transform: translateY(3px);
-    box-shadow: 0 1px 0 #637d39; }
-  #login-go[disabled] { opacity: .6; }
-  #login-msg { min-height: 24px; font-size: 17px; font-weight: 600; margin: 16px 0 0;
-    color: #ffb3a7; }
-  #login-remember { display: -webkit-flex; display: flex; -webkit-align-items: center;
-    align-items: center; gap: 8px; margin: 10px 0 0; font-size: 15px; color: #d8e4ca;
-    -webkit-user-select: none; user-select: none; }
-  #login-remember input { -webkit-appearance: none; appearance: none; width: 20px;
-    height: 20px; border: 2px solid #a9ca72; border-radius: 4px; background: #1b281f;
-    cursor: pointer; position: relative; flex-shrink: 0; }
-  #login-remember input:checked { background: #ffe066; }
-  #login-remember input:checked::after { content: '\2713'; position: absolute;
-    left: 4px; top: -1px; font-size: 15px; font-weight: 700; color: #2f4d1f; }
+  [hidden] { display: none !important; }
   /* in-world farm labels (one per farm, projected from a world anchor) */
   #farm-labels { position: fixed; left: 0; top: 0; right: 0; bottom: 0;
     pointer-events: none; z-index: 20; overflow: hidden; }
@@ -61,6 +32,7 @@
     box-shadow: 2px 2px 0 rgba(0,0,0,.45); -webkit-user-select: none;
     user-select: none; will-change: transform; }
 </style>
+<link rel="stylesheet" href="./login.css">
 </head>
 <body>
 <script>
@@ -76,30 +48,33 @@ function vtErr(msg) {
 window.addEventListener('error', function (e) { vtErr((e.message || 'unknown') + ' @ ' + (e.filename || '') + ':' + (e.lineno || '')); });
 window.addEventListener('unhandledrejection', function (e) { vtErr('promise: ' + (e.reason && e.reason.message ? e.reason.message : e.reason)); });
 </script>
-<script type="importmap">
-{ "imports": {
-    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
-} }
-</script>
-<script type="module" src="./js/main.js"></script>
-<script type="module" src="./js/version.js"></script>
-<div id="login">
-  <h1>🚜 Tractor Farm</h1>
-  <p class="sub">Hop on the tractor!</p>
-  <form id="login-form">
-    <input id="login-email" type="email" inputmode="email" aria-label="Email address" aria-describedby="login-msg" autocapitalize="none"
-      autocorrect="off" spellcheck="false" autocomplete="off"
-      placeholder="farmer@email.com">
-    <input id="login-code" type="password" aria-label="Secret code" aria-describedby="login-msg" autocapitalize="none" autocorrect="off"
-      spellcheck="false" autocomplete="current-password" placeholder="secret code">
-    <button id="login-go" type="submit">LET'S FARM!</button>
-    <label id="login-remember">
-      <input id="login-remember-check" type="checkbox" checked>
-      Stay logged in
-    </label>
-  </form>
-  <p id="login-msg" role="status" aria-live="polite"></p>
-</div>
+<section id="login" aria-label="Tractor Farm sign in">
+  <div class="login-scenery" aria-hidden="true"><div class="login-sun"></div><div class="login-hill login-hill-back"></div><div class="login-hill login-hill-front"></div></div>
+  <div class="login-content">
+    <header class="login-title"><h1>Tractor Farm</h1><p class="sub">Hop on the tractor!</p></header>
+    <div class="login-card">
+      <div id="login-returning" hidden>
+        <div id="login-initial" aria-hidden="true">F</div>
+        <h2 id="login-returning-heading">Welcome back, farmer!</h2>
+        <p id="login-returning-status">Your farm is ready when you are.</p>
+        <button id="load-game" class="login-primary" type="button">Let's farm!</button>
+        <button id="login-switch" type="button">Not you? Switch farmer</button>
+      </div>
+      <form id="login-form" novalidate>
+        <h2 id="login-heading">Welcome back, farmer</h2>
+        <div class="login-field"><label for="login-name">Name</label><input id="login-name" name="username" type="text" aria-describedby="login-msg" autocapitalize="words" autocorrect="off" spellcheck="false" autocomplete="username" placeholder="e.g. Farmer Jo"></div>
+        <div class="login-field"><label for="login-code">Password</label><div class="login-password"><input id="login-code" name="password" type="password" aria-describedby="login-msg" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="current-password" placeholder="Your secret code"><button id="login-eye" type="button" aria-label="Show password" aria-pressed="false"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g id="login-eye-open"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"></path><circle cx="12" cy="12" r="3"></circle></g><g id="login-eye-closed" hidden><path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"></path><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242"></path><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"></path><path d="m2 2 20 20"></path></g></svg></button></div></div>
+        <label id="login-remember"><input id="login-remember-check" type="checkbox" checked><span class="login-check" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></span>Stay logged in</label>
+        <button id="login-go" class="login-primary" type="submit">Let's farm!</button>
+      </form>
+      <p id="login-msg" role="status" aria-live="polite" aria-atomic="true"></p>
+      <details id="graphics-start"><summary>Graphics quality <span id="graphics-current">Auto</span></summary><label for="login-graphics">Choose your graphics</label><select id="login-graphics" aria-describedby="graphics-help"><option value="auto">Auto</option><option value="low">Low · older devices</option><option value="balanced">Balanced</option><option value="high">High</option></select><p id="graphics-help">Choose Low for an iPad 6 or an older 4 GB laptop. All farming features stay available.</p></details>
+    </div>
+  </div>
+  <p id="login-version"></p>
+</section>
+<noscript>This game needs JavaScript enabled.</noscript>
+<script type="module" src="./dist/boot.js"></script>
+<script type="module" src="./dist/version.js"></script>
 </body>
 </html>

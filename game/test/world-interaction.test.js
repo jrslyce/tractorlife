@@ -3,6 +3,21 @@ import assert from 'node:assert/strict';
 import { WorldInteraction } from '../js/world-interaction.js';
 
 const tree = { kind: 'tree', id: 'grove-1', revision: 0, material: 'wood' };
+
+test('holding on grass advances the timer and commits a dirt reward by hand or shovel', () => {
+  for (const toolId of ['', 'shovel']) {
+    const h = harness({ target: { kind: 'terrain', id: '1,0,1', material: 'grass', revision: 0 }, toolId });
+    h.step();
+    assert.ok(h.step().progress > 0);
+    h.step(12);
+    assert.equal(h.calls.length, 1);
+    assert.equal(h.calls[0].rule.itemId, 'dirt');
+    assert.equal(h.calls[0].rule.quantity, 1);
+    assert.equal(h.calls[0].rule.duration, toolId === 'shovel' ? 0.35 : 1);
+    h.step(20);
+    assert.equal(h.calls.length, 1);
+  }
+});
 function harness(overrides = {}, commit = () => ({ ok: true })) {
   const calls = [];
   const controller = new WorldInteraction((target, rule) => {

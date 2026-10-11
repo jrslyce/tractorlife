@@ -42,6 +42,7 @@ export function createTerrainRenderer(THREE, scene, terrain, options = {}) {
   const ox = Number(terrain.originX) || 0, oz = Number(terrain.originZ) || 0;
   const materials = new Map();
   const chunks = new Map();
+  const pending = new Set();
   const maxFaces = Math.max(6, options.maxFaces || 100000);
 
   function getMaterial(id) {
@@ -105,6 +106,7 @@ export function createTerrainRenderer(THREE, scene, terrain, options = {}) {
     return meshes;
   }
   function rebuildAll() {
+    pending.clear();
     for (const key of [...chunks.keys()]) disposeChunk(key);
     if (typeof terrain.getChunkKeys === 'function') {
       for (const k of terrain.getChunkKeys() || []) {
@@ -131,8 +133,22 @@ export function createTerrainRenderer(THREE, scene, terrain, options = {}) {
     if (typeof terrain.getChangedChunkKeys !== 'function') return;
     for (const key of terrain.getChangedChunkKeys() || []) {
       const coords = parseKey(key);
-      if (coords) rebuildChunk(...coords);
+      if (coords) {
+        if (options.deferred) pending.add(`${coords[0]},${coords[1]}`);
+        else rebuildChunk(...coords);
+      }
     }
+  }
+  function flush(maxChunks = 1, maxMs = 3) {
+    const start = globalThis.performance?.now() || 0;
+    let rebuilt = 0;
+    for (const key of pending) {
+      if (rebuilt >= maxChunks || (rebuilt && (globalThis.performance?.now() || 0) - start >= maxMs)) break;
+      pending.delete(key);
+      rebuildChunk(...parseKey(key));
+      rebuilt++;
+    }
+    return rebuilt;
   }
   function mapHit(hit) {
     if (!hit?.point) return null;
@@ -150,11 +166,12 @@ export function createTerrainRenderer(THREE, scene, terrain, options = {}) {
     return { x: cell[0], y: cell[1], z: cell[2], normal: { x: n[0], y: n[1], z: n[2] }, face: { x: n[0], y: n[1], z: n[2] } };
   }
   function dispose() {
+    pending.clear();
     for (const key of [...chunks.keys()]) disposeChunk(key);
     for (const material of materials.values()) material.dispose?.();
     materials.clear();
   }
-  return { rebuildChunk, rebuildAll, updateAfterEdit, update, mapHit, dispose, get chunks() { return chunks; } };
+  return { rebuildChunk, rebuildAll, updateAfterEdit, update, flush, mapHit, dispose, get chunks() { return chunks; }, get pendingCount() { return pending.size; } };
 }
 
 export default createTerrainRenderer;

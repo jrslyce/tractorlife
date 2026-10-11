@@ -28,8 +28,9 @@ export function buildEnvironment(scene, worldBounds = {}) {
   scene.add(group);
 
   const disposables = [];
+  const cheap = bounds.cheapMaterials === true;
   const material = (color, roughness = 1) => {
-    const mat = new THREE.MeshStandardMaterial({ color, roughness });
+    const mat = cheap ? new THREE.MeshLambertMaterial({ color }) : new THREE.MeshStandardMaterial({ color, roughness });
     disposables.push(mat);
     return mat;
   };
@@ -150,17 +151,36 @@ export function buildEnvironment(scene, worldBounds = {}) {
       mesh.setMatrixAt(i, dummy.matrix);
     }
     mesh.instanceMatrix.needsUpdate = true;
+    mesh.computeBoundingSphere();
     group.add(mesh);
     meshes.push(mesh);
   }
-  createInstances(trunkGeo, trunkMat, treeRecords[0], 'trunks');
-  createInstances(crownGeo, pineMat, treeRecords[1], 'pine-dark');
-  createInstances(crownGeo, pineLightMat, treeRecords[2], 'pine-light');
-  createInstances(roundGeo, broadMat, treeRecords[3], 'canopy-dark');
-  createInstances(roundGeo, broadLightMat, treeRecords[4], 'canopy-light');
+  function spatialInstances(geometry, mat, records, kind) {
+    const batches = new Map();
+    for (const record of records) {
+      const key = Math.floor((record.x - minX) / 180);
+      if (!batches.has(key)) batches.set(key, []);
+      batches.get(key).push(record);
+    }
+    for (const batch of batches.values()) createInstances(geometry, mat, batch, kind);
+  }
+  spatialInstances(trunkGeo, trunkMat, treeRecords[0], 'trunks');
+  spatialInstances(crownGeo, pineMat, treeRecords[1], 'pine-dark');
+  spatialInstances(crownGeo, pineLightMat, treeRecords[2], 'pine-light');
+  spatialInstances(roundGeo, broadMat, treeRecords[3], 'canopy-dark');
+  spatialInstances(roundGeo, broadLightMat, treeRecords[4], 'canopy-light');
 
   let elapsed = 0;
+  let lastCullX = NaN, lastCullZ = NaN;
   return {
+    updateCulling(x, z, distance) {
+      if ((x - lastCullX) ** 2 + (z - lastCullZ) ** 2 < 64) return;
+      lastCullX = x; lastCullZ = z;
+      for (const mesh of meshes) {
+        const bounds = mesh.boundingSphere;
+        mesh.visible = Math.hypot(x - bounds.center.x, z - bounds.center.z) < distance + bounds.radius;
+      }
+    },
     update(dt, climateState) {
       if (!Number.isFinite(dt) || dt <= 0) return;
       elapsed += Math.min(dt, 0.1);

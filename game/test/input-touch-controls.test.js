@@ -68,3 +68,13 @@ test('Simple Farm disables build mode button and rejects reopening it', () => {
   input.setAdvancedSystemsEnabled(true);
   assert.equal(visible.toggleBuildMode, true);
 });
+
+test('unchanged action labels avoid DOM queries and repeated accessibility writes', () => {
+  let queries = 0, writes = 0;
+  const button = { setAttribute() { writes++; }, querySelector() { queries++; return { textContent: '' }; } };
+  const input = Object.create(Input.prototype); input._btnByAction = { enterVehicle: button };
+  for (let i = 0; i < 100; i++) input._setButtonLabel('enterVehicle', '🚜', 'Enter');
+  assert.equal(queries, 2); assert.equal(writes, 1);
+  input._setButtonLabel('enterVehicle', '🚪', 'Exit');
+  assert.equal(writes, 2);
+});

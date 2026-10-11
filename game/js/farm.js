@@ -50,7 +50,8 @@ function col(hex) {
 
 // ---------------------------------------------------------------- Farm class
 export class Farm {
-  constructor(scene, farmSlot) {
+  constructor(scene, farmSlot, renderOptions = {}) {
+    this._renderOptions = renderOptions;
     this._farmSlot = farmSlot;
     this._offsetX = farmSlot * FARM_SPACING;
     this._offsetZ = 0;
@@ -116,7 +117,8 @@ export class Farm {
         originZ: def.originZ + this._offsetZ,
         cols: def.cols,
         rows: def.rows,
-        tile: def.tile
+        tile: def.tile,
+        cheapMaterials: renderOptions.cheapMaterials
       };
       this._fields.push(new Field(scene, fd));
     }
@@ -417,7 +419,8 @@ export class Farm {
     const def = EXPANSION_DEF;
     this._expansionField = new Field(this._scene, {
       originX: def.originX + this._offsetX, originZ: def.originZ,
-      cols: def.cols, rows: def.rows, tile: def.tile
+      cols: def.cols, rows: def.rows, tile: def.tile,
+      cheapMaterials: this._renderOptions.cheapMaterials
     });
     this._fields.push(this._expansionField);
     if (this._expansionMarker) this._expansionMarker.visible = false;
