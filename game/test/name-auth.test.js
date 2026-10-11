@@ -104,6 +104,39 @@ test('reserved account names cannot overwrite another farmer password record', a
   assert.equal((await worker.fetch(request('/api/login', owner), env)).status, 200);
 });
 
+test('signup and password verification obey the production PBKDF2 iteration cap', async () => {
+  const original = crypto.subtle.deriveBits;
+  const calls = [];
+  crypto.subtle.deriveBits = function (algorithm, ...args) {
+    if (algorithm.name === 'PBKDF2') {
+      calls.push(algorithm.iterations);
+      if (algorithm.iterations > 100000) throw new DOMException('iteration counts above 100000 are not supported', 'NotSupportedError');
+    }
+    return original.call(this, algorithm, ...args);
+  };
+  try {
+    const env = environment();
+    const credentials = { name: 'Production Farmer', password: 'farmer-password' };
+    assert.equal((await worker.fetch(request('/api/login', credentials), env)).status, 200);
+    assert.equal(env.farmers.get('account:production farmer').iterations, 100000);
+    assert.equal((await worker.fetch(request('/api/login', credentials), env)).status, 200);
+    assert.equal((await worker.fetch(request('/api/login', { ...credentials, password: 'wrong-password' }), env)).status, 401);
+    assert.deepEqual(calls, [100000, 100000, 100000]);
+  } finally { crypto.subtle.deriveBits = original; }
+});
+
+test('unversioned password records retain their original iteration count', async () => {
+  const env = environment();
+  const salt = Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString('base64url');
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode('original-password'), 'PBKDF2', false, ['deriveBits']);
+  const hash = Buffer.from(await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: Buffer.from(salt, 'base64url'), iterations: 120000 }, key, 256)).toString('base64url');
+  env.farmers.set('account:older farmer', { salt, hash, farmSlot: 7 });
+  const response = await worker.fetch(request('/api/login', { name: 'Older Farmer', password: 'original-password' }), env);
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).farmSlot, 7);
+  assert.equal((await worker.fetch(request('/api/login', { name: 'Older Farmer', password: 'wrong-password' }), env)).status, 401);
+});
+
 test('cookie restore preserves a legacy JSON-string slot before the farm is claimed', async () => {
   const env = environment();
   const response = await worker.fetch(request('/api/login', { name: 'Old Farmer', password: 'test-password' }), env);
