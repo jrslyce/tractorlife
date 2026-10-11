@@ -15,7 +15,7 @@ test('confirmed sale snapshot immediately saves balance and consumed cargo toget
   try {
     const state = { money: 2100, combineBin: {}, wagon: { cargo: [null] } };
     tickSave(() => ({ email: 'grain-qa@example.test', mode: 'online' }), () => state);
-    assert.deepEqual(JSON.parse(storage.get('vt-offline:grain-qa@example.test')), state);
+    assert.deepEqual(JSON.parse(storage.get('vt-offline:names-2026-10-11:grain-qa@example.test')), state);
     assert.deepEqual(payload.state, state);
     await Promise.resolve();
   } finally {

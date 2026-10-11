@@ -41,8 +41,22 @@ longer require an email-shaped value. New save requests send `{ name, state }`;
 the Worker still accepts the old `{ email, code }` login and `{ email, state }`
 save shapes for older clients.
 
-Existing email-keyed farms are not deleted or automatically assigned to an
-unrelated name. Enter the old email in **Name** to continue an existing farm.
-The browser migrates the remembered `vt-email` hint to `vt-name` without
-changing the farm's storage key. A new short name creates/loads that name's
-farm. Mapping an old email farm to a new name requires an explicit migration.
+The original name-login rollout preserved email-keyed farms and migrated
+remembered email hints without re-keying saved data. That compatibility was
+superseded by the explicitly authorized reset below: old farms are now deleted,
+and entering an old email creates a fresh farm rather than restoring progress.
+
+## Explicit reset — October 11, 2026
+
+At the owner's request, migration `v5-name-farm-reset` permanently deletes the
+old `GameSaves` and `FarmerList` namespaces and creates empty `NameGameSaves`
+and `NameFarmerList` namespaces. This is a delete/create operation, **not** a
+rename or data transfer. Earlier saved farms and registered farmer records
+are no longer retained. Shared roads/world data are unchanged.
+
+Session cookies now carry the `names-2026-10-11` generation; pre-reset cookies
+are rejected even if their signature is valid. On first load of this release,
+the browser clears old game-local save caches and identity hints. New local
+saves use a generation-specific prefix. Graphics/accessibility preferences
+and the shared-road queue are retained. Subsequent deployments do not repeat
+the reset. Keep the generation constant unless another reset is authorized.

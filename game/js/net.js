@@ -3,11 +3,12 @@
 // Written conservatively (no optional chaining) for older iPad Safari.
 import { ITEM_BY_ID } from './items.js';
 import { formatFarmerName, normalizeFarmerName } from './farmer-identity.js';
+import { OFFLINE_SAVE_PREFIX, prepareFarmStorage } from './farm-generation.js';
 
 const NAME_KEY = 'vt-name';
 const LEGACY_EMAIL_KEY = 'vt-email';
 const LEGACY_CODE_KEY = 'vt-code';
-const OFFLINE_PREFIX = 'vt-offline:';
+const OFFLINE_PREFIX = OFFLINE_SAVE_PREFIX;
 const WORLD_QUEUE_KEY = 'vt-shared-road-queue';
 const SAVE_MS = 15000;
 const LOGIN_TIMEOUT_MS = 6000;
@@ -34,6 +35,7 @@ export function codeOK(v) {
 }
 
 export function rememberedName() {
+  prepareFarmStorage();
   try {
     // Remove the passcode saved by older builds; it must never be retained client-side.
     localStorage.removeItem(LEGACY_CODE_KEY);
@@ -135,6 +137,7 @@ function post(path, body, timeoutMs, authentication = false) {
 // internal identity alias, not an email requirement. Only the name is stored
 // locally so a remembered session can be restored without saving the passcode.
 export function login(name, password, remember) {
+  prepareFarmStorage();
   const display = formatFarmerName(name);
   const em = normEmail(name);
   if (!em) return Promise.reject(new Error('Use a farmer name up to 64 characters, with letters, numbers, spaces, dots, apostrophes or hyphens.'));
@@ -185,6 +188,7 @@ export function login(name, password, remember) {
 
 // Resume a remembered server session; this deliberately has no offline fallback.
 export function restoreRememberedSession(name) {
+  prepareFarmStorage();
   const em = normEmail(name);
   if (!em) return Promise.reject(new Error('Type your farmer name first.'));
   const generation = ++authGeneration;
@@ -435,6 +439,7 @@ function flushSharedRoadQueue() {
 }
 
 export function tickSave(getSession, getState) {
+  prepareFarmStorage();
   let session;
   try {
     session = getSession();

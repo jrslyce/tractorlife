@@ -143,7 +143,8 @@ test('switch farmer drops a late restore and logs out before another login is al
     await settle();
     assert.equal(el('login-go').disabled, false);
     assert.equal(el('login-name').value, '');
-    assert.equal(values.size, 0);
+    assert.equal(values.has('vt-name'), false);
+    assert.equal(values.has('vt-farm-generation'), true);
   } finally { Object.assign(globalThis, originals); }
 });
 
