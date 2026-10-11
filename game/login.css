@@ -13,6 +13,7 @@
 #login .sub { font-size: clamp(18px, 1.7vw, 22px); font-weight: 600; color: #8c491a; margin: 10px 0 0; }
 .login-card { flex: 0 1 420px; min-width: 0; margin-top: max(0px, calc((100vw - 900px) * .27)); margin-right: max(0px, calc((100vw - 1100px) * .13)); padding: clamp(24px, 2.8vw, 36px); background: #f9f4ed; border-radius: 32px; box-shadow: 0 12px 32px rgba(46,43,37,.22); }
 #login-form, #login-returning { display: flex; flex-direction: column; gap: 16px; }
+.login-account-hint { margin: 0; color: var(--body); font-size: 15px; line-height: 1.35; font-weight: 600; }
 #login h2 { margin: 0 0 4px; font: 400 28px/1.2 Caprasimo, 'Cooper Black', Georgia, serif; overflow-wrap: anywhere; }
 .login-field { display: flex; flex-direction: column; gap: 6px; }
 .login-field label, #graphics-start label { font-size: 15px; line-height: 20px; font-weight: 600; color: var(--body); }
@@ -56,5 +57,6 @@
 .login-spinner { display: inline-block; flex: none; width: 18px; height: 18px; border: 3px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: login-spin .8s linear infinite; }
 @keyframes login-spin { to { transform: rotate(360deg); } }
 @media (max-width: 999px) { .login-title { flex-basis: 100%; } .login-card { margin: 0; } }
+@media (max-height: 700px) and (min-width: 1000px) { .login-content { padding-top: 24px; } .login-card { margin-top: 0; padding: 22px; } #login-form { gap: 10px; } }
 @media (max-width: 480px) { .login-card { flex-basis: 100%; } }
 @media (prefers-reduced-motion: reduce) { .login-spinner { animation: none; } }
