@@ -35,11 +35,50 @@ test('slow frame streak steps render resolution down and fast recovery restores 
   for (let i = 0; i < 8; i++) budget.observeFrame(80, i * 40, function (ratio) { applied.push(ratio); });
   assert.equal(budget.pixelRatio, 0.8);
   assert.deepEqual(applied, [0.8]);
-  budget.observeFrame(5, 13000, function (ratio) { applied.push(ratio); });
-  budget.observeFrame(5, 25001, function (ratio) { applied.push(ratio); });
+  for (let i = 0; i < 420; i++) budget.observeFrame(5, 320 + i * (1000 / 30), function (ratio) { applied.push(ratio); });
   assert.equal(budget.pixelRatio, 1);
   assert.deepEqual(applied, [0.8, 1]);
   delete globalThis.devicePixelRatio;
+});
+
+test('landscape and desktop-identifying iPads conservatively select low graphics', () => {
+  assert.equal(deviceProfile({ userAgent: 'iPad', hardwareConcurrency: 8 }, 1024).shadows, false);
+  assert.equal(deviceProfile({ platform: 'MacIntel', maxTouchPoints: 5, hardwareConcurrency: 8 }, 1024).targetFps, 30);
+  assert.equal(deviceProfile({ deviceMemory: 4, hardwareConcurrency: 8 }, 1440).cheapMaterials, true);
+});
+
+test('explicit presets override hardware hints without changing gameplay', () => {
+  const nav = { deviceMemory: 2, hardwareConcurrency: 2 };
+  assert.equal(deviceProfile(nav, 1024, 'high').shadows, true);
+  assert.equal(deviceProfile({}, 1440, 'balanced').targetFps, 30);
+  assert.equal(deviceProfile({}, 1440, 'balanced').shadows, false);
+  assert.equal(deviceProfile({}, 1440, 'low').antialias, false);
+});
+
+test('pixel budgets cap large screens and recalculate after resize', () => {
+  globalThis.devicePixelRatio = 2;
+  const budget = new PerformanceBudget({}, 3840, 2160, 'low');
+  assert.ok(3840 * 2160 * budget.pixelRatio ** 2 <= 1000001);
+  const renderer = { setPixelRatio(ratio) { this.ratio = ratio; }, setSize() {} };
+  budget.setSize(renderer, 1024, 768);
+  assert.equal(renderer.ratio, 1);
+  delete globalThis.devicePixelRatio;
+});
+
+test('GPU-like missed frame targets reduce quality even with cheap CPU submission', () => {
+  const budget = new PerformanceBudget({}, 1024, 768, 'low');
+  for (let i = 0; i < 10; i++) budget.observeFrame(2, 1000 + i * 50);
+  assert.equal(budget.pixelRatio, 0.8);
+  budget.resetTiming();
+  budget.observeFrame(2, 90000);
+  assert.equal(budget.pixelRatio, 0.8);
+});
+
+test('30 FPS pacing retains its remainder under mildly uneven RAF intervals', () => {
+  const budget = new PerformanceBudget({}, 1024, 768, 'low');
+  let rendered = 0;
+  for (let i = 0; i < 600; i++) if (budget.shouldRender(1000 + i * 16.5)) rendered++;
+  assert.ok(rendered >= 295 && rendered <= 300, String(rendered));
 });
 
 test('labels, HUD and lighting cadence are independently throttled', function () {

@@ -1,6 +1,7 @@
 // game/js/field.js — voxel farm field: tile grid, growth timing, implement effects.
 // 1 world unit = 1 voxel. Ground plane at y = 0. ES module, Three.js (importmap 0.160.0).
 import * as THREE from 'three';
+import { encodeTileValues, decodeTileValues } from './field-save.js';
 import { CropProblems } from './crop-problems.js';
 import { SOIL_START, cropGrowthFactor, cropGrade, harvestSoil, plantRotation } from './soil-health.js';
 
@@ -122,6 +123,21 @@ function stateStage(state) {
 const SOIL_UNDER = '#4a3a26';
 
 const colorCache = new Map();
+const renderResources = new Map();
+function resources(cheap) {
+  const key = cheap ? 'low' : 'high';
+  if (!renderResources.has(key)) {
+    const Material = cheap ? THREE.MeshLambertMaterial : THREE.MeshStandardMaterial;
+    renderResources.set(key, {
+      box: new THREE.BoxGeometry(1, 1, 1),
+      tile: cheap ? new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2) : new THREE.BoxGeometry(1, 1, 1),
+      soil: new Material(cheap ? {} : { roughness: 0.95, metalness: 0 }),
+      crop: new Material(cheap ? {} : { roughness: 0.85, metalness: 0 }),
+      under: new Material(cheap ? { color: SOIL_UNDER } : { color: SOIL_UNDER, roughness: 1, metalness: 0 })
+    });
+  }
+  return renderResources.get(key);
+}
 function col(hex) {
   let c = colorCache.get(hex);
   if (!c) {
@@ -132,7 +148,7 @@ function col(hex) {
 }
 
 export class Field {
-  constructor(scene, { originX = 14, originZ = -16, cols = 32, rows = 32, tile = 1 } = {}) {
+  constructor(scene, { originX = 14, originZ = -16, cols = 32, rows = 32, tile = 1, cheapMaterials = false } = {}) {
     this.originX = originX;
     this.originZ = originZ;
     this.cols = cols;
@@ -167,13 +183,15 @@ export class Field {
 
     this._dummy = new THREE.Object3D();
     const tmp = new THREE.Color();
+    const shared = resources(cheapMaterials);
+    this._refreshColor = new THREE.Color();
 
     // --- tile slab: one InstancedMesh, per-instance color (1 draw call) ---
-    const tileGeo = new THREE.BoxGeometry(1, 1, 1);
-    const tileMat = new THREE.MeshStandardMaterial({ roughness: 0.95, metalness: 0 });
+    const tileGeo = shared.tile;
+    const tileMat = shared.soil;
     const tiles = new THREE.InstancedMesh(tileGeo, tileMat, count);
     for (let i = 0; i < count; i++) {
-      this._dummy.position.set(this._tx[i], TILE_H / 2, this._tz[i]);
+      this._dummy.position.set(this._tx[i], cheapMaterials ? TILE_H : TILE_H / 2, this._tz[i]);
       this._dummy.scale.set(tile * 0.94, TILE_H, tile * 0.94); // grid gaps
       this._dummy.updateMatrix();
       tiles.setMatrixAt(i, this._dummy.matrix);
@@ -183,7 +201,12 @@ export class Field {
     tiles.instanceMatrix.needsUpdate = true;
     if (tiles.instanceColor) tiles.instanceColor.needsUpdate = true;
     tiles.castShadow = tiles.receiveShadow = true;
-    tiles.frustumCulled = false;
+    // Fixed world-space bounds cover all stages, including tall sunflowers.
+    // They remain valid when the packed crop instances move or shrink.
+    const bounds = new THREE.Sphere(new THREE.Vector3(
+      originX + (cols - 1) * tile / 2, 1.1, originZ + (rows - 1) * tile / 2
+    ), Math.hypot(cols * tile / 2 + 0.5, rows * tile / 2 + 0.5, 1.5));
+    tiles.boundingSphere = bounds;
     scene.add(tiles);
     this._tileMesh = tiles;
 
@@ -194,7 +217,7 @@ export class Field {
     // soil instead — the grid itself looks unchanged.
     const under = new THREE.Mesh(
       new THREE.BoxGeometry(cols * tile, 0.01, rows * tile),
-      new THREE.MeshStandardMaterial({ color: SOIL_UNDER, roughness: 1, metalness: 0 })
+      shared.under
     );
     under.position.set(
       originX + (cols - 1) * tile / 2,
@@ -206,21 +229,19 @@ export class Field {
     scene.add(under);
     this._underMesh = under;
 
-    // --- crop overlays: one InstancedMesh, BLOCKS slots per planted tile ---
-    // Slots are handed out only to tiles that currently show a crop, and the
-    // draw count tracks the high-water mark, so an empty field draws nothing.
-    // Reserving BLOCKS slots for every tile of all 40 fields meant ~250k
-    // always-drawn boxes (plus the shadow pass), which stalled the renderer.
-    const cropGeo = new THREE.BoxGeometry(1, 1, 1);
-    const cropMat = new THREE.MeshStandardMaterial({ roughness: 0.85, metalness: 0 });
-    const crops = new THREE.InstancedMesh(cropGeo, cropMat, count * BLOCKS);
+    // Pack actual visible boxes, not four slots per historical crop tile.
+    // Harvested stubble retains its appearance but costs just one box.
+    const cropGeo = shared.box;
+    const cropMat = shared.crop;
+    // Empty/foreign farms start with tiny crop buffers; grow only when needed.
+    const crops = new THREE.InstancedMesh(cropGeo, cropMat, Math.min(count * BLOCKS, 32));
     crops.setColorAt(0, col('#4e9e3f')); // allocate instanceColor up front
     crops.count = 0;
-    this._slotOf = new Int32Array(count).fill(-1); // tile -> crop slot, -1 = none
-    this._freeSlots = [];
-    this._slotHigh = 0; // slots handed out so far (draw count = high * BLOCKS)
+    this._indicesOf = new Array(count).fill(null);
+    this._instanceOwners = new Int32Array(count * BLOCKS);
+    crops.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     crops.castShadow = crops.receiveShadow = true;
-    crops.frustumCulled = false;
+    crops.boundingSphere = bounds.clone();
     scene.add(crops);
     this._cropMesh = crops;
   }
@@ -279,8 +300,17 @@ export class Field {
     const halfD = this.tile / 2;
     const { PLANTED, TILLED, GROWING, SPRAYED, READY } = TileState;
 
-    for (let i = 0; i < this.count; i++) {
-      if (Number.isFinite(maxAffected) && out.affected >= Math.max(0, maxAffected)) break;
+    // Broad phase: only visit the grid rectangle touched by the rotated bar.
+    const extentX = Math.abs(cos) * (halfD + EPS) + Math.abs(sin) * (halfW + EPS);
+    const extentZ = Math.abs(sin) * (halfD + EPS) + Math.abs(cos) * (halfW + EPS);
+    const minCol = Math.max(0, Math.ceil((worldX - extentX - this.originX) / this.tile));
+    const maxCol = Math.min(this.cols - 1, Math.floor((worldX + extentX - this.originX) / this.tile));
+    const minRow = Math.max(0, Math.ceil((worldZ - extentZ - this.originZ) / this.tile));
+    const maxRow = Math.min(this.rows - 1, Math.floor((worldZ + extentZ - this.originZ) / this.tile));
+    work: for (let row = minRow; row <= maxRow; row++)
+    for (let column = minCol; column <= maxCol; column++) {
+      const i = row * this.cols + column;
+      if (Number.isFinite(maxAffected) && out.affected >= Math.max(0, maxAffected)) break work;
       const dx = this._tx[i] - worldX;
       const dz = this._tz[i] - worldZ;
       const along = dx * cos + dz * sin; // heading axis (bar depth)
@@ -475,12 +505,13 @@ export class Field {
       fertilized += this._fertilized[i] ? '1' : '0';
     }
     return {
-      states: states,
-      timers: timers,
-      cropTypes: cropTypes,
-      fertilized: fertilized,
+      states: encodeTileValues(states),
+      timers: encodeTileValues(timers),
+      cropTypes: encodeTileValues(cropTypes),
+      fertilized: encodeTileValues(fertilized),
       problems: this._problems ? this._problems.serialize() : undefined,
-      soil: Array.from(this._soilFertility), lastCrops: this._lastCropTypes, rotated: Array.from(this._rotated),
+      soil: encodeTileValues(Array.from(this._soilFertility)),
+      lastCrops: encodeTileValues(this._lastCropTypes), rotated: encodeTileValues(Array.from(this._rotated)),
       tilled: this._tally.tilled,
       planted: this._tally.planted,
       sprayed: this._tally.sprayed,
@@ -489,27 +520,32 @@ export class Field {
   }
 
   restore(d) {
-    if (!d || !d.states || d.states.length !== this.count) return false;
+    if (!d) return false;
+    const states = decodeTileValues(d.states, this.count);
+    if (!states) return false;
+    const timers = decodeTileValues(d.timers, this.count);
+    const cropTypes = decodeTileValues(d.cropTypes, this.count);
+    const fertilized = decodeTileValues(d.fertilized, this.count);
+    const soil = decodeTileValues(d.soil, this.count);
+    const lastCrops = decodeTileValues(d.lastCrops, this.count);
+    const rotated = decodeTileValues(d.rotated, this.count);
     if (this._problems) this._problems.restore(d.problems);
     for (let i = 0; i < this.count; i++) {
-      const code = d.states[i];
+      const code = states[i];
       this._states[i] =
         typeof code === 'number' && code >= 0 && code <= 6
           ? STATE_NAMES[code]
           : TileState.UNTILLED;
-      const t = d.timers ? d.timers[i] : 0;
+      const t = timers ? timers[i] : 0;
       this._timers[i] = typeof t === 'number' && isFinite(t) && t > 0 ? t : 0;
-      const cropCode = typeof d.cropTypes === 'string'
-        ? parseInt(d.cropTypes.charAt(i), 36)
-        : (d.cropTypes && d.cropTypes[i]);
+      const cropValue = cropTypes && cropTypes[i];
+      const cropCode = typeof cropValue === 'string' ? parseInt(cropValue, 36) : cropValue;
       this._cropTypes[i] = typeof cropCode === 'number' && cropCode >= 0 && cropCode < CROP_TYPES.length
         ? CROP_TYPES[cropCode] : 'generic';
-      this._soilFertility[i] = d.soil && Number.isFinite(d.soil[i]) ? Math.max(0, Math.min(100, Math.floor(d.soil[i]))) : SOIL_START;
-      this._lastCropTypes[i] = d.lastCrops && CROP_TYPES.includes(d.lastCrops[i]) ? d.lastCrops[i] : '';
-      this._rotated[i] = d.rotated && d.rotated[i] ? 1 : 0;
-      this._fertilized[i] = typeof d.fertilized === 'string'
-        ? (d.fertilized.charAt(i) === '1' ? 1 : 0)
-        : (d.fertilized && d.fertilized[i] ? 1 : 0);
+      this._soilFertility[i] = soil && Number.isFinite(soil[i]) ? Math.max(0, Math.min(100, Math.floor(soil[i]))) : SOIL_START;
+      this._lastCropTypes[i] = lastCrops && CROP_TYPES.includes(lastCrops[i]) ? lastCrops[i] : '';
+      this._rotated[i] = rotated && rotated[i] ? 1 : 0;
+      this._fertilized[i] = fertilized && (typeof fertilized[i] === 'string' ? fertilized[i] === '1' : !!fertilized[i]) ? 1 : 0;
       if (this._problems && (this._states[i] === TileState.UNTILLED || this._states[i] === TileState.TILLED || this._states[i] === TileState.HARVESTED)) this._problems.clear(i);
     }
     this._timedCount = 0;
@@ -527,9 +563,25 @@ export class Field {
   }
 
   // ---------- internals ----------
+  _ensureCropCapacity(required) {
+    const mesh = this._cropMesh;
+    if (required <= mesh.instanceMatrix.count) return;
+    const capacity = Math.min(this.count * BLOCKS, Math.max(required, mesh.instanceMatrix.count * 2));
+    const matrix = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 16), 16);
+    const color = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
+    matrix.setUsage(THREE.DynamicDrawUsage);
+    matrix.array.set(mesh.instanceMatrix.array);
+    color.array.set(mesh.instanceColor.array);
+    // Three.js releases the old instance buffers on mesh disposal; the shared
+    // geometry/material remain alive. The same mesh is registered on next draw.
+    mesh.dispose();
+    mesh.instanceMatrix = matrix;
+    mesh.instanceColor = color;
+  }
+
   _refresh(i) {
     const st = this._states[i];
-    const tmp = new THREE.Color(TILE_COLORS[st]);
+    const tmp = this._refreshColor.set(TILE_COLORS[st]);
     if (st === TileState.UNTILLED) tmp.multiplyScalar(this._jitter[i]); // clumpy
     this._tileMesh.setColorAt(i, tmp);
     this._tileMesh.instanceColor.needsUpdate = true;
@@ -537,29 +589,43 @@ export class Field {
     const stage = stateStage(st);
     const crop = this._cropTypes[i] || 'generic';
     const blocks = stage ? ((TYPE_BLOCKS[crop] && TYPE_BLOCKS[crop][stage]) || CROP_BLOCKS[st]) : CROP_BLOCKS[st];
-    let slot = this._slotOf[i];
-    if (!blocks || blocks.length === 0) {
-      if (slot < 0) return;
-      this._slotOf[i] = -1;
-      this._freeSlots.push(slot);
-    } else if (slot < 0) {
-      slot = this._freeSlots.length ? this._freeSlots.pop() : this._slotHigh++;
-      this._slotOf[i] = slot;
-      this._cropMesh.count = this._slotHigh * BLOCKS;
+    let indices = this._indicesOf[i];
+    const length = blocks ? blocks.length : 0;
+    if (indices && indices.length !== length) {
+      while (indices.length) {
+        const index = indices.pop();
+        const last = --this._cropMesh.count;
+        if (index !== last) {
+          const owner = this._instanceOwners[last];
+          const moved = this._indicesOf[owner];
+          moved[moved.indexOf(last)] = index;
+          this._instanceOwners[index] = owner;
+          this._cropMesh.instanceMatrix.array.copyWithin(index * 16, last * 16, last * 16 + 16);
+          this._cropMesh.instanceColor.array.copyWithin(index * 3, last * 3, last * 3 + 3);
+        }
+      }
+      this._indicesOf[i] = indices = null;
+      this._cropMesh.instanceMatrix.needsUpdate = true;
+      this._cropMesh.instanceColor.needsUpdate = true;
+    }
+    if (!length) return;
+    if (!indices) {
+      this._ensureCropCapacity(this._cropMesh.count + length);
+      this._indicesOf[i] = indices = [];
+      for (let b = 0; b < length; b++) {
+        const index = this._cropMesh.count++;
+        indices.push(index);
+        this._instanceOwners[index] = i;
+      }
     }
     const cx = this._tx[i];
     const cz = this._tz[i];
-    for (let b = 0; b < BLOCKS; b++) {
-      const idx = slot * BLOCKS + b;
-      const def = this._slotOf[i] >= 0 ? blocks[b] : null;
-      if (def) {
-        this._dummy.position.set(cx + def[0], def[1], cz + def[2]);
-        this._dummy.scale.set(def[3], def[4], def[5]);
-        this._cropMesh.setColorAt(idx, col(def[6]));
-      } else {
-        this._dummy.position.set(cx, 0, cz);
-        this._dummy.scale.set(0, 0, 0); // hidden when not applicable
-      }
+    for (let b = 0; b < length; b++) {
+      const idx = indices[b];
+      const def = blocks[b];
+      this._dummy.position.set(cx + def[0], def[1], cz + def[2]);
+      this._dummy.scale.set(def[3], def[4], def[5]);
+      this._cropMesh.setColorAt(idx, col(def[6]));
       this._dummy.rotation.set(0, 0, 0);
       this._dummy.updateMatrix();
       this._cropMesh.setMatrixAt(idx, this._dummy.matrix);

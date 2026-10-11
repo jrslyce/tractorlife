@@ -1,15 +1,20 @@
 {
   "name": "tractorlife",
   "private": true,
-  "version": "1.19.0",
+  "version": "1.20.0",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "deploy:pages": "wrangler pages deploy ./game",
+    "build": "node scripts/build-game.mjs",
+    "dev": "npm run build && wrangler dev",
+    "deploy": "npm run build && wrangler deploy",
+    "deploy:pages": "npm run build && wrangler pages deploy ./game",
     "test:perf": "node --test game/test/performance.test.js",
     "test": "node --test game/test/*.test.js"
   },
   "devDependencies": {
+    "esbuild": "0.28.1",
     "wrangler": "4.140.0"
+  },
+  "dependencies": {
+    "three": "0.160.0"
   }
 }

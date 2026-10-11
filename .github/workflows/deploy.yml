@@ -21,7 +21,7 @@ jobs:
 
       - name: Deploy to Cloudflare
         if: env.CLOUDFLARE_API_TOKEN != ''
-        run: npx wrangler deploy
+        run: npm run deploy
 
       - name: Skipping notice
         if: env.CLOUDFLARE_API_TOKEN == ''

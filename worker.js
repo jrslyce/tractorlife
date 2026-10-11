@@ -1,12 +1,12 @@
 // TractorLife worker: secret-backed login sessions + per-player saves in a Durable Object.
 // Static game assets are served by env.ASSETS; all /api/* routes are handled here.
 import { ITEMS } from './game/js/items.js';
+import { formatFarmerName, normalizeFarmerName } from './game/js/farmer-identity.js';
 
 const MAX_STATE_LENGTH = 524288;
 const MAX_REQUEST_LENGTH = MAX_STATE_LENGTH + 4096;
 const SESSION_COOKIE = "__Host-vt-session";
 const SESSION_MAX_AGE = 60 * 60 * 24 * 30;
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // How long a farmer stays on the /api/farmers list after their last login.
 const FARMER_RECENT_MS = 30 * 24 * 60 * 60 * 1000;
 const encoder = new TextEncoder();
@@ -115,13 +115,10 @@ function json(data, status, headers) {
   });
 }
 
-// Trim, lowercase, must look like an email and be <= 120 chars. Returns null if invalid.
+// Historical field names remain internal aliases for saved farms and realtime
+// messages. Names are now accepted end-to-end; old email keys remain unchanged.
 function normalizeEmail(email) {
-  if (typeof email !== "string") return null;
-  const trimmed = email.trim().toLowerCase();
-  if (trimmed.length > 120) return null;
-  if (!EMAIL_RE.test(trimmed)) return null;
-  return trimmed;
+  return normalizeFarmerName(email) || null;
 }
 
 function base64UrlEncode(bytes) {
@@ -757,9 +754,10 @@ export default {
       }
       if (!isPlainObject(body)) body = {};
 
-      const email = normalizeEmail(body.email);
+      const suppliedName = Object.prototype.hasOwnProperty.call(body, "name") ? body.name : body.email;
+      const email = normalizeEmail(suppliedName);
       if (!email) {
-        return json({ ok: false, error: "bad email" }, 400);
+        return json({ ok: false, error: "bad name" }, 400);
       }
 
       if (url.pathname === "/api/save") {
@@ -784,13 +782,17 @@ export default {
       }
 
       // /api/login
-      const hasCode = typeof body.code === "string" && body.code.trim() !== "";
+      const password = Object.prototype.hasOwnProperty.call(body, "password") ? body.password : body.code;
+      const hasCode = Object.prototype.hasOwnProperty.call(body, "password") || Object.prototype.hasOwnProperty.call(body, "code");
       if (hasCode) {
+        if (typeof password !== "string" || !password.trim() || password.length > 256) {
+          return json({ ok: false, error: "bad password" }, 400);
+        }
         if (typeof env.AUTH_CODE !== "string" || !env.AUTH_CODE.trim()) {
           return json({ ok: false, error: "authentication is not configured" }, 503);
         }
-        if (!await checkCode(body.code, env)) {
-          return json({ ok: false, error: "wrong code" }, 401);
+        if (!await checkCode(password, env)) {
+          return json({ ok: false, error: "wrong password" }, 401);
         }
       } else {
         const session = await readSession(request, env);
@@ -820,7 +822,7 @@ export default {
       } catch (err) {
         console.log("farmer-list update failed: " + (err && err.message));
       }
-      return json({ ok: true, email: email, farmSlot: farmSlot, state: data.state }, 200, { "set-cookie": setCookie });
+      return json({ ok: true, name: formatFarmerName(suppliedName), email: email, farmSlot: farmSlot, state: data.state }, 200, { "set-cookie": setCookie });
     }
 
     if (url.pathname === "/api/terrain/state") {

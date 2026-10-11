@@ -23,3 +23,16 @@ test('confirmed sale snapshot immediately saves balance and consumed cargo toget
     delete globalThis.localStorage;
   }
 });
+
+test('offline save reports storage success or failure before a graphics reload', async () => {
+  const originalStorage = globalThis.localStorage;
+  try {
+    globalThis.localStorage = { setItem() {} };
+    assert.equal(await tickSave(() => ({ email: 'offline-qa@example.test', mode: 'offline' }), () => ({ money: 100 })), true);
+    globalThis.localStorage = { setItem() { throw new Error('quota'); } };
+    assert.equal(await tickSave(() => ({ email: 'offline-qa@example.test', mode: 'offline' }), () => ({ money: 100 })), false);
+  } finally {
+    if (originalStorage === undefined) delete globalThis.localStorage;
+    else globalThis.localStorage = originalStorage;
+  }
+});

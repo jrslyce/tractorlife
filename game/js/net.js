@@ -1,9 +1,11 @@
 // game/js/net.js — login gate + autosave for Tractor Farm.
-// Cookie-backed auth (email + code) with an offline localStorage fallback.
+// Cookie-backed auth (name + password) with an offline localStorage fallback.
 // Written conservatively (no optional chaining) for older iPad Safari.
 import { ITEM_BY_ID } from './items.js';
+import { formatFarmerName, normalizeFarmerName } from './farmer-identity.js';
 
-const EMAIL_KEY = 'vt-email';
+const NAME_KEY = 'vt-name';
+const LEGACY_EMAIL_KEY = 'vt-email';
 const LEGACY_CODE_KEY = 'vt-code';
 const OFFLINE_PREFIX = 'vt-offline:';
 const WORLD_QUEUE_KEY = 'vt-shared-road-queue';
@@ -14,42 +16,56 @@ const FARMERS_TIMEOUT_MS = 5000;
 const FARM_STATE_TIMEOUT_MS = 5000;
 const WORLD_TIMEOUT_MS = 5000;
 const TERRAIN_EDIT_TIMEOUT_MS = 8000;
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // email of the active session (used for /api/save bodies)
 let sessionEmail = '';
 let lastSent = '';
 let autosaveStarted = false;
 let pendingLogout = Promise.resolve();
+let authGeneration = 0;
+let authController = null;
 
 function normEmail(v) {
-  const e = String(v == null ? '' : v).trim().toLowerCase();
-  if (e.length === 0 || e.length > 120) return '';
-  if (!EMAIL_RE.test(e)) return '';
-  return e;
+  return normalizeFarmerName(v);
 }
 
 export function codeOK(v) {
   return String(v == null ? '' : v).trim().length > 0;
 }
 
-export function rememberedEmail() {
+export function rememberedName() {
   try {
     // Remove the passcode saved by older builds; it must never be retained client-side.
     localStorage.removeItem(LEGACY_CODE_KEY);
-    return localStorage.getItem(EMAIL_KEY) || '';
+    const current = localStorage.getItem(NAME_KEY);
+    if (current) return formatFarmerName(current);
+    const legacy = formatFarmerName(localStorage.getItem(LEGACY_EMAIL_KEY));
+    if (legacy) {
+      try {
+        localStorage.setItem(NAME_KEY, legacy);
+        localStorage.removeItem(LEGACY_EMAIL_KEY);
+      } catch (err) { /* A readable old hint remains useful even when writes are blocked. */ }
+    }
+    return legacy;
   } catch (err) {
     return '';
   }
 }
 
-export function hasRememberedEmail() {
-  return rememberedEmail() !== '';
+export function hasRememberedName() {
+  return rememberedName() !== '';
 }
 
+// Compatibility aliases for integrations while the login UI migrates.
+export const rememberedEmail = rememberedName;
+export const hasRememberedEmail = hasRememberedName;
+
 export function forgetRememberedCredentials() {
+  authGeneration++;
+  if (authController) { authController.abort(); authController = null; }
   try {
-    localStorage.removeItem(EMAIL_KEY);
+    localStorage.removeItem(NAME_KEY);
+    localStorage.removeItem(LEGACY_EMAIL_KEY);
     localStorage.removeItem(LEGACY_CODE_KEY);
   } catch (err) {
     /* storage may be blocked */
@@ -76,12 +92,14 @@ function loadOffline(email) {
 function mirrorOffline(email, raw) {
   try {
     localStorage.setItem(OFFLINE_PREFIX + email, raw);
+    return true;
   } catch (err) {
     /* storage full or blocked — ignore */
+    return false;
   }
 }
 
-function post(path, body, timeoutMs) {
+function post(path, body, timeoutMs, authentication = false) {
   const payload = {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -90,6 +108,10 @@ function post(path, body, timeoutMs) {
   let timer = null;
   if (typeof AbortController !== 'undefined') {
     const ctrl = new AbortController();
+    if (authentication) {
+      if (authController) authController.abort();
+      authController = ctrl;
+    }
     payload.signal = ctrl.signal;
     timer = setTimeout(function () {
       ctrl.abort();
@@ -98,69 +120,90 @@ function post(path, body, timeoutMs) {
   return fetch(path, payload).then(
     function (res) {
       if (timer) clearTimeout(timer);
+      if (authentication && authController && authController.signal === payload.signal) authController = null;
       return res;
     },
     function (err) {
       if (timer) clearTimeout(timer);
+      if (authentication && authController && authController.signal === payload.signal) authController = null;
       throw err;
     }
   );
 }
 
-// Resolves {mode:'online'|'offline', email, state}; rejects with a
-// kid-readable Error message only when the code/email is definitively bad.
-// The Worker keeps the session in an HttpOnly cookie. Only the email is stored
+// Resolves {mode:'online'|'offline', name, email, state}. `email` is a legacy
+// internal identity alias, not an email requirement. Only the name is stored
 // locally so a remembered session can be restored without saving the passcode.
-export function login(email, code, remember) {
+export function login(name, password, remember) {
+  const display = formatFarmerName(name);
+  const em = normEmail(name);
+  if (!em) return Promise.reject(new Error('Use a farmer name up to 64 characters, with letters, numbers, spaces, dots, apostrophes or hyphens.'));
+  if (typeof password !== 'string' || !codeOK(password) || password.length > 256) return Promise.reject(new Error('Don’t forget your password!'));
   const clearSession = remember ? pendingLogout : forgetRememberedCredentials();
-  const em = normEmail(email);
-  if (!em) return Promise.reject(new Error('Enter your email like farmer@mail.com'));
-  if (!codeOK(code)) return Promise.reject(new Error('Wrong secret code'));
-  const body = { email: em, code: String(code).trim(), remember: remember === true };
+  const generation = ++authGeneration;
+  const body = { name: display, password: password.trim(), remember: remember === true };
 
   return clearSession.catch(function () { return null; })
-    .then(function () { return post('/api/login', body, LOGIN_TIMEOUT_MS); })
+    .then(function () {
+      if (generation !== authGeneration) throw new Error('login-cancelled');
+      return post('/api/login', body, LOGIN_TIMEOUT_MS, true);
+    })
     .then(function (res) {
-      if (res.status === 401) throw new Error('wrong-code');
+      if (generation !== authGeneration) throw new Error('login-cancelled');
+      if (res.status === 401 || res.status === 403) throw new Error('wrong-password');
+      if (res.status >= 400 && res.status < 500) throw new Error('login-rejected');
       if (!res.ok) throw new Error('server');
-      return res.json().then(function (data) {
+      return res.json().catch(function () { throw new Error('login-rejected'); }).then(function (data) {
+        if (generation !== authGeneration) throw new Error('login-cancelled');
+        if (!data || data.ok !== true || normEmail(data.email || data.name) !== em) throw new Error('login-rejected');
         sessionEmail = em;
         lastSent = '';
         if (remember) {
-          try { localStorage.setItem(EMAIL_KEY, em); } catch (err) { /* ignore */ }
+          try { localStorage.setItem(NAME_KEY, display); } catch (err) { /* ignore */ }
         }
         return {
           mode: 'online',
-          email: (data && data.email) || em,
+          name: display,
+          email: em,
           farmSlot: (data && typeof data.farmSlot === 'number') ? data.farmSlot : -1,
           state: (data && data.state) || null,
         };
       });
     })
     .catch(function (err) {
-      // a definitive 401 blocks entry; anything else falls back to offline play
-      if (err && err.message === 'wrong-code') throw new Error('Wrong secret code');
+      if (generation !== authGeneration || (err && err.message === 'login-cancelled')) throw new Error('login-cancelled');
+      // Definitive auth/validation failures must never turn into offline entry.
+      if (err && err.message === 'wrong-password') throw new Error('That password didn’t work. Try again!');
+      if (err && err.message === 'login-rejected') throw new Error('Could not sign in. Check your farmer name and try again.');
       sessionEmail = em;
       if (remember) {
-        try { localStorage.setItem(EMAIL_KEY, em); } catch (storageErr) { /* ignore */ }
+        try { localStorage.setItem(NAME_KEY, display); } catch (storageErr) { /* ignore */ }
       }
-      return { mode: 'offline', email: em, farmSlot: -1, state: loadOffline(em) };
+      return { mode: 'offline', name: display, email: em, farmSlot: -1, state: loadOffline(em) };
     });
 }
 
 // Resume a remembered server session; this deliberately has no offline fallback.
-export function restoreRememberedSession(email) {
-  const em = normEmail(email);
-  if (!em) return Promise.reject(new Error('Enter your email like farmer@mail.com'));
-  return post('/api/login', { email: em, remember: true }, LOGIN_TIMEOUT_MS).then(function (res) {
+export function restoreRememberedSession(name) {
+  const em = normEmail(name);
+  if (!em) return Promise.reject(new Error('Type your farmer name first.'));
+  const generation = ++authGeneration;
+  return pendingLogout.then(function () {
+    if (generation !== authGeneration) throw new Error('login-cancelled');
+    return post('/api/login', { name: formatFarmerName(name), remember: true }, LOGIN_TIMEOUT_MS, true);
+  }).then(function (res) {
+    if (generation !== authGeneration) throw new Error('login-cancelled');
     if (res.status === 401) throw new Error('session-expired');
     if (!res.ok) throw new Error('server');
     return res.json().then(function (data) {
+      if (generation !== authGeneration) throw new Error('login-cancelled');
+      if (!data || data.ok !== true || normEmail(data.email || data.name) !== em) throw new Error('server');
       sessionEmail = em;
       lastSent = '';
       return {
         mode: 'online',
-        email: (data && data.email) || em,
+        name: formatFarmerName(name),
+        email: em,
         farmSlot: (data && typeof data.farmSlot === 'number') ? data.farmSlot : -1,
         state: (data && data.state) || null,
       };
@@ -411,10 +454,10 @@ export function tickSave(getSession, getState) {
   } catch (err) {
     return;
   }
-  mirrorOffline(session.email, raw);
-  if (session.mode !== 'online') return Promise.resolve(false);
+  const mirrored = mirrorOffline(session.email, raw);
+  if (session.mode !== 'online') return Promise.resolve(mirrored);
   if (raw === lastSent) return Promise.resolve(true);
-  return post('/api/save', { email: sessionEmail, state: state }, SAVE_TIMEOUT_MS)
+  return post('/api/save', { name: sessionEmail, state: state }, SAVE_TIMEOUT_MS)
     .then(function (res) {
       if (res.ok) lastSent = raw;
       return res.ok;
@@ -458,7 +501,7 @@ export function startAutosave(getSession, getState) {
     if (session.mode !== 'online' || raw === lastSent) return;
     if (typeof navigator.sendBeacon !== 'function') return;
     try {
-      const body = JSON.stringify({ email: sessionEmail, state: state });
+      const body = JSON.stringify({ name: sessionEmail, state: state });
       navigator.sendBeacon('/api/save', new Blob([body], { type: 'application/json' }));
     } catch (err) {
       /* ignore */

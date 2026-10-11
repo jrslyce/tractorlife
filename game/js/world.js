@@ -17,7 +17,8 @@ export const SHOP_Z = 55;
 
 // ---------------------------------------------------------------- World class
 export class World {
-  constructor(scene, playerEmail) {
+  constructor(scene, playerEmail, renderOptions = {}) {
+    this._cullDistance = renderOptions.cullDistance || CULL_DISTANCE;
     this._farms = [];
     this._playerEmail = playerEmail || '';
     this._assignedSlot = -1;
@@ -29,7 +30,7 @@ export class World {
 
     // Create all farms
     for (var i = 0; i < NUM_FARMS; i++) {
-      var farm = new Farm(scene, i);
+      var farm = new Farm(scene, i, renderOptions);
       this._farms.push(farm);
     }
   }
@@ -94,7 +95,7 @@ export class World {
     if (dx * dx + dz * dz < 64) return; // no need to recull until moved 8 units
     this._lastCullX = playerX;
     this._lastCullZ = playerZ;
-    var cullSq = CULL_DISTANCE * CULL_DISTANCE;
+    var cullSq = this._cullDistance * this._cullDistance;
     for (var i = 0; i < this._farms.length; i++) {
       var farm = this._farms[i];
       farm.setCulled(farm.distanceToSq(playerX, playerZ) >= cullSq);

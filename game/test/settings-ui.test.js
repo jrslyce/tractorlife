@@ -35,6 +35,9 @@ test('settings dialog locks input, supports Escape, restores focus and lock stat
   experience.value = 'full';
   experience.listeners.change();
   assert.deepEqual(changedModes, ['full']);
+  const graphics = instance.element.children.flatMap(child => child.children || []).find(child => child.tag === 'select' && child.getAttribute('aria-label') === 'Graphics quality');
+  assert.ok(graphics);
+  assert.equal(graphics.getAttribute('aria-describedby'), 'graphics-settings-help');
   doc.listeners.keydown({ key: 'Escape', preventDefault() {} });
   assert.equal(instance.element.removed, true);
   assert.equal(doc.defaultView.VT_LOCKED, false);
@@ -43,4 +46,26 @@ test('settings dialog locks input, supports Escape, restores focus and lock stat
 
 test('settings dialog returns null without a usable document', () => {
   assert.equal(openSettings({ document: null }), null);
+});
+
+test('graphics reload is explicit and a failed save keeps the dialog usable', async () => {
+  const doc = {
+    body: new Element('body'), activeElement: null, defaultView: { VT_LOCKED: false },
+    createElement(tag) { const element = new Element(tag); element.ownerDocument = this; return element; },
+    createTextNode(text) { return { textContent: text }; },
+    addEventListener() {}, removeEventListener() {},
+  };
+  let calls = 0;
+  const instance = openSettings({ document: doc, onGraphicsReload: async () => { calls++; throw new Error('save-failed'); } });
+  const graphics = instance.element.children.flatMap(child => child.children || []).find(child => child.tag === 'select' && child.getAttribute('aria-label') === 'Graphics quality');
+  const reload = instance.element.children.find(child => child.textContent === 'Save game & reload graphics');
+  assert.equal(reload.hidden, true);
+  graphics.value = 'balanced'; graphics.listeners.change();
+  assert.equal(calls, 0);
+  assert.equal(reload.hidden, false);
+  await reload.listeners.click();
+  assert.equal(calls, 1);
+  assert.equal(reload.disabled, false);
+  assert.ok(instance.element.children.some(child => child.textContent?.startsWith('Could not save.')));
+  instance.close();
 });

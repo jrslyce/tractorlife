@@ -264,13 +264,18 @@ export class Input {
     driving = !!driving;
     var changed = this._drivingMode !== driving;
     this._drivingMode = driving;
-    if (this._btnWrap) this._btnWrap.classList.toggle('vt-driving', this._drivingMode);
-    if (document.body) document.body.classList.toggle('vt-driving', this._drivingMode);
+    if (changed || !this._drivingSynced) {
+      if (this._btnWrap) this._btnWrap.classList.toggle('vt-driving', this._drivingMode);
+      if (document.body) document.body.classList.toggle('vt-driving', this._drivingMode);
+      this._drivingSynced = true;
+    }
     // Use one driving control layout for every machine and browser. Pointer
     // input works with touch or mouse, while the keyboard remains supported.
     if (this._vehicleControls) {
-      this._vehicleControls.style.display = this._drivingMode ? 'block' : 'none';
-      this._vehicleControls.style.visibility = this._drivingMode ? 'visible' : 'hidden';
+      const display = this._drivingMode ? 'block' : 'none';
+      const visibility = this._drivingMode ? 'visible' : 'hidden';
+      if (this._vehicleControls.style.display !== display) this._vehicleControls.style.display = display;
+      if (this._vehicleControls.style.visibility !== visibility) this._vehicleControls.style.visibility = visibility;
     }
     if (changed && this._drivingMode) {
       this._joyDrive = 0;
@@ -308,6 +313,10 @@ export class Input {
   _setButtonLabel(action, emoji, label) {
     var b = this._btnByAction && this._btnByAction[action];
     if (!b) return;
+    this._buttonLabels = this._buttonLabels || {};
+    const signature = emoji + '\n' + label;
+    if (this._buttonLabels[action] === signature) return;
+    this._buttonLabels[action] = signature;
     var ico = b.querySelector('.vt-ico'), lbl = b.querySelector('.vt-lbl');
     if (ico) ico.textContent = emoji;
     if (lbl) lbl.textContent = label;
@@ -315,7 +324,10 @@ export class Input {
   }
   _setButtonVisible(action, visible) {
     var b = this._btnByAction && this._btnByAction[action];
-    if (b) b.style.display = visible ? 'block' : 'none';
+    if (b) {
+      const display = visible ? 'block' : 'none';
+      if (b.style.display !== display) b.style.display = display;
+    }
   }
   _updateContextButtons() {
     this._setButtonVisible('enterVehicle', !this._drivingMode && this._enterNear);

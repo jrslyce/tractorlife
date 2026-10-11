@@ -6,8 +6,11 @@ const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const main = readFileSync(new URL('../js/main.js', import.meta.url), 'utf8');
 
 test('login has explicit accessible names and status feedback, and browser zoom is allowed', () => {
-  assert.match(html, /aria-label="Email address"/);
-  assert.match(html, /aria-label="Secret code"/);
+  assert.match(html, /id="login-name"/);
+  assert.match(html, /for="login-name"[^>]*>Name</);
+  assert.match(html, /for="login-code"[^>]*>Password</);
+  assert.match(html, /autocomplete="username"/);
+  assert.doesNotMatch(html, /type="email"/);
   assert.match(html, /id="login-msg" role="status" aria-live="polite"/);
   assert.match(html, /name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/);
   assert.doesNotMatch(html, /user-scalable=no|maximum-scale=1/);

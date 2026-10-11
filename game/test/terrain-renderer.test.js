@@ -94,3 +94,20 @@ test('mapHit resolves signed face normals to the correct cell, including negativ
     { x: 2, y: -1, z: 3, normal: { x: 0, y: 0, z: -1 }, face: { x: 0, y: 0, z: -1 } });
   assert.equal(renderer.mapHit({ point: { x: 0, y: 0, z: 0 } }), null);
 });
+
+test('deferred dirty chunks are coalesced and flushed under a per-frame chunk budget', () => {
+  const terrain = makeTerrain({ cells: { '0,-1,0': 'dirt', '2,-1,0': 'stone' } });
+  const renderer = createTerrainRenderer(THREE, makeScene(), terrain, { deferred: true });
+  renderer.rebuildAll();
+  const old = renderer.chunks.get('0,0')[0];
+  terrain.markChanged('0,0', '1,0', '0,0'); renderer.update();
+  assert.equal(renderer.pendingCount, 2);
+  assert.equal(old.geometry.disposed, false);
+  assert.equal(renderer.flush(1), 1);
+  assert.equal(old.geometry.disposed, true);
+  assert.equal(renderer.pendingCount, 1);
+  renderer.flush(1);
+  assert.equal(renderer.pendingCount, 0);
+  terrain.markChanged('0,0'); renderer.update(); renderer.dispose();
+  assert.equal(renderer.pendingCount, 0);
+});

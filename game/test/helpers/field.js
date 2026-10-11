@@ -7,6 +7,7 @@ const source = await readFile(new URL('../../js/field.js', import.meta.url), 'ut
 export const { Field, TileState } = await import('data:text/javascript;base64,' +
   Buffer.from(source.replace("import * as THREE from 'three';", 'const THREE = {};')
     .replaceAll("'./crop-problems.js'", JSON.stringify(new URL('../../js/crop-problems.js', import.meta.url).href))
+    .replaceAll("'./field-save.js'", JSON.stringify(new URL('../../js/field-save.js', import.meta.url).href))
     .replaceAll("'./soil-health.js'", JSON.stringify(new URL('../../js/soil-health.js', import.meta.url).href))).toString('base64'));
 
 export function makeField(crop = 'wheat', state = TileState.PLANTED, count = 9, cols = 3) {

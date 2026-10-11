@@ -44,6 +44,32 @@ export function openSettings(options = {}) {
   dialog.append(heading);
   let value = getPreferences();
 
+  const graphicsLabel = doc.createElement('label');
+  graphicsLabel.append(doc.createTextNode('Graphics quality '));
+  const graphics = doc.createElement('select');
+  graphics.setAttribute('aria-label', 'Graphics quality');
+  graphics.setAttribute('aria-describedby', 'graphics-settings-help');
+  for (const [v, text] of [['auto', 'Auto'], ['low', 'Low · older devices'], ['balanced', 'Balanced'], ['high', 'High']]) {
+    const option = doc.createElement('option'); option.value = v; option.textContent = text; graphics.append(option);
+  }
+  graphics.value = value.graphicsQuality;
+  const graphicsHelp = doc.createElement('p');
+  graphicsHelp.id = 'graphics-settings-help';
+  graphicsHelp.textContent = 'Low is recommended for an iPad 6 or older 4 GB laptop. Graphics changes apply after reloading; farming features are unchanged.';
+  const reloadGraphics = doc.createElement('button');
+  reloadGraphics.type = 'button'; reloadGraphics.textContent = 'Save game & reload graphics'; reloadGraphics.hidden = true;
+  graphics.addEventListener('change', () => {
+    value = setPreferences({ graphicsQuality: graphics.value });
+    reloadGraphics.hidden = !options.onGraphicsReload;
+  });
+  reloadGraphics.addEventListener('click', async () => {
+    reloadGraphics.disabled = true;
+    try { await options.onGraphicsReload?.(); }
+    catch { graphicsHelp.textContent = 'Could not save. Your game is still open; reconnect and try again.'; }
+    finally { reloadGraphics.disabled = false; }
+  });
+  graphicsLabel.append(graphics); dialog.append(graphicsLabel, graphicsHelp, reloadGraphics);
+
   const scaleLabel = doc.createElement('label');
   scaleLabel.textContent = 'Text size ';
   const scale = doc.createElement('select');
