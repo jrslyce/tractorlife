@@ -252,10 +252,12 @@ function assignFarmSlot(email) {
 }
 
 const ACCOUNT_PREFIX = "account:";
-const PASSWORD_ITERATIONS = 120000;
-async function passwordDigest(password, salt) {
+// Production Workers caps PBKDF2 at 100,000 iterations; local workerd may not.
+const PASSWORD_ITERATIONS = 100000;
+const LEGACY_PASSWORD_ITERATIONS = 120000;
+async function passwordDigest(password, salt, iterations = PASSWORD_ITERATIONS) {
   const key = await crypto.subtle.importKey("raw", encoder.encode(password), "PBKDF2", false, ["deriveBits"]);
-  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt: base64UrlDecode(salt), iterations: PASSWORD_ITERATIONS }, key, 256);
+  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt: base64UrlDecode(salt), iterations }, key, 256);
   return new Uint8Array(bits);
 }
 function equalBytes(a, b) {
@@ -562,7 +564,7 @@ export class NameFarmerList {
       }
       const existing = await this.ctx.storage.get(ACCOUNT_PREFIX + email);
       if (existing) {
-        const actual = await passwordDigest(body.password.trim(), existing.salt);
+        const actual = await passwordDigest(body.password.trim(), existing.salt, existing.iterations ?? LEGACY_PASSWORD_ITERATIONS);
         if (!equalBytes(actual, base64UrlDecode(existing.hash))) return json({ ok: false, error: "wrong password" }, 401);
         await this.ctx.storage.put(email, JSON.stringify({ lastSeen: Date.now(), farmSlot: existing.farmSlot }));
         return json({ ok: true, farmSlot: existing.farmSlot });
@@ -589,7 +591,7 @@ export class NameFarmerList {
         const preferred = legacy || body.savedFarm === true ? (legacy && legacy.farmSlot) ?? assignFarmSlot(email) : -1;
         const slot = preferred >= 0 ? preferred : Array.from({ length: 10 }, (_, index) => index).find(index => !used.has(index));
         if (slot === undefined || used.has(slot)) return json({ ok: false, error: "farms full" }, 409);
-        await storage.put(ACCOUNT_PREFIX + email, { salt, hash, farmSlot: slot });
+        await storage.put(ACCOUNT_PREFIX + email, { salt, hash, iterations: PASSWORD_ITERATIONS, farmSlot: slot });
         await storage.put(email, JSON.stringify({ lastSeen: Date.now(), farmSlot: slot }));
         return json({ ok: true, farmSlot: slot });
       });
