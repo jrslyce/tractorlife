@@ -1,6 +1,6 @@
 /** Pure bounded voxel state. Coordinates are cell centers on X/Z and cell bottoms on Y. */
 export const TERRAIN_VERSION = 1;
-export const TERRAIN_GENERATION_VERSION = 2;
+export const TERRAIN_GENERATION_VERSION = 3;
 export const TERRAIN_MATERIALS = Object.freeze(['grass', 'dirt', 'stone', 'wood', 'air']);
 const MATERIAL_SET = new Set(TERRAIN_MATERIALS);
 const MAX_CELLS = 1_000_000;
@@ -71,8 +71,12 @@ export class Terrain {
   }
   _inBounds(x, y, z) { return Number.isSafeInteger(x) && Number.isSafeInteger(y) && Number.isSafeInteger(z) && x >= this.originX && x < this.originX + this.width && z >= this.originZ && z < this.originZ + this.depth && y >= this.minY && y <= this.maxY; }
   _base(x, y, z) {
-    const relief = this.originZ === -53 && this.surfaceY === 0 && this.minY === -8
-      ? terrainHeight(x - this.originX, z - this.originZ, this.width, this.depth) : 0;
+    const worldTerrain = this.originX === -10 && this.originZ === -78 && this.width === 1791 && this.depth === 159;
+    const localX = ((x % 180) + 180) % 180 - 108;
+    const relief = worldTerrain && localX >= 0 && localX < 38 && z >= -53 && z <= 24
+      ? terrainHeight(localX, z + 53, 38, 78)
+      : this.originZ === -53 && this.surfaceY === 0 && this.minY === -8
+        ? terrainHeight(x - this.originX, z - this.originZ, this.width, this.depth) : 0;
     const top = this.surfaceY + relief;
     if (y >= top) return null;
     if (y <= this.minY + 2) return 'stone';

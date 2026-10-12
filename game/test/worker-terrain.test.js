@@ -43,7 +43,7 @@ test('terrain edit validates bounds, revision and inventory; repeats are idempot
   assert.deepEqual(await (await post(op)).json(), first);
   assert.equal((await post({ ...op, material: 'stone' })).status, 409); // ID cannot be reused for another operation.
   assert.equal((await post({ ...op, operationId: 'operation_456', expectedRevision: 0 })).status, 409);
-  assert.equal((await post({ ...op, x: 108 })).status, 400);
+  assert.equal((await post({ ...op, x: -11 })).status, 400);
 });
 
 test('authoritative hill layers match client topology and survive break/place reload', async () => {
@@ -67,7 +67,7 @@ test('authoritative hill layers match client topology and survive break/place re
   const impossible = await post({ ...common, action: 'break', y: 16, expectedRevision: 2, operationId: 'air_break_01' });
   assert.equal((await impossible.json()).error, 'empty cell');
   const reserved = await post({ ...common, x: 116, z: -40, y: -1, action: 'break', expectedRevision: 2, operationId: 'reserved_plot_1' });
-  assert.equal(reserved.status, 400); // Crop expansion area cannot be mined out from below.
+  assert.equal(reserved.status, 200); // Ground under expansion fields is now editable.
 });
 
 test('ordinary save cannot overwrite canonical terrain', async () => {
@@ -81,7 +81,7 @@ test('ordinary save cannot overwrite canonical terrain', async () => {
   assert.deepEqual(state.terrainEdits, { a: { material: 'stone' } });
 });
 
-test('server awards dirt for grass, requires the pickaxe for stone, and checks placement support', async () => {
+test('server awards dirt for grass, allows punching stone, and checks placement support', async () => {
   const { GameSaves } = await workerModule();
   const storage = memoryStorage(); storage.transaction = fn => fn(storage);
   await storage.put('state', JSON.stringify({ inventory: { selectedSlot: 0, slots: [
@@ -94,8 +94,8 @@ test('server awards dirt for grass, requires the pickaxe for stone, and checks p
   assert.equal(grass.edit.material, 'air');
   assert.equal(grass.inventory.slots[1].itemId, 'dirt');
   assert.equal(grass.inventory.slots[1].qty, 2);
-  assert.equal((await post({ ...common, expectedRevision: 1, operationId: 'break_stone_1', action: 'break', x: 109, y: -6, z: -52 })).status, 400);
-  const placedResponse = await post({ ...common, expectedRevision: 1, operationId: 'place_float_1', action: 'place', material: 'dirt', x: 109, y: 2, z: -52 });
+  assert.equal((await post({ ...common, expectedRevision: 1, operationId: 'break_stone_1', action: 'break', x: 109, y: -6, z: -52 })).status, 200);
+  const placedResponse = await post({ ...common, expectedRevision: 2, operationId: 'place_float_1', action: 'place', material: 'dirt', x: 109, y: 2, z: -52 });
   assert.equal((await placedResponse.json()).error, 'not attached');
 });
 
@@ -145,4 +145,30 @@ test('authenticated Worker route derives the owner and broadcasts only a committ
   assert.equal(broadcasts[0].type, 'terrain-edit');
   assert.equal(broadcasts[0].email, 'owner@example.com');
   assert.deepEqual(broadcasts[0].edit, accepted.edit);
+});
+
+test('server and client agree on editable ground throughout the world and preserve collected wood', async () => {
+  const { GameSaves } = await workerModule();
+  const { createFarmTerrain } = await import('../js/terrain-runtime.js');
+  const terrain = createFarmTerrain(0);
+  const storage = memoryStorage(); storage.transaction = fn => fn(storage);
+  await storage.put('state', JSON.stringify({ harvestedScenery: ['tree:0','fence:0:rail:0'], inventory: {
+    selectedSlot:0, slots:[{itemId:'wood',qty:4},null,null,null,null,null,null,null,null]
+  } }));
+  const saves = new GameSaves({storage},{});
+  const points = [[-10,-78],[1780,80],[8,-54],[0,35],[900,-66],[1000,50],[116,-40]];
+  let revision = 0;
+  for (const [x,z] of points) {
+    assert.equal(terrain.getCell(x,-1,z),'grass');
+    const response = await saves.fetch(new Request('https://saves/terrain-edit', {method:'POST',body:JSON.stringify({
+      farmSlot:0,operationId:'world_dig_'+revision,expectedRevision:revision,action:'break',x,y:-1,z
+    })}));
+    const result=await response.json();
+    assert.equal(result.ok,true,JSON.stringify(result)); revision++;
+    assert.equal(result.inventory.slots[0].qty,4);
+    assert.equal(result.inventory.slots[1].qty,revision);
+  }
+  const saved=JSON.parse(await storage.get('state'));
+  assert.equal(Object.keys(saved.terrainEdits).length,points.length);
+  assert.deepEqual(saved.harvestedScenery,['tree:0','fence:0:rail:0']);
 });

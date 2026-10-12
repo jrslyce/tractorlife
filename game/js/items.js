@@ -29,7 +29,7 @@ export var ITEMS = [
   { id: 'metal', name: 'Metal Parts', emoji: '⚙️', price: 15, category: 'Building', description: 'Parts required to build or repair a farm water pump.' },
   { id: 'axe', name: 'Axe', emoji: '🪓', price: 35, reusable: true, category: 'Farm supplies', description: 'Reusable hand tool. Hold to chop trees and wooden blocks faster.' },
   { id: 'shovel', name: 'Shovel', emoji: '🥄', price: 25, reusable: true, category: 'Farm supplies', description: 'Reusable hand tool. Hold to dig dirt faster.' },
-  { id: 'pickaxe', name: 'Pickaxe', emoji: '⛏️', price: 45, reusable: true, category: 'Farm supplies', description: 'Reusable hand tool. Required to mine stone blocks.' },
+  { id: 'pickaxe', name: 'Pickaxe', emoji: '⛏️', price: 45, reusable: true, category: 'Farm supplies', description: 'Reusable hand tool. Mines stone blocks faster than punching.' },
   { id: 'tool_use', name: 'Garden Tools', emoji: '🪓', price: 8, category: 'Farm supplies', description: 'Tools for pruning and clearing stumps.' },
   { id: 'corn_seeds', name: 'Corn Seeds', emoji: '🌽', price: 15, pack: 100, category: 'Farm supplies', description: 'One purchase gives 100 seeds. Load them into the planter to plant corn.' },
   { id: 'wheat_seeds', name: 'Wheat Seeds', emoji: '🌾', price: 10, pack: 100, category: 'Farm supplies', description: 'One purchase gives 100 seeds. Load them into the planter to plant wheat.' },

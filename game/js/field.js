@@ -207,6 +207,7 @@ export class Field {
       originX + (cols - 1) * tile / 2, 1.1, originZ + (rows - 1) * tile / 2
     ), Math.hypot(cols * tile / 2 + 0.5, rows * tile / 2 + 0.5, 1.5));
     tiles.boundingSphere = bounds;
+    tiles.userData.terrainSurface = 'overlay';
     scene.add(tiles);
     this._tileMesh = tiles;
 
@@ -226,6 +227,7 @@ export class Field {
     );
     under.castShadow = false;
     under.receiveShadow = true;
+    under.userData.terrainSurface = 'overlay';
     scene.add(under);
     this._underMesh = under;
 
@@ -242,6 +244,7 @@ export class Field {
     crops.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     crops.castShadow = crops.receiveShadow = true;
     crops.boundingSphere = bounds.clone();
+    crops.userData.terrainSurface = 'overlay';
     scene.add(crops);
     this._cropMesh = crops;
   }

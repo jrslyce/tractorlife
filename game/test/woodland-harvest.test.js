@@ -5,21 +5,21 @@ import { FarmSystems } from '../js/farm-systems.js';
 function inventory({ full = false, rejects = false } = {}) {
   return {
     wood: 0, calls: 0,
-    canAdd(item, quantity) { assert.equal(item, 'wood'); assert.equal(quantity, 3); return !full; },
+    canAdd(item, quantity) { assert.equal(item, 'wood'); assert.ok(quantity === 1 || quantity === 3); return !full; },
     addItem(item, quantity) {
-      assert.equal(item, 'wood'); assert.equal(quantity, 3); this.calls++;
+      assert.equal(item, 'wood'); assert.ok(quantity === 1 || quantity === 3); this.calls++;
       if (rejects) return { ok: false };
       this.wood += quantity; return { ok: true };
     },
   };
 }
 
-test('harvest targets use world coordinates, stable IDs and exclude orchard, sapling and stump', () => {
+test('harvest targets use world coordinates, stable IDs and include orchard, sapling and stump', () => {
   const farm = new FarmSystems({ farmSlot: 2 });
   farm.woodland.trees[0].stage = 'stump';
   farm.woodland.trees[1].stage = 'young';
   const targets = farm.getHarvestTargets();
-  assert.equal(targets.length, 4);
+  assert.equal(targets.length, 8);
   assert.ok(targets.every(t => t.x > 360 && t.kind === 'tree' && t.material === 'wood'));
   assert.deepEqual(farm.getHarvestTargets(), targets);
   targets[0].x = -100;
@@ -57,12 +57,13 @@ test('completed chop awards exactly three wood once and persists the existing st
   assert.equal(stump.stage, 'stump');
   assert.notEqual(stump.id, target.id);
   assert.equal(farm.harvestTree(target.id, bag).success, false);
-  assert.equal(farm.harvestTree(stump.id, bag).success, false);
   assert.equal(bag.calls, 1);
   const restored = new FarmSystems();
   assert.equal(restored.restore(farm.serialize()), true);
   assert.deepEqual(restored.woodland.serialize(), farm.woodland.serialize());
-  assert.equal(restored.woodland.interact('clear-stump', stump.id, { toolUse: 1 }).success, true);
+  assert.equal(restored.harvestTree(stump.id, bag).success, true);
+  assert.equal(bag.wood, 4);
+  assert.equal(restored.woodland.trees.some(t => t.id === stump.id), false);
 });
 
 test('young trees harvest; changed revision rejects; legacy farm action cannot bypass hold', () => {
@@ -89,4 +90,13 @@ test('branches still give firewood and orchards still give fruit', () => {
   const orchard = farm.woodland.orchards[0];
   assert.equal(farm.interact(orchard, 'foot', resources).success, true);
   assert.equal(resources.fruit, 1);
+});
+
+ test('orchards can be punched in Simple Farm and stay removed after restore', () => {
+  const farm = new FarmSystems(); farm.setAdvancedSystemsEnabled(false);
+  const tree = farm.woodland.orchards[0], bag = inventory();
+  assert.equal(farm.harvestTree(tree.id, bag).success, true);
+  const restored = new FarmSystems(); restored.restore(farm.serialize());
+  assert.equal(restored.woodland.orchards.some(t=>t.id===tree.id),false);
+  assert.equal(bag.wood,3);
 });

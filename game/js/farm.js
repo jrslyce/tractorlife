@@ -214,6 +214,7 @@ export class Farm {
       dummy.updateMatrix();
       postMesh.setMatrixAt(pi2, dummy.matrix);
     }
+    postMesh.userData.harvestParts = uniquePosts.map((pos, i) => ({ id: 'fence:' + this._farmSlot + ':post:' + i, label: 'fence post', quantity: 1 }));
     postMesh.instanceMatrix.needsUpdate = true;
     postMesh.castShadow = true;
     postMesh.receiveShadow = true;
@@ -249,6 +250,14 @@ export class Farm {
     // Right edge (x = maxX): middle rail
     railSegments.push({ x: maxX, z: minZ, length: maxZ - minZ, axis: 'z', y: postH / 2 });
 
+    // Break rails into post-sized sections so one punch does not remove a whole boundary.
+    railSegments = railSegments.flatMap(seg => {
+      const pieces = [];
+      for (let offset = 0; offset < seg.length; offset += spacing) pieces.push({ ...seg,
+        x: seg.x + (seg.axis === 'x' ? offset : 0), z: seg.z + (seg.axis === 'z' ? offset : 0),
+        length: Math.min(spacing, seg.length - offset) });
+      return pieces;
+    });
     // Build rail InstancedMesh
     var railMesh = new THREE.InstancedMesh(railGeo, railMat, railSegments.length);
     for (var ri = 0; ri < railSegments.length; ri++) {
@@ -264,6 +273,7 @@ export class Farm {
       dummy.updateMatrix();
       railMesh.setMatrixAt(ri, dummy.matrix);
     }
+    railMesh.userData.harvestParts = railSegments.map((seg, i) => ({ id: 'fence:' + this._farmSlot + ':rail:' + i, label: 'fence rail', quantity: 1 }));
     railMesh.instanceMatrix.needsUpdate = true;
     railMesh.castShadow = true;
     railMesh.receiveShadow = true;
@@ -290,6 +300,7 @@ export class Farm {
     );
     houseMesh.scale.set(HOUSE_PAD_SIZE, 1, HOUSE_PAD_SIZE);
     houseMesh.receiveShadow = true;
+    houseMesh.userData.terrainSurface = 'overlay';
     scene.add(houseMesh);
 
     // Barn pad
@@ -301,6 +312,7 @@ export class Farm {
     );
     barnMesh.scale.set(BARN_PAD_SIZE, 1, BARN_PAD_SIZE);
     barnMesh.receiveShadow = true;
+    barnMesh.userData.terrainSurface = 'overlay';
     scene.add(barnMesh);
 
     this._cullables.push(houseMesh);
@@ -317,6 +329,7 @@ export class Farm {
     yardMesh.position.set(this._yardMinX + yardW / 2, 0.02, this._minZ + yardD / 2);
     yardMesh.scale.set(yardW - 1, 0.8, yardD - 1);
     yardMesh.receiveShadow = true;
+    yardMesh.userData.terrainSurface = 'overlay';
     scene.add(yardMesh);
     this._cullables.push(yardMesh);
     this._yardMesh = yardMesh;
@@ -356,6 +369,7 @@ export class Farm {
       mesh.receiveShadow = true;
       scene.add(mesh);
       this._terrainCutoutMeshes.push(mesh);
+      mesh.userData.terrainSurface = 'overlay';
       this._cullables.push(mesh);
     }
   }
@@ -426,6 +440,7 @@ export class Farm {
     if (this._expansionMarker) this._expansionMarker.visible = false;
     for (const mesh of [this._expansionField._tileMesh, this._expansionField._cropMesh, this._expansionField._underMesh]) {
       mesh.visible = !this._culled;
+      mesh.userData.terrainSurface = 'overlay';
       this._cullables.push(mesh);
     }
     return true;

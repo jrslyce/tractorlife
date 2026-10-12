@@ -109,7 +109,7 @@ test('resource rules give exact drops and tool timing without consuming tools', 
   assert.equal(getBreakRule('wood', 'shovel', 'block').duration, 5);
   assert.equal(getBreakRule('dirt', null, 'block').duration, 1);
   assert.equal(getBreakRule('dirt', 'shovel', 'block').duration, 0.35);
-  for (const tool of [null, 'axe', 'shovel']) assert.equal(getBreakRule('stone', tool, 'block'), null);
+  for (const tool of [null, 'axe', 'shovel']) assert.equal(getBreakRule('stone', tool, 'block').duration, 6);
   assert.deepEqual(getBreakRule('stone', 'pickaxe', 'block'), {
     duration: 2, itemId: 'stone', quantity: 1, label: 'Mine stone'
   });

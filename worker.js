@@ -58,7 +58,8 @@ function terrainHeight(x, z) {
 }
 
 function terrainBaseMaterial(x, y, z, slot) {
-  const top = terrainHeight(x - slot * 180 - 108, z + 53);
+  const localX = ((x % 180) + 180) % 180 - 108;
+  const top = localX >= 0 && localX < 38 && z >= -53 && z <= 24 ? terrainHeight(localX, z + 53) : 0;
   if (y >= top) return "air";
   if (y === top - 1) return "grass";
   if (y <= -6) return "stone";
@@ -71,10 +72,8 @@ function terrainCellMaterial(state, x, y, z, slot) {
 }
 
 function terrainInBounds(slot, x, y, z) {
-  const localX = x - slot * 180 - 108;
-  const localZ = z + 53;
-  const reservedExpansionPlot = localX >= 5 && localX <= 34 && localZ >= 0 && localZ <= 22;
-  return x > slot * 180 + 108 && x < slot * 180 + 145 && z > -53 && z < 24 && y > -8 && y <= 16 && !reservedExpansionPlot;
+  return [x, y, z].every(Number.isSafeInteger) && x >= -10 && x <= 1780 &&
+    z >= -78 && z <= 80 && y > -8 && y <= 16;
 }
 
 function seedCanonicalTerrain(state, farmSlot) {
@@ -86,20 +85,19 @@ function seedCanonicalTerrain(state, farmSlot) {
       const coords = cell.split(',').map(Number);
       const material = typeof value === 'string' ? value : value && value.material;
       if (coords.length !== 3 || !coords.every(Number.isSafeInteger) || !terrainInBounds(farmSlot, coords[0], coords[1], coords[2]) ||
-          !TERRAIN_MATERIALS.has(material) || Object.keys(state.terrainEdits).length >= MAX_TERRAIN_CELLS) continue;
+          !(TERRAIN_MATERIALS.has(material) || material === "air") || Object.keys(state.terrainEdits).length >= MAX_TERRAIN_CELLS) continue;
       state.terrainEdits[cell] = { material: material, revision: 0 };
     }
   }
   const terrain = state.terrain;
   const expectedX = farmSlot * 180 + 108;
   if (!Object.keys(state.terrainEdits).length && isPlainObject(terrain) && isPlainObject(terrain.bounds) && Array.isArray(terrain.changes) &&
-      terrain.bounds.originX === expectedX && terrain.bounds.originZ === -53 &&
-      terrain.bounds.width === 38 && terrain.bounds.depth === 78 &&
+      ((terrain.bounds.originX === expectedX && terrain.bounds.originZ === -53 && terrain.bounds.width === 38 && terrain.bounds.depth === 78) ||
+       (terrain.bounds.originX === -10 && terrain.bounds.originZ === -78 && terrain.bounds.width === 1791 && terrain.bounds.depth === 159)) &&
       terrain.bounds.minY === -8 && terrain.bounds.maxY === 16 && terrain.changes.length <= MAX_TERRAIN_CELLS) {
     for (const row of terrain.changes) {
       if (!Array.isArray(row) || row.length !== 4 || !row.slice(0, 3).every(Number.isSafeInteger) ||
-          !TERRAIN_MATERIALS.has(row[3]) || row[0] <= expectedX || row[0] >= expectedX + 37 ||
-          row[1] < -7 || row[1] > 16 || row[2] <= -53 || row[2] >= 24) continue;
+          !(TERRAIN_MATERIALS.has(row[3]) || row[3] === "air") || !terrainInBounds(farmSlot, row[0], row[1], row[2])) continue;
       state.terrainEdits[row[0] + "," + row[1] + "," + row[2]] = { material: row[3], revision: 0 };
     }
   }
@@ -376,7 +374,6 @@ export class NameGameSaves {
         }
         const material = body.action === "place" ? body.material : current;
         const itemId = body.action === "break" && current === "grass" ? "dirt" : material;
-        if (body.action === "break" && current === "stone" && toolId !== "pickaxe") { result = { error: "pickaxe required", revision: state.terrainRevision }; return; }
         if (body.action === "break" && current === "dirt" && toolId && toolId !== "shovel") { result = { error: "wrong tool", revision: state.terrainRevision }; return; }
         if (body.action === "break" && current === "wood" && toolId && toolId !== "axe") { result = { error: "wrong tool", revision: state.terrainRevision }; return; }
         if (body.action === "place") {

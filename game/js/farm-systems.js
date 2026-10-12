@@ -77,7 +77,7 @@ export class FarmSystems {
     for (const mesh of this._props) this.scene.remove(mesh);
     this._props = [];
     const T = this.THREE, s = this._shared;
-    const harvestableTrees = new Set(this.woodland.trees.filter(tree => tree.stage === 'mature' || tree.stage === 'young'));
+    const harvestableTrees = new Set([...this.woodland.trees, ...this.woodland.orchards, ...this.woodland.saplings, ...this.woodland.debris]);
     const draw = (items, geo, mat, scale, cap = Infinity) => {
       for (const item of items.slice(0, cap)) {
         const m = new T.Mesh(geo, mat);
@@ -187,7 +187,7 @@ export class FarmSystems {
     return target ? { action: target.action, target: target.id, kind: target.kind, distance: target.distance, label: target.kind === 'tree' ? 'hold Chop to collect wood' : target.action.replaceAll('-', ' ') } : null;
   }
 
-  getHarvestTargets() { return this.advancedSystemsEnabled ? this.woodland.getHarvestTargets() : []; }
+  getHarvestTargets() { return this.woodland.getHarvestTargets(); }
 
   setAdvancedSystemsEnabled(enabled) {
     this.advancedSystemsEnabled = enabled !== false;
@@ -195,7 +195,6 @@ export class FarmSystems {
   }
 
   harvestTree(id, inventory, expectedRevision) {
-    if (!this.advancedSystemsEnabled) return { success: false, reason: 'systems-paused', costs: {}, rewards: {}, events: [], message: PAUSED_SYSTEMS_MESSAGE };
     const result = this.woodland.harvestTree(id, inventory, expectedRevision);
     if (result.success) {
       for (const event of result.events) this.onEvent({ ...event, source: 'woodland' });
