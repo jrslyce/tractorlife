@@ -1,5 +1,5 @@
 // Lightweight decorative environment for the shared farm world.
-// Geometry is intentionally non-interactive: gameplay/collision stays in the
+// Tree instances expose stable harvest IDs; other simulation remains in the
 // farm/world systems. Coordinates assume ground at y=0, farms z=-54..28 and
 // the road centered at z=35; the scenery is kept north of the fields or south
 // of the road so it never obscures plots, spawn areas, or traffic.
@@ -49,11 +49,13 @@ export function buildEnvironment(scene, worldBounds = {}) {
   const bankGeo = new THREE.BoxGeometry(spanX + 8, 0.16, riverWidth + 3);
   const bank = new THREE.Mesh(bankGeo, bankMat);
   bank.position.set((minX + maxX) / 2, 0.015, riverZ);
+  bank.userData.terrainSurface = 'overlay';
   group.add(bank);
   const waterGeo = new THREE.PlaneGeometry(spanX + 4, riverWidth);
   const water = new THREE.Mesh(waterGeo, waterMat);
   water.rotation.x = -Math.PI / 2;
   water.position.set((minX + maxX) / 2, 0.12, riverZ);
+  water.userData.interactionIgnore = true;
   group.add(water);
   disposables.push(bankGeo, waterGeo);
 
@@ -73,6 +75,7 @@ export function buildEnvironment(scene, worldBounds = {}) {
     const mesh = new THREE.Mesh(rippleGeo, rippleMat);
     mesh.rotation.x = -Math.PI / 2;
     mesh.position.set(minX + (i + 0.5) * spanX / rippleCount, 0.135, riverZ + (i % 3 - 1) * 1.5);
+    mesh.userData.interactionIgnore = true;
     group.add(mesh);
     ripples.push(mesh);
   }
@@ -96,8 +99,9 @@ export function buildEnvironment(scene, worldBounds = {}) {
     const scale = 0.8 + rand() * 0.55;
     const broadleaf = rand() > 0.48;
     const variant = rand() > 0.58 ? 1 : 0;
-    treeRecords[0].push({ x, z, height, scale });
-    treeRecords[broadleaf ? (variant ? 4 : 3) : (variant ? 2 : 1)].push({ x, z, height, scale });
+    const id = 'tree:' + treeRecords[0].length;
+    treeRecords[0].push({ x, z, height, scale, id });
+    treeRecords[broadleaf ? (variant ? 4 : 3) : (variant ? 2 : 1)].push({ x, z, height, scale, id });
   };
 
   // North woodland is set between river and field northern edge (z=-54),
@@ -150,6 +154,7 @@ export function buildEnvironment(scene, worldBounds = {}) {
       dummy.updateMatrix();
       mesh.setMatrixAt(i, dummy.matrix);
     }
+    mesh.userData.harvestParts = records.map(t => ({ id: t.id, label: 'tree', quantity: 3 }));
     mesh.instanceMatrix.needsUpdate = true;
     mesh.computeBoundingSphere();
     group.add(mesh);

@@ -60,7 +60,7 @@ test('Simple Farm pauses advanced simulation without losing state or recovery ac
   assert.deepEqual(emitted, []);
   assert.equal(farm.getPrompt({ x: -4, z: -28 }, 'foot'), null);
   assert.equal(farm.interact({ x: -4, z: -28 }, 'foot', {}).reason, 'systems-paused');
-  assert.deepEqual(farm.getHarvestTargets(), []);
+  assert.ok(farm.getHarvestTargets().length > 0); // Punching remains available in Simple Farm.
 
   const repairPrompt = farm.getPrompt({ x: 0, z: -66 }, 'foot');
   assert.equal(repairPrompt.action, 'repair-vehicle');

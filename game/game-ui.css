@@ -166,3 +166,13 @@ html[data-larger-controls="true"] #harvest-break{width:124px;height:124px;min-wi
 @media(max-height:550px){#shop-panel{max-height:calc(100dvh - 20px)!important}#shop-head{padding:10px 18px!important}#shop-head h2{font-size:28px!important}#shop-menu{padding:4px 18px!important}#shop-menu button{min-height:44px!important}#shop-menu .shop-menu-icon{display:none}#shop-list{padding:6px 18px 14px!important}#shop-list .shop-category{font-size:20px!important}}
 @media(max-width:520px){#shop-head{flex-wrap:nowrap!important;align-items:center!important;gap:8px!important;padding:14px 18px!important}#shop-head h2{flex:0 1 auto!important;font-size:28px!important}#shop-head-actions{width:auto!important;margin-left:auto;gap:6px!important}#shop-balance{font-size:18px!important;white-space:nowrap}#shop-close{width:48px;height:48px;min-width:48px}#shop-list{padding:8px 16px 18px!important}}
 .shop-empty{padding:22px;border-radius:20px;background:var(--organic-sand);color:var(--organic-ink);font:700 17px/1.4 Figtree;text-align:center}
+
+/* One explicit mode toggle above the shared Punch / Place action. */
+#harvest-controls>div:nth-of-type(2){display:grid!important;grid-template-columns:repeat(2,56px);justify-items:center;gap:12px 0;align-items:center}
+#harvest-mode{grid-column:1 / -1;grid-row:1;width:112px;min-height:48px;border:2px solid var(--organic-brown)!important;border-radius:999px!important;background:var(--organic-paper)!important;color:var(--organic-brown)!important;font:800 17px Figtree!important;box-shadow:0 4px 0 var(--organic-depth)}
+#harvest-break{grid-column:1 / -1;grid-row:2}
+#harvest-break.is-building{background:#427547!important;box-shadow:0 6px 0 #244328!important}
+#harvest-look-up,#harvest-look-down{position:absolute;right:60px;min-width:54px!important;width:54px;min-height:48px!important;bottom:calc(100% + 12px);font-size:14px!important}
+#harvest-look-down{right:0}
+#harvest-mode:focus-visible,#harvest-break:focus-visible{outline:3px solid white;outline-offset:5px}
+@media(max-width:700px){#harvest-controls>div:nth-of-type(2){grid-template-columns:repeat(2,38px)}#harvest-mode{width:86px;min-width:86px!important;font-size:15px!important}#harvest-look-up{right:48px}#harvest-look-down{right:-10px}}

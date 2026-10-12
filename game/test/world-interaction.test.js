@@ -93,7 +93,6 @@ test('slot, tool, mode, target identity and revision changes restart timing', ()
 
 test('invalid tool or material cannot progress or commit', () => {
   for (const target of [
-    { kind: 'block', id: 1, material: 'stone' },
     { kind: 'block', id: 1, material: 'metal' }
   ]) {
     const h = harness({ target, toolId: 'axe' });

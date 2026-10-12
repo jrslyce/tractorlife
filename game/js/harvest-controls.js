@@ -37,12 +37,18 @@ export class HarvestControls {
     this.buttons = document.createElement('div');
     this.buttons.style.cssText = 'display:flex;justify-content:center;gap:8px;margin-top:5px;pointer-events:auto';
     this.breakButton = this.button('Hold to punch', 'harvest-break');
-    this.placeButton = this.button('Place', 'harvest-place');
+    this.modeButton = this.button('Build', 'harvest-mode');
+    this.modeButton.addEventListener('click', e => {
+      e.preventDefault(); e.stopPropagation();
+      if (!this.isEnabled()) return;
+      this.cancel();
+      this.onBuildModeChange(!this.getBuildMode());
+    });
     this.lookUp = this.button('Aim ↑', 'harvest-look-up');
     this.lookDown = this.button('Aim ↓', 'harvest-look-down');
     this.lookUp.addEventListener('click', () => this.changePitch(0.15));
     this.lookDown.addEventListener('click', () => this.changePitch(-0.15));
-    this.buttons.append(this.breakButton, this.placeButton, this.lookUp, this.lookDown);
+    this.buttons.append(this.modeButton, this.breakButton, this.lookUp, this.lookDown);
     this.panel.append(this.caption, this.meter, this.buttons);
     document.body.append(this.panel);
     this.aimMarker = document.createElement('div');
@@ -60,21 +66,22 @@ export class HarvestControls {
     this.breakButton.addEventListener('pointerenter', () => { this.controlAim = true; });
     this.breakButton.addEventListener('pointerdown', e => {
       e.preventDefault(); e.stopPropagation();
-      if (!this.isEnabled()) return;
+      if (!this.isEnabled() || e.button !== 0) return;
+      if (this.getBuildMode()) {
+        this.cancel();
+        this.placeFromEvent(this.centerEvent());
+        return;
+      }
       this.touch = e.pointerType === 'touch' || this.touch;
       this.controlAim = true;
       const target = this.resolveTarget();
-      if (!target) { this.onResult('Face a nearby grove tree, wood block, or editable ground, then hold Punch.', false); return; }
+      if (!target) { this.onResult('Face a nearby tree, fence, or the ground, then hold Punch.', false); return; }
       if (!getBreakRule(target.material, this.inventory.getSelectedItem()?.itemId || '', target.kind)) {
-        this.onResult('Select a pickaxe to mine stone.', false);
+        this.onResult('That object cannot be harvested.', false);
         return;
       }
       this.start(e.pointerId);
       this.breakButton.setPointerCapture(e.pointerId);
-    });
-    this.placeButton.addEventListener('click', e => {
-      e.preventDefault();
-      if (this.isEnabled() && this.getBuildMode()) this.placeFromEvent(this.centerEvent());
     });
     this.canvas.addEventListener('pointermove', e => {
       if (this.held) return;
@@ -95,7 +102,7 @@ export class HarvestControls {
       if (this.touch) return;
       if (this.getBuildMode() && e.button === 0) {
         this.placeFromEvent(e);
-      } else if (e.button === (this.getBuildMode() ? 2 : 0)) {
+      } else if (!this.getBuildMode() && e.button === 0) {
         if (this.resolveTarget()) this.start(e.pointerId);
       }
     });
@@ -170,7 +177,7 @@ export class HarvestControls {
   }
 
   firstHit() {
-    return this.ray.intersectObjects(this.scene.children, true).find(hit => !this.ignored(hit.object));
+    return this.ray.intersectObjects(this.scene.children, true).find(hit => !this.ignored(hit.object) && !(this.getSurfaces && this.getSurfaces().ignoresHit(hit)));
   }
 
   placeFromEvent(event) {
@@ -222,10 +229,13 @@ export class HarvestControls {
     const position = this.character.group.position;
     const eye = new THREE.Vector3(position.x, position.y + 1.4, position.z);
     if (eye.distanceTo(hit.point) > 4) return null;
+    const scenery = this.scenery && this.scenery.targetFromHit(hit);
     const terrain = this.getTerrain ? this.getTerrain() : this.terrain;
     const terrainRenderer = this.getTerrainRenderer ? this.getTerrainRenderer() : this.terrainRenderer;
-    if (hit.object.userData.terrainChunk && terrainRenderer && terrain) {
-      const cell = terrainRenderer.mapHit(hit);
+    if ((hit.object.userData.terrainChunk || hit.object.userData.terrainSurface) && terrainRenderer && terrain) {
+      const cell = hit.object.userData.terrainChunk ? terrainRenderer.mapHit(hit) : {
+        x: Math.round(hit.point.x), y: -1, z: Math.round(hit.point.z), normal: { x: 0, y: 1, z: 0 }
+      };
       if (cell) {
         const material = terrain.getCell(cell.x, cell.y, cell.z);
         if (material && cell.y > terrain.minY) {
@@ -238,7 +248,7 @@ export class HarvestControls {
     const trees = this.getFarmSystems().getHarvestTargets();
     const tree = trees.find(t => t.id === hit.object.userData.harvestTreeId);
     const block = this.builder.getHarvestTargets().find(t => t.mesh === hit.object);
-    const target = tree || block;
+    const target = scenery || tree || block;
     if (!target) return null;
     if (block && Math.hypot(block.x - position.x, block.y - position.y, block.z - position.z) > 4) return null;
     // A high third-person camera must not harvest over an intervening wall.
@@ -255,6 +265,11 @@ export class HarvestControls {
   commit(target) {
     const live = this.resolveTarget();
     if (!live || live.kind !== target.kind || live.id !== target.id || live.revision !== target.revision) return { ok: false, error: 'Target changed.' };
+    if (target.kind === 'scenery') {
+      const result = this.scenery.harvest(target.id, this.inventory);
+      this.onResult(result.ok ? '+' + result.quantity + ' Wood' : result.error, !!result.ok);
+      return result;
+    }
     if (target.kind === 'terrain') {
       return this.onTerrainAction ? this.onTerrainAction('break', target, '', this.inventory.getSelectedItem()?.itemId || '') : { ok: false, error: 'Terrain editing unavailable.' };
     }
@@ -262,7 +277,7 @@ export class HarvestControls {
       ? this.getFarmSystems().harvestTree(target.id, this.inventory, target.revision)
       : this.builder.harvestBlock(target.id, this.inventory);
     const ok = result && (result.ok || result.success);
-    this.onResult(ok ? '+ ' + (target.kind === 'tree' ? '3' : '1') + ' Wood' : result.error || result.message || 'Unable to harvest.', !!ok);
+    this.onResult(ok ? '+ ' + (result.quantity || (target.kind === 'tree' ? '3' : '1')) + ' ' + (result.itemId || 'wood').replaceAll('_', ' ') : result.error || result.message || 'Unable to harvest.', !!ok);
     if (ok && this.audio) {
       const oscillator = this.audio.createOscillator(), gain = this.audio.createGain();
       oscillator.type = 'triangle'; oscillator.frequency.value = 180;
@@ -286,7 +301,10 @@ export class HarvestControls {
     });
     this.panel.style.display = enabled ? 'block' : 'none';
     this.buttons.style.display = 'flex';
-    this.placeButton.style.display = this.getBuildMode() ? 'block' : 'none';
+    this.modeButton.textContent = this.getBuildMode() ? 'Punch' : 'Build';
+    this.modeButton.setAttribute('aria-label', this.getBuildMode() ? 'Switch to Punch' : 'Switch to Build');
+    this.modeButton.disabled = !enabled;
+    this.breakButton.classList.toggle('is-building', this.getBuildMode());
     this.lookUp.style.display = this.lookDown.style.display = this.getBuildMode() ? 'block' : 'none';
     const indicator = aimIndicatorState({ enabled, buildMode: this.getBuildMode(), touch: this.touch, target: this.target });
     const facingAim = !this.getBuildMode() && (this.controlAim || this.touch);
@@ -313,12 +331,15 @@ export class HarvestControls {
     const terrainNames = { grass: 'grass', dirt: 'dirt', stone: 'stone', wood: 'wood block' };
     const label = this.target ? this.target.kind === 'terrain'
       ? (this.target.material === 'stone' ? 'Mine stone' : this.target.material === 'dirt' || this.target.material === 'grass' ? 'Dig dirt' : 'Break wood block')
-      : (selected && selected.itemId === 'axe' ? 'Chop' : 'Punch') + (this.target.kind === 'tree' ? ' tree' : ' wood block') : '';
-    this.caption.textContent = label ? label + ' · hold ' + (this.touch || this.controlAim ? 'action' : this.getBuildMode() ? 'right mouse' : 'left mouse')
-      : this.getBuildMode() ? 'Place wood · hold Break to reclaim · ' + (this.touch ? 'tap arrows to aim' : 'scroll to aim') : 'Aim at a grove tree to gather wood';
-    this.breakButton.textContent = this.target?.kind === 'tree' ? '♣ Gather' : this.target?.kind === 'terrain' ? (this.target.material === 'stone' ? '⛏ Mine' : '✊ Dig') : '✊ Punch';
-    this.breakButton.setAttribute('aria-label', label ? 'Hold to ' + label.toLowerCase() : 'Punch');
-    this.breakButton.title = label ? 'Hold to ' + label.toLowerCase() : 'Face a nearby grove tree, wood block, or editable ground.';
+      : this.target.kind === 'scenery' ? 'Punch ' + this.target.label
+      : (selected && selected.itemId === 'axe' ? 'Chop' : 'Punch') + (this.target.kind === 'tree' ? ' tree' : ' ' + (this.target.label || 'wood block')) : '';
+    this.caption.textContent = this.getBuildMode()
+      ? 'Build mode · select an item, aim, and press Place · scroll or use arrows to aim'
+      : label ? label + ' · hold Punch' : 'Hold Punch to gather trees, fences, or ground';
+    this.breakButton.textContent = this.getBuildMode() ? 'Place' : 'Punch';
+    this.breakButton.setAttribute('aria-label', this.getBuildMode() ? 'Place selected item' : 'Hold to punch');
+    this.breakButton.title = this.getBuildMode() ? 'Place the selected item at the crosshair.'
+      : label ? 'Hold to ' + label.toLowerCase() : 'Face a nearby tree, fence, or the ground.';
     // Keep the action available so an invalid target explains what to do.
     this.breakButton.disabled = !enabled;
     this.meter.value = state.progress;
@@ -328,7 +349,8 @@ export class HarvestControls {
     if (this.target && this.target.kind === 'terrain') {
       this.outline.box.set(new THREE.Vector3(this.target.x - 0.5, this.target.y, this.target.z - 0.5),
         new THREE.Vector3(this.target.x + 0.5, this.target.y + 1, this.target.z + 0.5));
-    } else if (this.target) this.outline.box.setFromObject(this.target.mesh);
+    } else if (this.target?.bounds) this.outline.box.copy(this.target.bounds);
+    else if (this.target) this.outline.box.setFromObject(this.target.mesh);
     const placeable = this.getBuildMode() && selected && ['dirt', 'stone'].includes(selected.itemId) && this.target?.kind === 'terrain';
     this.terrainGhost.visible = !!placeable;
     if (placeable) {

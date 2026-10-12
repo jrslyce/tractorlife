@@ -48,7 +48,7 @@ export function createTerrainRenderer(THREE, scene, terrain, options = {}) {
   function getMaterial(id) {
     if (!materials.has(id)) {
       const color = options.colors?.[id] ?? DEFAULT_COLORS[id] ?? options.defaultColor ?? 0x8b7653;
-      materials.set(id, new THREE.MeshLambertMaterial({ color, flatShading: true }));
+      materials.set(id, options.materialFactory ? options.materialFactory(color) : new THREE.MeshLambertMaterial({ color, flatShading: true }));
     }
     return materials.get(id);
   }
@@ -97,6 +97,7 @@ export function createTerrainRenderer(THREE, scene, terrain, options = {}) {
       geometry.setAttribute('position', new THREE.Float32BufferAttribute(values, 3));
       geometry.computeVertexNormals?.();
       const mesh = new THREE.Mesh(geometry, getMaterial(materialId));
+      mesh.receiveShadow = true;
       mesh.userData ||= {};
       mesh.userData.terrainChunk = { cx, cz };
       scene.add(mesh);
@@ -171,7 +172,7 @@ export function createTerrainRenderer(THREE, scene, terrain, options = {}) {
     for (const material of materials.values()) material.dispose?.();
     materials.clear();
   }
-  return { rebuildChunk, rebuildAll, updateAfterEdit, update, flush, mapHit, dispose, get chunks() { return chunks; }, get pendingCount() { return pending.size; } };
+  return { disposeChunk, rebuildChunk, rebuildAll, updateAfterEdit, update, flush, mapHit, dispose, get chunks() { return chunks; }, get pendingCount() { return pending.size; } };
 }
 
 export default createTerrainRenderer;

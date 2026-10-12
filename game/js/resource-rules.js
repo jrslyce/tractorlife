@@ -15,8 +15,8 @@ export function getBreakRule(material, toolId, targetKind) {
   if (material === 'dirt' || material === 'grass') {
     return { duration: toolId === 'shovel' ? 0.35 : 1, itemId: 'dirt', quantity: 1, label: 'Dig dirt' };
   }
-  if (material === 'stone' && toolId === 'pickaxe') {
-    return { duration: 2, itemId: 'stone', quantity: 1, label: 'Mine stone' };
+  if (material === 'stone') {
+    return { duration: toolId === 'pickaxe' ? 2 : 6, itemId: 'stone', quantity: 1, label: 'Mine stone' };
   }
   return null;
 }

@@ -44,13 +44,13 @@ test('full inventory and rejected inventory commit preserve block and save state
   assert.equal(inventory.count, 0);
 });
 
-test('foreign, remote, and nonwood structures never become refund targets', () => {
+test('placed decorations can be reclaimed but foreign and remote structures cannot', () => {
   const { builder } = fixture();
   builder._placed[0].remote = true;
   assert.deepEqual(builder.getHarvestTargets(), []);
   builder._placed[0].remote = false;
   builder._placed[0].id = 'hay_bale';
-  assert.deepEqual(builder.getHarvestTargets(), []);
+  assert.equal(builder.getHarvestTargets()[0].itemId, 'hay_bale');
   builder._placed[0].id = 'wood';
   builder.getAssignedSlot = () => 1;
   assert.deepEqual(builder.getHarvestTargets(), []);

@@ -1,3 +1,6 @@
+import { TerrainSurfaces } from './terrain-surfaces.js';
+import { createStreamingTerrain } from './streaming-terrain.js';
+import { SceneryHarvest } from './scenery-harvest.js';
 // game/js/main.js — Tractor Farm: playable integration layer.
 // Multi-farm world: 10 farms (world.js/farm.js), a walkable voxel character
 // (character.js) and three vehicles (tractor.js, combine.js, vehicle.js) with
@@ -35,7 +38,6 @@ import { expansionPlotOccupied, expansionPurchaseState } from './farm-expansion.
 import { PerformanceBudget } from './performance.js';
 import { steeringYawDelta } from './vehicle-physics.js';
 import { createFarmTerrain, restoreAuthoritativeFarmTerrain, validFarmTerrainCell } from './terrain-runtime.js';
-import { createTerrainRenderer } from './terrain-renderer.js';
 import { TerrainActions } from './terrain-actions.js';
 import { moveCharacter as moveTerrainCharacter } from './terrain-physics.js';
 import { TOOL_ORDER, COMBINE_HEAD_ORDER, buildTool, buildCombineHead } from './equipment.js';
@@ -126,38 +128,13 @@ scene.add(sun.target);
 // ---------------------------------------------------------------- ground
 // covers every farm + shop area with ~90 units of margin on every side
 const GROUND_W = WORLD_MAX_X - WORLD_MIN_X + 180;
-const terrainGroundCutout = { value: new THREE.Vector4(0, 0, 0, 0) };
 const groundMaterial = new THREE.MeshStandardMaterial({ color: '#5aa02c', roughness: 1 });
-groundMaterial.onBeforeCompile = function (shader) {
-  shader.uniforms.uTerrainCutout = terrainGroundCutout;
-  shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vTerrainWorldPosition;');
-  // The ShaderChunk's `worldPosition` declaration is conditional in Three.js
-  // and is absent for this unlit geometry path; `transformed` is always present.
-  shader.vertexShader = shader.vertexShader.replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvTerrainWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;');
-  shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vTerrainWorldPosition;\nuniform vec4 uTerrainCutout;');
-  shader.fragmentShader = shader.fragmentShader.replace('#include <clipping_planes_fragment>',
-    '#include <clipping_planes_fragment>\nif (uTerrainCutout.z > 0.5 && vTerrainWorldPosition.x >= uTerrainCutout.x && vTerrainWorldPosition.x <= uTerrainCutout.z && vTerrainWorldPosition.z >= uTerrainCutout.y && vTerrainWorldPosition.z <= uTerrainCutout.w) discard;');
-};
-groundMaterial.customProgramCacheKey = function () { return 'terrain-ground-cutout-v1'; };
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(GROUND_W, 400), groundMaterial);
 ground.rotation.x = -Math.PI / 2;
 ground.position.set((WORLD_MIN_X + WORLD_MAX_X) / 2, 0, -20);
 ground.receiveShadow = true;
+ground.userData.terrainSurface = 'ground';
 scene.add(ground);
-
-function setTerrainGroundCutout(slot) {
-  const allFarms = world.getFarms();
-  for (const farm of allFarms) if (farm && farm.setTerrainCutout) farm.setTerrainCutout(null);
-  if (!Number.isSafeInteger(slot) || slot < 0 || slot > 9) {
-    terrainGroundCutout.value.set(0, 0, 0, 0);
-    return;
-  }
-  const minX = slot * FARM_SPACING + 107.5, maxX = slot * FARM_SPACING + 145.5;
-  const minZ = -53.5, maxZ = 24.5;
-  terrainGroundCutout.value.set(minX, minZ, maxX, maxZ);
-  const farm = allFarms[slot];
-  if (farm && farm.setTerrainCutout) farm.setTerrainCutout({ minX, maxX, minZ, maxZ });
-}
 
 // --- M1: E-W road strip along farms' south edge ---
 // Road runs the full width of the world at z ≈ 29-41 (south of the farms)
@@ -167,6 +144,7 @@ var roadGeo = new THREE.BoxGeometry(ROAD_LEN, 0.05, 12);
 var road = new THREE.Mesh(roadGeo, roadMat);
 road.position.set((WORLD_MIN_X + WORLD_MAX_X) / 2, 0.025, 35);
 road.receiveShadow = true;
+road.userData.terrainSurface = 'overlay';
 scene.add(road);
 
 // Road center line dashes
@@ -180,6 +158,7 @@ for (let start = 0; start < Math.ceil(ROAD_LEN / 10); start += 18) {
     dashTransform.makeTranslation(-10 + (start + i) * 10, 0.03, 35);
     dashes.setMatrixAt(i, dashTransform);
   }
+  dashes.userData.terrainSurface = 'overlay';
   scene.add(dashes);
 }
 
@@ -216,20 +195,14 @@ hayBale(57, 0.8, -13, 0.7);
 // ---------------------------------------------------------------- world (10 farms)
 // All field work / stats / serialize / restore go through world.getFarms().
 const world = new World(scene, '', perfProfile);
-setTerrainGroundCutout(world.getAssignedSlot());
-// Bounded terrain is scoped strictly to the assigned farm slot. Terrain visuals
-// are added separately; the legacy global ground remains a known hole-covering
-// limitation until its surface is replaced by a terrain-aware ground mesh.
+
+// One sparse terrain state covers every walkable map coordinate; meshes stream nearby.
 let farmTerrain = createFarmTerrain(world.getAssignedSlot());
-let terrainRenderer = farmTerrain ? createTerrainRenderer(THREE, scene, farmTerrain, { maxFaces: 30000, deferred: true }) : null;
-if (terrainRenderer) terrainRenderer.rebuildAll();
+const terrainSurfaces = new TerrainSurfaces(farmTerrain);
+let terrainRenderer = createStreamingTerrain(THREE, scene, farmTerrain, terrainSurfaces);
 let terrainRevision = 0;
 let terrainActions = null;
-let remoteTerrainSlot = -1;
-let remoteTerrainOwner = '';
-let remoteTerrain = null;
-let remoteTerrainRenderer = null;
-let remoteTerrainRevision = 0;
+let terrainEditPending = false;
 const farms = world.getFarms();
 const farmFields = farms.map(function (farm) { return farm.getFields(); });
 const cropProblemVisuals = new CropProblemVisuals(scene);
@@ -237,6 +210,9 @@ const environment = buildEnvironment(scene, {
   minX: WORLD_MIN_X, maxX: WORLD_MAX_X, minZ: WORLD_MIN_Z, maxZ: WORLD_MAX_Z,
   cheapMaterials: perfProfile.cheapMaterials
 });
+const sceneryHarvest = new SceneryHarvest(scene);
+scene.traverse(mesh => { if (mesh.userData.terrainSurface) terrainSurfaces.attach(mesh, mesh.userData.terrainSurface); });
+for (const farm of farms) farm.setTerrainSurfaces(terrainSurfaces);
 const climate = new Climate({ seed: 0x41f29a7 });
 let climateState = climate.getState();
 let farmPrompt = null;
@@ -261,7 +237,6 @@ function setFarmExperience(modeName, persist = true) {
   farmExperience = next;
   farmSystems.setAdvancedSystemsEnabled(advancedSystemsEnabled(next));
   if (input && typeof input.setAdvancedSystemsEnabled === 'function') input.setAdvancedSystemsEnabled(advancedSystemsEnabled(next));
-  if (next === 'simple' && buildMode) setBuildMode(false);
   if (next === 'full' && previous === 'simple') showToast('Full Farm is on. Paused farm systems are resuming.');
   lastSig = '';
   updateHUD();
@@ -282,11 +257,12 @@ function replaceFarmTerrain(slot, serialized, canonicalEdits, revision) {
   if (!restored) return false;
   if (terrainRenderer) terrainRenderer.dispose();
   farmTerrain = restored;
-  terrainRenderer = createTerrainRenderer(THREE, scene, farmTerrain, { maxFaces: 30000, deferred: true });
-  terrainRenderer.rebuildAll();
+  terrainSurfaces.terrain = farmTerrain;
+  terrainSurfaces.refresh();
+  terrainRenderer = createStreamingTerrain(THREE, scene, farmTerrain, terrainSurfaces);
   terrainActions = new TerrainActions({ terrain: farmTerrain, inventory: inventory });
   terrainRevision = Number.isSafeInteger(revision) && revision >= 0 ? revision : 0;
-  setTerrainGroundCutout(slot);
+
   return true;
 }
 terrainActions = new TerrainActions({ terrain: farmTerrain, inventory: inventory });
@@ -638,7 +614,7 @@ function boxForObject(object) { return new THREE.Box3().setFromObject(object); }
 function performTerrainAction(action, target, material, toolId) {
   const cell = { x: target.x, y: target.y, z: target.z };
   if (!farmTerrain || !validFarmTerrainCell(farmTerrain, world.getAssignedSlot(), cell.x, cell.y, cell.z)) {
-    showToast('That terrain is outside your editable yard.');
+    showToast('That is beyond the edge of the world.');
     return { ok: false, error: 'Out of bounds.' };
   }
   if (action === 'place' && terrainPlacementBlocked(cell)) {
@@ -657,7 +633,13 @@ function performTerrainAction(action, target, material, toolId) {
     const edit = { action: action, x: cell.x, y: cell.y, z: cell.z,
       expectedRevision: terrainRevision, toolId: effectiveTool };
     if (action === 'place') edit.material = material;
-    return sendTerrainEdit(edit, requestSession).then(function (result) {
+    if (terrainEditPending) return { ok: false, error: 'An edit is already saving.' };
+    terrainEditPending = true;
+    // Persist freshly gathered wood before the server returns its inventory snapshot.
+    return Promise.resolve(tickSave(() => requestSession, snapshot)).then(saved => {
+      if (!saved || session !== requestSession) return { ok: false, error: 'Could not save your inventory. Try again.' };
+      return sendTerrainEdit(edit, requestSession);
+    }).then(function (result) {
       if (!result.ok || !result.accepted) {
         if (result.status === 409 && session === requestSession && world.getAssignedSlot() === ownerSlot && farmTerrain === ownerTerrain) {
           fetchTerrainState(requestSession).then(function (state) {
@@ -680,13 +662,14 @@ function performTerrainAction(action, target, material, toolId) {
       }
       inventory.restore(result.inventory);
       terrainRevision = result.revision;
+      terrainSurfaces.updateColumn(cell.x, cell.z);
       terrainRenderer.update();
       lastSig = '';
       updateHUD();
       tickSave(function () { return session; }, snapshot);
       showToast(action === 'place' ? '+1 ' + material : '+1 ' + (result.edit.material === 'air' ? (target.material === 'grass' ? 'Dirt' : target.material) : result.edit.material));
       return result;
-    });
+    }).finally(() => { terrainEditPending = false; });
   }
   if (!terrainActions) return { ok: false, error: 'Terrain unavailable.' };
   const result = action === 'break'
@@ -697,6 +680,7 @@ function performTerrainAction(action, target, material, toolId) {
     return result;
   }
   terrainRevision++;
+  terrainSurfaces.updateColumn(cell.x, cell.z);
   terrainRenderer.update();
   lastSig = '';
   updateHUD();
@@ -707,15 +691,18 @@ function performTerrainAction(action, target, material, toolId) {
 
 var harvestControls = builder ? new HarvestControls({
   scene, camera, canvas: renderer.domElement, character, firstPersonArm, inventory, builder,
-  getTerrain: function () { return remoteTerrainSlot === currentFarmSlot() && remoteTerrain ? remoteTerrain : farmTerrain; },
-  getTerrainRenderer: function () { return remoteTerrainSlot === currentFarmSlot() && remoteTerrainRenderer ? remoteTerrainRenderer : terrainRenderer; },
-  getTerrainRevision: function () { return remoteTerrainSlot === currentFarmSlot() && remoteTerrain ? remoteTerrainRevision : terrainRevision; },
+  getTerrain: function () { return farmTerrain; },
+  getSurfaces: function () { return terrainSurfaces; },
+  scenery: sceneryHarvest,
+  getTerrainRenderer: function () { return terrainRenderer; },
+  getTerrainRevision: function () { return terrainRevision; },
   isTerrainPlacementBlocked: terrainPlacementBlocked,
   onTerrainAction: performTerrainAction,
   getFarmSystems: function () { return farmSystems; },
   getBuildMode: function () { return buildMode; },
+  onBuildModeChange: setBuildMode,
   isEnabled: function () {
-    return mode === 'walking' && window.VT_LOCKED === false && !document.hidden &&
+    return mode === 'walking' && !terrainEditPending && window.VT_LOCKED === false && !document.hidden &&
       !shopUI.isOpen() && !wagonPanel.isOpen() && !grainSaleUI.isOpen();
   },
   onResult: function (message, success) {
@@ -1636,7 +1623,7 @@ function updateHUD() {
   let hint;
   if (mode === 'walking') {
     hint = buildMode
-      ? 'BUILD MODE · Select wood or a pumpkin on your hotbar, aim, then tap to place. Tap Exit Build to leave.'
+      ? 'BUILD MODE · Select an item on your hotbar, aim, then tap Place. Tap Punch above it to return to harvesting.'
       : 'Move with the stick or WASD. Use Enter by a vehicle, Interact near a task, or Shop to trade.';
   } else if (vehicleType === 'truck') {
     hint = wagon.hitched
@@ -1834,8 +1821,6 @@ function tryJump() {
 }
 
 function terrainForPosition(x, z) {
-  const slot = world.getFarmAtPosition(x, z);
-  if (remoteTerrain && remoteTerrainSlot === slot) return remoteTerrain;
   return farmTerrain;
 }
 
@@ -2288,7 +2273,7 @@ function drainActions() {
       sellWagonCrops();
     } else if (a === 'farmInteract') {
       interactWithFarm();
-    } else if (a === 'toggleBuildMode' && mode === 'walking' && farmExperience === 'full') {
+    } else if (a === 'toggleBuildMode' && mode === 'walking') {
       setBuildMode(!buildMode);
     } else if (a === 'jump') {
       tryJump();
@@ -2340,13 +2325,13 @@ function drainActions() {
 
 function setBuildMode(active) {
   if (harvestControls) harvestControls.cancel();
-  buildMode = !!active && mode === 'walking' && farmExperience === 'full';
+  buildMode = !!active && mode === 'walking';
   firstPersonArm.visible = buildMode;
   character.setVisible(!buildMode);
   document.body.classList.toggle('vt-build-mode', buildMode);
   inventory.setFirstPerson(buildMode);
   input.setBuildMode(buildMode);
-  if (buildMode) showToast('🧱 Build: select wood, aim, and click Place. Hold right mouse or Break to reclaim wood.');
+  if (buildMode) showToast('🧱 Build: select an item, aim, and press Place. Press Punch above it to switch back.');
 }
 
 // ---------------------------------------------------------------- camera
@@ -2517,6 +2502,7 @@ function snapshot() {
     ctheta: character.group.rotation.y,
     world: world.serialize(),
     ...terrainSaveFields(),
+    harvestedScenery: sceneryHarvest.serialize(),
     structures: builder ? builder.serializeLocal() : [],
     inventory: inventory.serialize(),
     wagon: wagon.serialize(),
@@ -2615,6 +2601,7 @@ function applyState(s) {
     });
   }
   if (builder) builder.restore(structures);
+  sceneryHarvest.restore(s.harvestedScenery);
   const legacy = s.v !== 2 && Array.isArray(s.fields);
 
   // --- machine ---
@@ -2913,19 +2900,6 @@ function acceptRealtimeMessage(msg) {
     delete remoteTargets[slot];
   } else if (msg.type === 'build' && builder && msg.entry) {
     builder.restore([msg.entry], true);
-  } else if (msg.type === 'terrain-edit' && msg.edit && Number.isSafeInteger(msg.revision)) {
-    if (remoteTerrainSlot !== slot || remoteTerrainOwner !== String(msg.email).toLowerCase() || !remoteTerrain) return;
-    if (msg.revision <= remoteTerrainRevision) return;
-    if (msg.revision !== remoteTerrainRevision + 1) {
-      fetchFarmState(slot).then(function (data) {
-        if (data && currentFarmSlot() === slot) installRemoteFarmState(slot, data);
-      });
-      return;
-    }
-    const applied = remoteTerrain.applyAuthoritativeCell(msg.edit.x, msg.edit.y, msg.edit.z, msg.edit.material);
-    if (!applied.success) return;
-    remoteTerrainRevision = msg.revision;
-    remoteTerrainRenderer.update();
   }
 }
 
@@ -3013,31 +2987,11 @@ const FARM_STATE_MIN_MS = 15000;
 let farmStateLastAt = {}; // farmSlot -> performance.now() of the last request
 let farmStateSeenSlot = -2; // last slot we stood on (edge-triggered)
 
-function clearRemoteTerrain() {
-  if (remoteTerrainRenderer) remoteTerrainRenderer.dispose();
-  remoteTerrainRenderer = null;
-  remoteTerrain = null;
-  remoteTerrainSlot = -1;
-  remoteTerrainOwner = '';
-  remoteTerrainRevision = 0;
-}
-
 function installRemoteFarmState(slot, data) {
   if (!data || !data.farm || slot === world.getAssignedSlot()) return;
   world.getFarms()[slot].restore(data.farm);
-  const incomingRevision = Number.isSafeInteger(data.farm.terrainRevision) ? data.farm.terrainRevision : 0;
-  const incomingOwner = String(data.email || '').toLowerCase();
-  if (remoteTerrainSlot === slot && remoteTerrainOwner === incomingOwner && remoteTerrainRevision === incomingRevision) return;
-  clearRemoteTerrain();
-  remoteTerrain = restoreAuthoritativeFarmTerrain(data.farm.terrain, data.farm.terrainEdits, slot);
-  if (!remoteTerrain) return;
-  remoteTerrain.editable = false;
-  remoteTerrainSlot = slot;
-  remoteTerrainOwner = incomingOwner;
-  remoteTerrainRevision = incomingRevision;
-  remoteTerrainRenderer = createTerrainRenderer(THREE, scene, remoteTerrain, { maxFaces: 30000, deferred: true });
-  remoteTerrainRenderer.rebuildAll();
-  setTerrainGroundCutout(slot);
+  // Ground/scenery edits are personal world state, like the farmer's inventory.
+  // Foreign field state must not replace the terrain the player is editing.
 }
 
 function maybeFetchForeignState() {
@@ -3046,9 +3000,8 @@ function maybeFetchForeignState() {
   const entered = slot !== farmStateSeenSlot;
   if (!entered && (slot < 0 || slot > 9 || slot === world.getAssignedSlot())) return;
   farmStateSeenSlot = slot;
-  if (entered && (slot < 0 || slot > 9)) { clearRemoteTerrain(); setTerrainGroundCutout(-1); return; }
-  if (entered && slot === world.getAssignedSlot()) { clearRemoteTerrain(); setTerrainGroundCutout(slot); return; }
-  if (entered) { clearRemoteTerrain(); setTerrainGroundCutout(-1); }
+  if (entered && (slot < 0 || slot > 9)) { return; }
+  if (entered && slot === world.getAssignedSlot()) { return; }
   const now = performance.now();
   const lastAt = farmStateLastAt[slot] || 0;
   if (now - lastAt < FARM_STATE_MIN_MS) return;
@@ -3080,8 +3033,8 @@ function setupLogin() {
       world.setAssignedSlot(world.slotFromEmail(res.email || ''));
     }
     const slot = world.getAssignedSlot();
-    clearRemoteTerrain();
     replaceFarmTerrain(slot, null, null, 0);
+    sceneryHarvest.restore([]);
 
     farmSystems.dispose();
     farmSystems = new FarmSystems({ scene: scene, THREE: THREE, farmSlot: slot, onEvent: handleFarmEvent });
@@ -3298,8 +3251,11 @@ renderer.setAnimationLoop(function () {
   if (performanceBudget.shouldUpdateLabels(now)) updateFarmLabels();
   // the hotbar stays up while driving too, so you can see seeds/spray running low
   inventory.setVisible(window.VT_LOCKED === false && !wagonPanel.isOpen());
-  if (terrainRenderer) terrainRenderer.flush(1, 3);
-  if (remoteTerrainRenderer) remoteTerrainRenderer.flush(1, 3);
+  if (terrainRenderer) {
+    const activePosition = mode === 'driving' ? vehicle.position : character.group.position;
+    terrainRenderer.focus(activePosition.x, activePosition.z);
+    terrainRenderer.flush(1);
+  }
   renderer.render(scene, camera);
   loginBackdropRendered = true;
   performanceBudget.observeFrame(performance.now() - frameStart, now, applyPixelRatio);

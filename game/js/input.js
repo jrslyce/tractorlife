@@ -294,14 +294,13 @@ export class Input {
 
   setEnterVisible(visible) { this._enterNear = !!visible; this._updateContextButtons(); }
   setBuildMode(active) {
-    this._buildMode = !!active && this._advancedSystemsEnabled;
-    this._setButtonLabel('toggleBuildMode', '🧱', this._buildMode ? 'Exit Build' : 'Build');
-    this._setButtonVisible('toggleBuildMode', !this._drivingMode && this._advancedSystemsEnabled);
+    this._buildMode = !!active;
+    this._setButtonLabel('toggleBuildMode', '🧱', this._buildMode ? 'Punch' : 'Build');
+    this._setButtonVisible('toggleBuildMode', !this._drivingMode);
   }
   setAdvancedSystemsEnabled(enabled) {
     this._advancedSystemsEnabled = enabled !== false;
-    if (!this._advancedSystemsEnabled) this.setBuildMode(false);
-    else this._setButtonVisible('toggleBuildMode', !this._drivingMode);
+    this._setButtonVisible('toggleBuildMode', !this._drivingMode);
   }
   setToolControl(available, attached, contextLabel, isTruck) {
     this._toolAvailable = !!available;
@@ -345,7 +344,7 @@ export class Input {
     this._setButtonVisible('cycleColor', !this._truckMode);
     this._setButtonVisible('detach', this._drivingMode && this._toolAttached && !this._truckMode);
     this._setButtonVisible('jump', !this._drivingMode);
-    this._setButtonVisible('toggleBuildMode', !this._drivingMode && this._advancedSystemsEnabled);
+    this._setButtonVisible('toggleBuildMode', !this._drivingMode);
   }
 
   // caller consumes the one-shot jump flag, then clears it

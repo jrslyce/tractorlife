@@ -14,7 +14,7 @@ export class TerrainActions {
     const material = this.terrain.getCell(x, y, z);
     if (!material) return { ok: false, error: 'Target changed.' };
     const rule = getBreakRule(material === 'grass' ? 'dirt' : material, toolId, 'terrain');
-    if (!rule) return { ok: false, error: material === 'stone' ? 'A pickaxe is required.' : 'This material cannot be gathered by hand.' };
+    if (!rule) return { ok: false, error: 'This material cannot be gathered by hand.' };
     if (!this.inventory.canAdd(rule.itemId, rule.quantity)) return { ok: false, error: 'Inventory full.' };
     const result = this.terrain.breakCell(x, y, z, material);
     if (!result.success) return { ok: false, error: 'Target changed.' };

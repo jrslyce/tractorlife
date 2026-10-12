@@ -172,10 +172,10 @@ export class Woodland {
 
   // Stable simulation IDs let a held action revalidate its target at completion.
   getHarvestTargets() {
-    return this.trees.filter(tree => tree.stage === 'mature' || tree.stage === 'young').map(tree => ({
+    return [...this.trees, ...this.orchards, ...this.saplings, ...this.debris].map(tree => ({
       id: tree.id, x: tree.x, z: tree.z, kind: 'tree', material: 'wood',
-      radius: tree.radius || (tree.stage === 'young' ? 0.45 : 0.8),
-      stage: tree.stage, revision: tree.stage,
+      radius: tree.radius || 0.8, stage: tree.stage || 'wood', revision: tree.stage || 'wood',
+      quantity: tree.stage === 'stump' || this.saplings.includes(tree) || this.debris.includes(tree) ? 1 : 3,
     }));
   }
 
@@ -183,21 +183,23 @@ export class Woodland {
   // is an all-or-nothing synchronous insertion; never remove a tree on failure.
   harvestTree(id, inventory, expectedRevision) {
     const fail = (reason, message) => ({ success: false, reason, message, costs: {}, rewards: {}, events: [], target: id });
-    const tree = this.trees.find(item => item.id === id && (item.stage === 'mature' || item.stage === 'young'));
+    const collection = [this.trees, this.orchards, this.saplings, this.debris].find(list => list.some(item => item.id === id));
+    const tree = collection && collection.find(item => item.id === id);
     if (!tree) return fail('target-not-found', 'That tree is no longer available.');
-    if (expectedRevision != null && tree.stage !== expectedRevision) return fail('target-changed', 'The tree changed. Start chopping again.');
+    if (expectedRevision != null && (tree.stage || 'wood') !== expectedRevision) return fail('target-changed', 'The tree changed. Start chopping again.');
     if (!inventory || typeof inventory.canAdd !== 'function' || typeof inventory.addItem !== 'function') {
       return fail('invalid-inventory', 'Inventory is unavailable.');
     }
-    if (!inventory.canAdd('wood', 3)) return fail('inventory-full', 'Inventory full. Make room for wood first.');
-    const added = inventory.addItem('wood', 3);
+    const quantity = tree.stage === 'stump' || collection === this.saplings || collection === this.debris ? 1 : 3;
+    if (!inventory.canAdd('wood', quantity)) return fail('inventory-full', 'Inventory full. Make room for wood first.');
+    const added = inventory.addItem('wood', quantity);
     if (!added?.ok) return fail('inventory-full', 'Inventory full. Make room for wood first.');
-    this.trees.splice(this.trees.indexOf(tree), 1);
+    collection.splice(collection.indexOf(tree), 1);
     const stump = { id: this._id(), x: tree.x, z: tree.z, stage: 'stump', radius: 0.55 };
-    this.trees.push(stump);
+    if (collection === this.trees && tree.stage !== 'stump') this.trees.push(stump);
     this.wildlife = clamp(this.wildlife - this.config.wildlifeDeclinePerTree, 0, this.config.maxWildlife);
-    return { success: true, reason: 'harvested', message: 'Collected 3 wood.', costs: {}, rewards: { wood: 3 },
-      events: [{ type: 'tree-harvested', id, stumpId: stump.id, material: 'wood', quantity: 3 }], target: id };
+    return { success: true, reason: 'harvested', message: 'Collected 3 wood.', costs: {}, rewards: { wood: quantity }, quantity,
+      events: [{ type: 'tree-harvested', id, stumpId: stump.id, material: 'wood', quantity }], target: id };
   }
 
   serialize() {

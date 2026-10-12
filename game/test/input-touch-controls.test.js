@@ -53,7 +53,7 @@ test('updating a touch action also updates its accessible name', () => {
   assert.equal(button.label.textContent, 'Exit');
 });
 
-test('Simple Farm disables build mode button and rejects reopening it', () => {
+test('Simple Farm preserves build mode and its explicit toggle', () => {
   const input = Object.create(Input.prototype);
   const visible = {}, labels = {};
   input._drivingMode = false;
@@ -61,10 +61,13 @@ test('Simple Farm disables build mode button and rejects reopening it', () => {
   input._setButtonVisible = (action, value) => { visible[action] = value; };
   input._setButtonLabel = (action, _emoji, label) => { labels[action] = label; };
   input.setAdvancedSystemsEnabled(false);
-  assert.equal(input._buildMode, false);
-  assert.equal(visible.toggleBuildMode, false);
+  assert.equal(input._buildMode, true);
+  assert.equal(visible.toggleBuildMode, true);
   input.setBuildMode(true);
-  assert.equal(input._buildMode, false);
+  assert.equal(input._buildMode, true);
+  assert.equal(labels.toggleBuildMode, 'Punch');
+  input.setBuildMode(false);
+  assert.equal(labels.toggleBuildMode, 'Build');
   input.setAdvancedSystemsEnabled(true);
   assert.equal(visible.toggleBuildMode, true);
 });

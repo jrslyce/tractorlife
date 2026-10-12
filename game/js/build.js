@@ -72,11 +72,11 @@ export class Builder {
   placeFromEvent(e) { return !!this._place(e); }
 
   getHarvestTargets() {
-    return this._placed.filter((entry) => entry.id === 'wood' && !entry.remote &&
+    return this._placed.filter((entry) => !entry.remote &&
       this.world.getFarmAtPosition(entry.x, entry.z) === this.getAssignedSlot()).map((entry) => {
       var mesh = this._occupied[voxelKey(entry.x, entry.y || 0, entry.z)];
       if (!mesh) return null;
-      return { id: mesh.userData.harvestId, kind: 'block', material: 'wood', mesh: mesh,
+      return { id: mesh.userData.harvestId, kind: 'block', material: 'wood', itemId: entry.id, label: entry.id.replaceAll('_', ' '), mesh: mesh,
         x: entry.x, y: (entry.y || 0) + 0.5, z: entry.z };
     }).filter(Boolean);
   }
@@ -85,13 +85,13 @@ export class Builder {
     var target = this.getHarvestTargets().find((entry) => entry.id === id);
     if (!target) return { ok: false, error: 'Target changed' };
     if (!this._withinReach(target.x, target.y, target.z)) return { ok: false, error: 'Out of reach' };
-    if (!inventory.canAdd('wood', 1)) return { ok: false, error: 'Inventory full' };
+    if (!inventory.canAdd(target.itemId, 1)) return { ok: false, error: 'Inventory full' };
     // addItem commits synchronously or rejects without mutation. Keep the world
     // intact on rejection, and remove the target before another action can run.
-    var result = inventory.addItem('wood', 1);
+    var result = inventory.addItem(target.itemId, 1);
     if (!result || !result.ok) return result || { ok: false, error: 'Inventory full' };
     var key = voxelKey(target.x, target.y - 0.5, target.z);
-    var index = this._placed.findIndex((entry) => entry.id === 'wood' && !entry.remote &&
+    var index = this._placed.findIndex((entry) => !entry.remote &&
       voxelKey(entry.x, entry.y || 0, entry.z) === key);
     var removed = this._placed.splice(index, 1)[0];
     delete this._occupied[key];
@@ -99,7 +99,7 @@ export class Builder {
     target.mesh.geometry.dispose();
     target.mesh.material.dispose();
     this.onRemoved(removed);
-    return { ok: true, itemId: 'wood', quantity: 1 };
+    return { ok: true, itemId: target.itemId, quantity: 1 };
   }
 
   _withinReach(x, y, z) {
@@ -238,7 +238,7 @@ export class Builder {
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.userData.itemId = item.id;
-    if (item.id === 'wood') mesh.userData.harvestId = 'block:' + this._nextHarvestId++;
+    mesh.userData.harvestId = 'block:' + this._nextHarvestId++;
     mesh.userData.placeHeight = height;
     if (item.id === 'lamp_light') {
       var lamp = new THREE.PointLight('#ffe6a0', 0.6, 12);
