@@ -212,6 +212,7 @@ const environment = buildEnvironment(scene, {
 });
 const sceneryHarvest = new SceneryHarvest(scene);
 scene.traverse(mesh => { if (mesh.userData.terrainSurface) terrainSurfaces.attach(mesh, mesh.userData.terrainSurface); });
+for (const farm of farms) farm.setTerrainSurfaces(terrainSurfaces);
 const climate = new Climate({ seed: 0x41f29a7 });
 let climateState = climate.getState();
 let farmPrompt = null;

@@ -424,6 +424,8 @@ export class Farm {
 
   getExpansionCost() { return EXPANSION_COST; }
 
+  setTerrainSurfaces(surfaces) { this._terrainSurfaces = surfaces; }
+
   getExpansionCenter() {
     return expansionCenter(this._farmSlot);
   }
@@ -441,6 +443,7 @@ export class Farm {
     for (const mesh of [this._expansionField._tileMesh, this._expansionField._cropMesh, this._expansionField._underMesh]) {
       mesh.visible = !this._culled;
       mesh.userData.terrainSurface = 'overlay';
+      this._terrainSurfaces?.attach(mesh, 'overlay');
       this._cullables.push(mesh);
     }
     return true;
